@@ -1,8 +1,10 @@
+import * as React from 'react'
 import { Box, Card, CardContent, Typography, Grid, alpha } from '@mui/material'
 import { 
   TrendingUp, TrendingDown, CalendarMonth, Warning, 
   CheckCircle, Speed, Insights 
 } from '@mui/icons-material'
+import type { SvgIconProps } from '@mui/material'
 
 interface DataCharacteristics {
   length: number
@@ -28,13 +30,13 @@ interface DataAnalysisProps {
 }
 
 const StatCard = ({ 
-  Icon, 
+  icon, 
   title, 
   value, 
   subtitle, 
   color 
 }: { 
-  Icon: typeof TrendingUp
+  icon: React.ReactElement<SvgIconProps>
   title: string
   value: string | number
   subtitle?: string
@@ -67,7 +69,7 @@ const StatCard = ({
             justifyContent: 'center',
           }}
         >
-          <Icon sx={{ color, fontSize: 24 }} />
+          {icon}
         </Box>
       </Box>
     </CardContent>
@@ -88,10 +90,10 @@ export function DataAnalysis({ characteristics, recommendations }: DataAnalysisP
     )
   }
 
-  const getTrendIcon = (): typeof TrendingUp => {
-    if (characteristics.trend === 'increasing') return TrendingUp
-    if (characteristics.trend === 'decreasing') return TrendingDown
-    return TrendingUp
+  const getTrendIcon = (color: string): React.ReactElement<SvgIconProps> => {
+    if (characteristics.trend === 'increasing') return <TrendingUp sx={{ color, fontSize: 24 }} />
+    if (characteristics.trend === 'decreasing') return <TrendingDown sx={{ color, fontSize: 24 }} />
+    return <TrendingUp sx={{ color, fontSize: 24 }} />
   }
 
   return (
@@ -103,7 +105,7 @@ export function DataAnalysis({ characteristics, recommendations }: DataAnalysisP
       <Grid container spacing={3} sx={{ mb: 4 }}>
         <Grid item xs={12} sm={6} md={3}>
           <StatCard
-            Icon={CalendarMonth}
+            icon={<CalendarMonth sx={{ color: '#1976d2', fontSize: 24 }} />}
             title="Data Points"
             value={characteristics.length.toLocaleString()}
             subtitle={`${characteristics.missing_pct.toFixed(1)}% missing`}
@@ -112,7 +114,7 @@ export function DataAnalysis({ characteristics, recommendations }: DataAnalysisP
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
           <StatCard
-            Icon={getTrendIcon()}
+            icon={getTrendIcon(characteristics.trend === 'increasing' ? '#2e7d32' : characteristics.trend === 'decreasing' ? '#d32f2f' : '#1976d2')}
             title="Trend"
             value={characteristics.trend.charAt(0).toUpperCase() + characteristics.trend.slice(1)}
             subtitle={`CV: ${characteristics.cv.toFixed(2)}`}
@@ -121,7 +123,10 @@ export function DataAnalysis({ characteristics, recommendations }: DataAnalysisP
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
           <StatCard
-            Icon={characteristics.stationarity ? CheckCircle : Warning}
+            icon={characteristics.stationarity 
+              ? <CheckCircle sx={{ color: '#2e7d32', fontSize: 24 }} />
+              : <Warning sx={{ color: '#ed6c02', fontSize: 24 }} />
+            }
             title="Stationarity"
             value={characteristics.stationarity ? 'Stationary' : 'Non-stationary'}
             subtitle={`Outliers: ${characteristics.outliers_pct.toFixed(1)}%`}
@@ -130,7 +135,7 @@ export function DataAnalysis({ characteristics, recommendations }: DataAnalysisP
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
           <StatCard
-            Icon={Speed}
+            icon={<Speed sx={{ color: '#7b1fa2', fontSize: 24 }} />}
             title="Seasonality"
             value={characteristics.seasonality === 'none' ? 'Not Detected' : characteristics.seasonality}
             subtitle={`Mean: ${characteristics.mean.toFixed(2)}`}
