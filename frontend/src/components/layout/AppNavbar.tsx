@@ -1,3 +1,4 @@
+import * as React from 'react'
 import { AppBar, Toolbar, Typography, Box, Button, Container, Chip } from '@mui/material'
 import { Link as RouterLink, useLocation } from 'react-router-dom'
 import { BarChart, CloudUpload, Build, Assessment } from '@mui/icons-material'
@@ -72,7 +73,7 @@ export function AppNavbar() {
                   key={item.path}
                   component={RouterLink}
                   to={item.path}
-                  startIcon={<Icon sx={{ fontSize: 20 }} />}
+                  startIcon={React.createElement(Icon, { sx: { fontSize: 20 } })}
                   sx={{
                     px: 2.5,
                     py: 1.5,
