@@ -78,6 +78,7 @@ const templates = [
 
 export function DataUpload() {
   const { uploadedFiles, addUploadedFile, removeUploadedFile, setSalesFileId, setAnalysisData } = useStore()
+  const analysisData = useStore((state) => state.analysisData)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string }>({
@@ -152,7 +153,6 @@ export function DataUpload() {
   }
 
   const salesFile = uploadedFiles.find((f) => f.type === 'sales')
-  const analysisData = useStore((state) => state.analysisData)
 
   const uploadedTypes = new Set(uploadedFiles.map(f => f.type))
   const allRequiredUploaded = uploadedTypes.has('sales')
