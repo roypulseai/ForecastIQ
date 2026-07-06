@@ -82,7 +82,7 @@ class ModelSelector:
         from statsmodels.tsa.stattools import adfuller
         try:
             result = adfuller(ts.dropna())
-            return result[1] < 0.05
+            return bool(result[1] < 0.05)
         except:
             return True
     
@@ -90,7 +90,7 @@ class ModelSelector:
         q1 = ts.quantile(0.25)
         q3 = ts.quantile(0.75)
         iqr = q3 - q1
-        outliers = ((ts < (q1 - 1.5 * iqr)) | (ts > (q3 + 1.5 * iqr))).sum()
+        outliers = int(((ts < (q1 - 1.5 * iqr)) | (ts > (q3 + 1.5 * iqr))).sum())
         return float(outliers / len(ts) * 100)
     
     def recommend_models(self, data_chars: Dict[str, Any], 
