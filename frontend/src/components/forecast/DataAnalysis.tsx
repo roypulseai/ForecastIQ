@@ -28,13 +28,13 @@ interface DataAnalysisProps {
 }
 
 const StatCard = ({ 
-  icon: Icon, 
+  Icon, 
   title, 
   value, 
   subtitle, 
   color 
 }: { 
-  icon: any
+  Icon: typeof TrendingUp
   title: string
   value: string | number
   subtitle?: string
@@ -88,10 +88,10 @@ export function DataAnalysis({ characteristics, recommendations }: DataAnalysisP
     )
   }
 
-  const getTrendIcon = () => {
-    if (characteristics.trend === 'increasing') return <TrendingUp sx={{ color: 'success.main' }} />
-    if (characteristics.trend === 'decreasing') return <TrendingDown sx={{ color: 'error.main' }} />
-    return <TrendingUp sx={{ color: 'info.main' }} />
+  const getTrendIcon = (): typeof TrendingUp => {
+    if (characteristics.trend === 'increasing') return TrendingUp
+    if (characteristics.trend === 'decreasing') return TrendingDown
+    return TrendingUp
   }
 
   return (
@@ -103,7 +103,7 @@ export function DataAnalysis({ characteristics, recommendations }: DataAnalysisP
       <Grid container spacing={3} sx={{ mb: 4 }}>
         <Grid item xs={12} sm={6} md={3}>
           <StatCard
-            icon={CalendarMonth}
+            Icon={CalendarMonth}
             title="Data Points"
             value={characteristics.length.toLocaleString()}
             subtitle={`${characteristics.missing_pct.toFixed(1)}% missing`}
@@ -112,7 +112,7 @@ export function DataAnalysis({ characteristics, recommendations }: DataAnalysisP
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
           <StatCard
-            icon={getTrendIcon() as any}
+            Icon={getTrendIcon()}
             title="Trend"
             value={characteristics.trend.charAt(0).toUpperCase() + characteristics.trend.slice(1)}
             subtitle={`CV: ${characteristics.cv.toFixed(2)}`}
@@ -121,7 +121,7 @@ export function DataAnalysis({ characteristics, recommendations }: DataAnalysisP
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
           <StatCard
-            icon={characteristics.stationarity ? CheckCircle : Warning}
+            Icon={characteristics.stationarity ? CheckCircle : Warning}
             title="Stationarity"
             value={characteristics.stationarity ? 'Stationary' : 'Non-stationary'}
             subtitle={`Outliers: ${characteristics.outliers_pct.toFixed(1)}%`}
@@ -130,7 +130,7 @@ export function DataAnalysis({ characteristics, recommendations }: DataAnalysisP
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
           <StatCard
-            icon={Speed}
+            Icon={Speed}
             title="Seasonality"
             value={characteristics.seasonality === 'none' ? 'Not Detected' : characteristics.seasonality}
             subtitle={`Mean: ${characteristics.mean.toFixed(2)}`}
