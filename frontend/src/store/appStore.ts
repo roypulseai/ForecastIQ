@@ -61,8 +61,8 @@ interface AppState {
 
   addUploadedFile: (file: UploadedFile) => void
   removeUploadedFile: (fileId: string) => void
-  setSalesFileId: (fileId: string) => void
-  setAnalysisData: (data: AnalysisData) => void
+  setSalesFileId: (fileId: string | null) => void
+  setAnalysisData: (data: AnalysisData | null) => void
   setCurrentForecast: (forecastId: string) => void
   setForecasts: (forecasts: ForecastListItem[]) => void
 }

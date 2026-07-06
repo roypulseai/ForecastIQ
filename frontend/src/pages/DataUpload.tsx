@@ -77,13 +77,34 @@ const templates = [
 ]
 
 export function DataUpload() {
-  const { uploadedFiles, addUploadedFile, setSalesFileId, setAnalysisData } = useStore()
+  const { uploadedFiles, addUploadedFile, removeUploadedFile, setSalesFileId, setAnalysisData } = useStore()
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string }>({
     open: false,
     message: '',
   })
+
+  const handleRemove = useCallback(
+    async (fileId: string) => {
+      try {
+        await forecastApi.deleteFile(fileId)
+        const file = uploadedFiles.find((f) => f.file_id === fileId)
+        removeUploadedFile(fileId)
+        if (file?.type === 'sales') {
+          setSalesFileId(null)
+          setAnalysisData(null)
+        }
+        setSnackbar({
+          open: true,
+          message: 'File removed successfully',
+        })
+      } catch (err: any) {
+        setError(err.response?.data?.detail || 'Failed to remove file')
+      }
+    },
+    [uploadedFiles, removeUploadedFile, setSalesFileId, setAnalysisData]
+  )
 
   const handleUpload = useCallback(
     async (fileType: string, file: File) => {
@@ -212,6 +233,7 @@ export function DataUpload() {
                   acceptedTypes={fileType.acceptedTypes}
                   uploadedFile={uploadedFiles.find((f) => f.type === fileType.type) || null}
                   onUpload={(file) => handleUpload(fileType.type, file)}
+                  onRemove={handleRemove}
                 />
               </Grid>
             ))}

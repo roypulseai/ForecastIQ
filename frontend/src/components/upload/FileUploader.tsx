@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react'
-import { Box, Typography, Card, CardContent, alpha } from '@mui/material'
+import { Box, Typography, Card, CardContent, alpha, IconButton } from '@mui/material'
 import { useDropzone } from 'react-dropzone'
-import { CloudUpload, InsertDriveFile, CheckCircle } from '@mui/icons-material'
+import { CloudUpload, InsertDriveFile, CheckCircle, Delete } from '@mui/icons-material'
 
 interface UploadedFile {
   file_id: string
@@ -19,6 +19,7 @@ interface FileUploaderProps {
   acceptedTypes: string
   uploadedFile: UploadedFile | null
   onUpload: (file: File) => void
+  onRemove?: (fileId: string) => void
 }
 
 export function FileUploader({
@@ -28,6 +29,7 @@ export function FileUploader({
   acceptedTypes,
   uploadedFile,
   onUpload,
+  onRemove,
 }: FileUploaderProps) {
   const [isUploading, setIsUploading] = useState(false)
 
@@ -79,6 +81,15 @@ export function FileUploader({
                 {uploadedFile.type.replace('_', ' ')} • {(uploadedFile.size / 1024).toFixed(1)} KB • {uploadedFile.row_count.toLocaleString()} rows
               </Typography>
             </Box>
+            {onRemove && (
+              <IconButton
+                color="error"
+                onClick={() => onRemove(uploadedFile.file_id)}
+                size="small"
+              >
+                <Delete />
+              </IconButton>
+            )}
           </Box>
           <Box sx={{ mt: 2, p: 2, bgcolor: 'background.default', borderRadius: 1 }}>
             <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
