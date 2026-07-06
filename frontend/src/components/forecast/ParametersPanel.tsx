@@ -448,7 +448,7 @@ function ETSParams({ value, onChange }: { value: ModelParams['ets']; onChange: (
           >
             <MenuItem value="add">Additive</MenuItem>
             <MenuItem value="mul">Multiplicative</MenuItem>
-            <MenuItem value=None>None</MenuItem>
+            <MenuItem value="">None</MenuItem>
           </Select>
         </FormControl>
       </Grid>

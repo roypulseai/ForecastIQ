@@ -35,6 +35,13 @@ interface AnalysisData {
       reason: string
     }>
   }
+  hierarchy?: {
+    has_hierarchy: boolean
+    levels: string[]
+    sku_count?: number
+    product_count?: number
+    category_count?: number
+  }
 }
 
 interface ForecastListItem {

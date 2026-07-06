@@ -233,8 +233,8 @@ export function DataUpload() {
             </Box>
           ) : (
             <DataAnalysis
-              characteristics={analysisData?.data_characteristics || null}
-              recommendations={analysisData?.model_recommendations || []}
+              characteristics={analysisData?.analysis?.data_characteristics || null}
+              recommendations={analysisData?.analysis?.model_recommendations || []}
             />
           )}
         </Grid>

@@ -1,0 +1,61 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Node
+frontend/node_modules
+frontend/.npm
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info
+.eggs
+*.egg
+
+# Virtual environments
+venv
+env
+.env
+
+# IDE specific files
+.DS_Store
+Thumbs.db
+
+# Documentation
+*.md
+!README.md
+docs
+
+# Temp files
+*.log
+*.tmp
+*.temp
+
+# Local files
+*.local
+.env.local
+
+# Docker
+docker-compose.override.yml
+
+# Test files
+**/*.test.*
+**/*.spec.*
+**/coverage
+**/.nyc_output
+
+# Build artifacts
+**/dist
+**/build
+backend/uploads
+backend/outputs

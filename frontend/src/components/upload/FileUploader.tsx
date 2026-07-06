@@ -31,7 +31,7 @@ export function FileUploader({
 }: FileUploaderProps) {
   const [isUploading, setIsUploading] = useState(false)
 
-  const onDrop = useCallback(
+  const handleDrop = useCallback(
     (acceptedFiles: File[]) => {
       if (acceptedFiles.length > 0) {
         setIsUploading(true)
@@ -43,7 +43,6 @@ export function FileUploader({
   )
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop,
     accept: {
       'text/csv': ['.csv'],
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
@@ -51,7 +50,8 @@ export function FileUploader({
     },
     maxFiles: 1,
     disabled: !!uploadedFile || isUploading,
-  })
+    onDrop: handleDrop,
+  } as any)
 
   if (uploadedFile) {
     return (

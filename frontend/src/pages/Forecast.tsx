@@ -10,6 +10,7 @@ import {
   MenuItem,
   FormControl,
   InputLabel,
+  FormControlLabel,
   Button,
   Chip,
   Alert,
@@ -24,7 +25,6 @@ import {
   Tabs,
   Tab,
   Slider,
-  SliderInput,
 } from '@mui/material'
 import { PlayArrow, Info, Download, ExpandMore, Compare } from '@mui/icons-material'
 import { forecastApi, ForecastRequest, ModelParameters } from '../services/api'
