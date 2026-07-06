@@ -1,0 +1,9 @@
+date,promo_id,promo_type,discount_pct,original_price,promo_price,applicable_skus
+2024-01-01,P001,percentage,10,10.00,9.00,"SKU_001,SKU_003"
+2024-01-01,P002,percentage,15,25.00,21.25,SKU_002
+2024-01-05,P003,buy_1_get_1,50,5.00,2.50,SKU_003
+2024-01-07,P004,cash_discount,20,30.00,24.00,SKU_009
+2024-01-10,P005,percentage,25,10.00,7.50,"SKU_001,SKU_006"
+2024-01-12,P006,percentage,10,6.00,5.40,SKU_004
+2024-01-14,P007,bogo,100,10.00,5.00,SKU_005
+2024-01-15,P008,percentage,30,50.00,35.00,SKU_010

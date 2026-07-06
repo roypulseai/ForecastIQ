@@ -6,7 +6,32 @@ from enum import Enum
 class ForecastFrequency(str, Enum):
     DAILY = "D"
     WEEKLY = "W"
+    FORTNIGHT = "F"
     MONTHLY = "M"
+    QUARTERLY = "Q"
+    YEARLY = "Y"
+
+class TimeGranularity(str, Enum):
+    DAILY = "D"
+    WEEKLY = "W"
+    FORTNIGHT = "F"
+    MONTHLY = "M"
+    QUARTERLY = "Q"
+    YEARLY = "Y"
+
+class ProductLevel(str, Enum):
+    SKU = "sku"
+    PRODUCT = "product"
+    CATEGORY = "category"
+    SUB_CATEGORY = "sub_category"
+    PORTFOLIO = "portfolio"
+    STORE = "store"
+    REGION = "region"
+
+class RegionLevel(str, Enum):
+    STORE = "store"
+    REGION = "region"
+    NATIONAL = "national"
 
 class ModelType(str, Enum):
     ARIMA = "arima"
@@ -25,6 +50,12 @@ class DataStatus(str, Enum):
     PROCESSING = "processing"
     READY = "ready"
     ERROR = "error"
+
+class AggregationConfig(BaseModel):
+    time_rollup: TimeGranularity = TimeGranularity.MONTHLY
+    product_level: ProductLevel = ProductLevel.CATEGORY
+    region_level: RegionLevel = RegionLevel.NATIONAL
+    agg_function: str = "sum"
 
 class UploadedFile(BaseModel):
     id: str
@@ -143,6 +174,8 @@ class ForecastRequest(BaseModel):
     include_weather: bool = False
     include_competitor: bool = False
     include_economic: bool = False
+    include_hierarchy: bool = False
+    aggregation: Optional[AggregationConfig] = None
     country: Optional[str] = None
 
 class ForecastResponse(BaseModel):
@@ -166,6 +199,13 @@ class WhatIfResponse(BaseModel):
     scenarios: List[Dict[str, Any]]
     comparison: Dict[str, Any]
 
+class AggregationRequest(BaseModel):
+    forecast_id: str
+    time_granularity: TimeGranularity = TimeGranularity.MONTHLY
+    product_level: ProductLevel = ProductLevel.CATEGORY
+    region_level: RegionLevel = RegionLevel.NATIONAL
+    agg_function: str = "sum"
+
 class ForecastValue(BaseModel):
     date: str
     forecast: float
@@ -173,6 +213,29 @@ class ForecastValue(BaseModel):
     upper_ci: float
     baseline: Optional[float] = None
     uplift: Optional[float] = None
+    sku: Optional[str] = None
+    product: Optional[str] = None
+    category: Optional[str] = None
+    sub_category: Optional[str] = None
+    portfolio: Optional[str] = None
+    region: Optional[str] = None
+    store: Optional[str] = None
+
+class AggregatedForecast(BaseModel):
+    granularity: str
+    group_by: str
+    values: List[Dict[str, Any]]
+    summary: Optional[Dict[str, Any]] = None
+
+class HierarchicalForecast(BaseModel):
+    sku_level: Optional[List[ForecastValue]] = None
+    product_level: Optional[List[ForecastValue]] = None
+    category_level: Optional[List[ForecastValue]] = None
+    sub_category_level: Optional[List[ForecastValue]] = None
+    portfolio_level: Optional[List[ForecastValue]] = None
+    region_level: Optional[List[ForecastValue]] = None
+    national_level: Optional[List[ForecastValue]] = None
+    time_granularity: TimeGranularity = TimeGranularity.MONTHLY
 
 class ModelResult(BaseModel):
     model_name: str
@@ -202,4 +265,6 @@ class ForecastResult(BaseModel):
     results: Dict[str, ModelResult]
     ensemble: Optional[EnsembleResult] = None
     external_factor_analysis: Optional[ExternalFactorAnalysis] = None
+    hierarchical_forecast: Optional[HierarchicalForecast] = None
+    aggregated_forecasts: Optional[Dict[str, AggregatedForecast]] = None
     created_at: datetime

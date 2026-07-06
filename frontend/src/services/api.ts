@@ -84,6 +84,14 @@ export interface ForecastRequest {
   include_competitor?: boolean
   include_economic?: boolean
   country?: string
+  aggregation?: AggregationConfig
+}
+
+export interface AggregationConfig {
+  time_rollup: string
+  product_level: string
+  region_level: string
+  agg_function: string
 }
 
 export interface ForecastResponse {

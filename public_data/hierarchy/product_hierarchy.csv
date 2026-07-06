@@ -1,0 +1,49 @@
+sku_code,product_name,category,sub_category,portfolio,brand,unit_price,cost,margin_pct
+SKU_001,Organic Almonds 500g,Snacks,Nuts,Healthy Snacks,Organic Choice,10.00,6.00,40.0
+SKU_002,Premium Cashews 250g,Snacks,Nuts,Premium Snacks,Luxury Nuts,25.00,15.00,40.0
+SKU_003,Greek Yogurt 500g,Dairy,Yogurt,Dairy Products,Farm Fresh,5.00,3.00,40.0
+SKU_004,Sparkling Water 6-Pack,Beverages,Water,Soft Drinks,Crystal Springs,6.00,3.60,40.0
+SKU_005,Green Tea 100 Bags,Beverages,Tea,Hot Beverages,Serenity,10.00,6.00,40.0
+SKU_006,Dark Chocolate 200g,Snacks,Chocolate,Confectionery,Dark Delights,10.00,6.00,40.0
+SKU_007,Whole Milk 1L,Dairy,Milk,Dairy Products,Farm Fresh,5.00,3.00,40.0
+SKU_008,Orange Juice 2L,Beverages,Juice,Fresh Juice,Citrus Fresh,10.00,6.00,40.0
+SKU_009,Chicken Breast 500g,Meat,Poultry,Fresh Meat,Farm Prime,30.00,18.00,40.0
+SKU_010,Olive Oil 500ml,Pantry,Cooking Oil,Premium Pantry,Mediterranean,50.00,30.00,40.0
+
+category_id,category_name,parent_category
+CAT_001,Snacks,NULL
+CAT_002,Dairy,NULL
+CAT_003,Beverages,NULL
+CAT_004,Meat,NULL
+CAT_005,Pantry,NULL
+CAT_006,Nuts,Snacks
+CAT_007,Chocolate,Snacks
+CAT_008,Yogurt,Dairy
+CAT_009,Milk,Dairy
+CAT_010,Water,Beverages
+CAT_011,Tea,Beverages
+CAT_012,Juice,Beverages
+CAT_013,Poultry,Meat
+CAT_014,Cooking Oil,Pantry
+
+sub_category_id,sub_category_name,category_id
+SC_001,Nuts,CAT_001
+SC_002,Chocolate,CAT_001
+SC_003,Yogurt,CAT_002
+SC_004,Milk,CAT_002
+SC_005,Water,CAT_003
+SC_006,Tea,CAT_003
+SC_007,Juice,CAT_003
+SC_008,Poultry,CAT_004
+SC_009,Cooking Oil,CAT_005
+
+portfolio_id,portfolio_name,sub_category_id
+PORT_001,Healthy Snacks,SC_001
+PORT_002,Premium Snacks,SC_001
+PORT_003,Dairy Products,SC_003
+PORT_004,Soft Drinks,SC_005
+PORT_005,Hot Beverages,SC_006
+PORT_006,Confectionery,SC_002
+PORT_007,Fresh Juice,SC_007
+PORT_008,Fresh Meat,SC_008
+PORT_009,Premium Pantry,SC_009

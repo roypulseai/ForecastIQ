@@ -179,15 +179,21 @@ ForecastIQ/
 │   │       │   ├── models/     # 9 forecasting models
 │   │       │   ├── model_selector.py  # Auto-selection
 │   │       │   ├── ensemble.py        # Ensemble methods
+│   │       │   ├── aggregation.py     # Time rolling & hierarchy
 │   │       │   └── marketing_mix.py   # Adstock/saturation
 │   │       └── data_processor/  # Data handling
+│   ├── core/
+│   │   └── privacy/            # Privacy compliance modules
 │   └── requirements.txt
 ├── frontend/
 │   └── src/
 │       ├── pages/              # Dashboard, Upload, Forecast, Results
 │       ├── components/         # FileUploader, ParametersPanel, WhatIfSimulator
 │       └── services/api.ts     # API client
+├── legal/
+│   └── privacy/                # Privacy compliance documentation
 ├── templates/                  # CSV templates for external data
+├── public_data/                # Sample data for testing
 ├── docker-compose.yml
 └── start-with-docker.bat
 ```
@@ -198,6 +204,50 @@ ForecastIQ/
 - **Frontend**: React + Material UI + Vite
 - **ML**: statsmodels, prophet, lightgbm, xgboost
 - **Charts**: Chart.js
+
+## Data Privacy Compliance
+
+ForecastIQ is designed with data privacy compliance across multiple jurisdictions.
+
+### Supported Jurisdictions
+
+| Jurisdiction | Regulation | Key Requirements |
+|--------------|------------|------------------|
+| **USA** | CCPA, Sector-specific | Opt-out consent, 45-day response |
+| **European Union** | GDPR | Explicit consent, 30-day response, DPO |
+| **Switzerland** | FADP 2023 | Explicit consent, 72-hr breach notice |
+| **India** | DPDP Act 2023 | Affirmative consent, data localization |
+
+### Privacy Features
+
+- **Consent Management**: Purpose-specific consent with withdrawal capability
+- **Data Classification**: Automatic PII/Financial/Operational data detection
+- **Retention Policies**: Jurisdiction-aware automated data retention
+- **Data Subject Rights**: Access, rectification, erasure request handling
+- **Breach Notification**: Risk assessment and mandatory notification workflows
+
+### Compliance Documentation
+
+Detailed compliance documentation is available in `/legal/privacy/COMPLIANCE_GUIDE.md`
+
+### Backend Privacy Module
+
+```python
+from app.core.privacy import (
+    ConsentManager,
+    DataClassifier,
+    RetentionManager,
+    DataSubjectRightsManager,
+    BreachManager,
+    Jurisdiction,
+)
+
+# Initialize privacy components
+consent_manager = ConsentManager()
+rights_manager = DataSubjectRightsManager()
+retention_manager = RetentionManager()
+breach_manager = BreachManager()
+```
 
 ## License
 

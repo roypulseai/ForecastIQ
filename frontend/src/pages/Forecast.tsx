@@ -31,6 +31,7 @@ import { forecastApi, ForecastRequest, ModelParameters } from '../services/api'
 import { useStore } from '../store/appStore'
 import { ParametersPanel } from '../components/forecast/ParametersPanel'
 import { WhatIfSimulator } from '../components/forecast/WhatIfSimulator'
+import { AggregationPanel } from '../components/forecast/AggregationPanel'
 
 const modelOptions = [
   { value: 'arima', label: 'ARIMA', description: 'AutoRegressive Integrated Moving Average' },
@@ -60,6 +61,12 @@ export function Forecast() {
   const [parameters, setParameters] = useState<ModelParameters>({})
   const [showWhatIf, setShowWhatIf] = useState(false)
   const [forecastResult, setForecastResult] = useState<any>(null)
+  const [aggConfig, setAggConfig] = useState({
+    time_rollup: 'D',
+    product_level: 'sku',
+    region_level: 'store',
+    agg_function: 'sum',
+  })
 
   const [formData, setFormData] = useState({
     name: '',
@@ -137,6 +144,7 @@ export function Forecast() {
         include_competitor: formData.includeCompetitor,
         include_economic: formData.includeEconomic,
         country: formData.country || undefined,
+        aggregation: aggConfig,
       }
 
       const response = await forecastApi.createForecast(request)
@@ -443,6 +451,12 @@ export function Forecast() {
             selectedModels={selectedModels}
             parameters={parameters}
             onChange={handleParametersChange}
+          />
+
+          <AggregationPanel
+            config={aggConfig}
+            onChange={setAggConfig}
+            hasHierarchy={!!analysisData?.hierarchy}
           />
         </Grid>
 

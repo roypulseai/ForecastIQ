@@ -1,0 +1,16 @@
+date,event_name,event_type,expected_attendance,impact_factor,location
+2024-01-01,New Year Celebration,festival,50000,2.5,City Center
+2024-02-14,Valentine's Day Sale,commercial,10000,2.2,All Stores
+2024-03-17,St. Patrick's Parade,festival,30000,1.8,Downtown
+2024-03-30,Easter Egg Hunt,community,15000,1.5,City Park
+2024-05-05,Cinco de Mayo Festival,cultural,40000,2.0,Downtown
+2024-06-15,Summer Music Festival,entertainment,50000,2.2,Waterfront
+2024-07-04,Independence Day Fireworks,entertainment,75000,2.0,City Park
+2024-08-15,Back to School Sale,commercial,20000,1.8,All Stores
+2024-09-02,Labor Day BBQ Festival,community,25000,1.6,City Park
+2024-10-31,Halloween Carnival,festival,35000,1.7,Downtown
+2024-11-29,Black Friday Mega Sale,commercial,50000,3.0,All Stores
+2024-12-02,Cyber Monday Sale,commercial,30000,2.5,Online
+2024-12-15,Holiday Gift Fair,commercial,40000,2.0,Convention Center
+2024-12-24,Christmas Eve Special,commercial,25000,1.8,All Stores
+2024-12-31,New Year's Eve Countdown,entertainment,60000,2.5,City Center
