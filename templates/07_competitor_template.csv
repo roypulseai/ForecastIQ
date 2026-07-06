@@ -1,0 +1,11 @@
+date,competitor_name,competitor_price,market_share,promotion_flag
+2024-01-01,Competitor_A,95,30,0
+2024-01-02,Competitor_A,92,32,1
+2024-01-03,Competitor_A,95,30,0
+2024-01-04,Competitor_A,98,28,0
+2024-01-05,Competitor_A,95,30,0
+2024-01-01,Competitor_B,90,25,0
+2024-01-02,Competitor_B,85,28,1
+2024-01-03,Competitor_B,90,25,0
+2024-01-04,Competitor_B,88,27,0
+2024-01-05,Competitor_B,90,25,0

@@ -59,7 +59,11 @@ export interface ModelParameters {
     holidays_prior_scale: number
   }
   lightgbm?: { n_estimators: number; learning_rate: number; max_depth: number; num_leaves: number; min_child_samples: number }
+  xgboost?: { n_estimators: number; learning_rate: number; max_depth: number; min_child_weight: number; subsample: number; colsample_bytree: number }
   wma?: { window: number }
+  ets?: { trend: string; seasonal: string; seasonal_periods: number }
+  theta?: { period: number; deseasonalize: boolean }
+  stl?: { period: number; robust: boolean }
 }
 
 export interface ForecastRequest {
@@ -76,6 +80,9 @@ export interface ForecastRequest {
   include_promotions: boolean
   include_holidays: boolean
   include_events: boolean
+  include_weather?: boolean
+  include_competitor?: boolean
+  include_economic?: boolean
   country?: string
 }
 
@@ -117,6 +124,13 @@ export interface ForecastResult {
     forecast_values: ForecastValue[]
     baseline_values?: ForecastValue[]
     individual_results: ModelResult[]
+  }
+  external_factor_analysis?: {
+    media_plan_impact?: Record<string, any>
+    promotion_impact?: Record<string, any>
+    holiday_impact?: Record<string, any>
+    weather_impact?: Record<string, any>
+    price_elasticity?: number
   }
 }
 

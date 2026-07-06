@@ -5,29 +5,43 @@ import {
   Card,
   CardContent,
   Grid,
-  Button,
   TextField,
   Select,
   MenuItem,
   FormControl,
   InputLabel,
-  Checkbox,
-  FormControlLabel,
+  Button,
   Chip,
   Alert,
   CircularProgress,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Tabs,
+  Tab,
+  Slider,
+  SliderInput,
 } from '@mui/material'
-import { PlayArrow, Info } from '@mui/icons-material'
+import { PlayArrow, Info, Download, ExpandMore, Compare } from '@mui/icons-material'
 import { forecastApi, ForecastRequest, ModelParameters } from '../services/api'
 import { useStore } from '../store/appStore'
 import { ParametersPanel } from '../components/forecast/ParametersPanel'
+import { WhatIfSimulator } from '../components/forecast/WhatIfSimulator'
 
 const modelOptions = [
   { value: 'arima', label: 'ARIMA', description: 'AutoRegressive Integrated Moving Average' },
   { value: 'sarimax', label: 'SARIMAX', description: 'Seasonal ARIMAX with exogenous variables' },
   { value: 'prophet', label: 'Prophet', description: 'Facebook\'s time series forecasting' },
   { value: 'lightgbm', label: 'LightGBM', description: 'Gradient boosting for time series' },
+  { value: 'xgboost', label: 'XGBoost', description: 'Extreme gradient boosting' },
   { value: 'wma', label: 'WMA', description: 'Weighted Moving Average' },
+  { value: 'ets', label: 'ETS', description: 'Error-Trend-Seasonal' },
+  { value: 'theta', label: 'Theta', description: 'Theta method (M3 winner)' },
+  { value: 'stl', label: 'STL', description: 'Seasonal-Trend decomposition' },
 ]
 
 const frequencyOptions = [
@@ -37,13 +51,15 @@ const frequencyOptions = [
 ]
 
 export function Forecast() {
-  const { uploadedFiles, analysisData, setCurrentForecast, setForecasts } = useStore()
+  const { uploadedFiles, analysisData, setCurrentForecast, setForecasts, currentForecast } = useStore()
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [selectedModels, setSelectedModels] = useState<string[]>(['prophet'])
   const [useEnsemble, setUseEnsemble] = useState(false)
   const [ensembleModels, setEnsembleModels] = useState<string[]>(['prophet', 'lightgbm'])
   const [parameters, setParameters] = useState<ModelParameters>({})
+  const [showWhatIf, setShowWhatIf] = useState(false)
+  const [forecastResult, setForecastResult] = useState<any>(null)
 
   const [formData, setFormData] = useState({
     name: '',
@@ -56,6 +72,9 @@ export function Forecast() {
     includePromotions: false,
     includeHolidays: false,
     includeEvents: false,
+    includeWeather: false,
+    includeCompetitor: false,
+    includeEconomic: false,
   })
 
   const handleModelToggle = (modelValue: string) => {
@@ -114,6 +133,9 @@ export function Forecast() {
         include_promotions: formData.includePromotions,
         include_holidays: formData.includeHolidays,
         include_events: formData.includeEvents,
+        include_weather: formData.includeWeather,
+        include_competitor: formData.includeCompetitor,
+        include_economic: formData.includeEconomic,
         country: formData.country || undefined,
       }
 
@@ -123,7 +145,9 @@ export function Forecast() {
       const forecasts = await forecastApi.listForecasts()
       setForecasts(forecasts)
 
-      window.location.href = '/results'
+      const result = await forecastApi.getForecast(response.id)
+      setForecastResult(result)
+      setShowWhatIf(true)
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Forecast failed')
     } finally {
@@ -156,7 +180,7 @@ export function Forecast() {
           Create Forecast
         </Typography>
         <Typography variant="body1" color="text.secondary">
-          Configure and run your forecasting model
+          Configure and run your forecasting model with external factors
         </Typography>
       </Box>
 
@@ -251,9 +275,19 @@ export function Forecast() {
                     >
                       <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                          <Checkbox
-                            checked={selectedModels.includes(model.value)}
-                            sx={{ p: 0 }}
+                          <Box
+                            sx={{
+                              width: 20,
+                              height: 20,
+                              borderRadius: 1,
+                              border: '2px solid',
+                              borderColor: selectedModels.includes(model.value)
+                                ? 'primary.main'
+                                : 'divider',
+                              bgcolor: selectedModels.includes(model.value)
+                                ? 'primary.main'
+                                : 'transparent',
+                            }}
                           />
                           <Box>
                             <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
@@ -271,7 +305,7 @@ export function Forecast() {
               </Grid>
 
               <Box sx={{ mt: 3 }}>
-                <FormControlLabel
+                <FormControlControlLabel
                   control={
                     <Checkbox
                       checked={useEnsemble}
@@ -362,6 +396,45 @@ export function Forecast() {
                     label="Include Events"
                   />
                 </Grid>
+                <Grid item xs={12} sm={6}>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={formData.includeWeather}
+                        onChange={(e) =>
+                          setFormData({ ...formData, includeWeather: e.target.checked })
+                        }
+                      />
+                    }
+                    label="Include Weather"
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={formData.includeCompetitor}
+                        onChange={(e) =>
+                          setFormData({ ...formData, includeCompetitor: e.target.checked })
+                        }
+                      />
+                    }
+                    label="Include Competitor Data"
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={formData.includeEconomic}
+                        onChange={(e) =>
+                          setFormData({ ...formData, includeEconomic: e.target.checked })
+                        }
+                      />
+                    }
+                    label="Include Economic Indicators"
+                  />
+                </Grid>
               </Grid>
             </CardContent>
           </Card>
@@ -406,6 +479,21 @@ export function Forecast() {
 
               <Box sx={{ mb: 3 }}>
                 <Typography variant="body2" color="text.secondary">
+                  External Factors
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 1 }}>
+                  {formData.includeMediaPlan && <Chip label="Media" size="small" variant="outlined" />}
+                  {formData.includePromotions && <Chip label="Promo" size="small" variant="outlined" />}
+                  {formData.includeHolidays && <Chip label="Holidays" size="small" variant="outlined" />}
+                  {formData.includeEvents && <Chip label="Events" size="small" variant="outlined" />}
+                  {formData.includeWeather && <Chip label="Weather" size="small" variant="outlined" />}
+                  {formData.includeCompetitor && <Chip label="Competitor" size="small" variant="outlined" />}
+                  {formData.includeEconomic && <Chip label="Economic" size="small" variant="outlined" />}
+                </Box>
+              </Box>
+
+              <Box sx={{ mb: 3 }}>
+                <Typography variant="body2" color="text.secondary">
                   Data Files
                 </Typography>
                 <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 1 }}>
@@ -435,6 +523,34 @@ export function Forecast() {
           </Card>
         </Grid>
       </Grid>
+
+      {showWhatIf && forecastResult && (
+        <WhatIfSimulator
+          open={showWhatIf}
+          onClose={() => setShowWhatIf(false)}
+          forecastResult={forecastResult}
+        />
+      )}
     </Box>
+  )
+}
+
+function FormControlControlLabel({ control, label }: { control: any; label: string }) {
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'center' }}>
+      {control}
+      <Typography sx={{ ml: 1 }}>{label}</Typography>
+    </Box>
+  )
+}
+
+function Checkbox({ checked, onChange }: { checked: boolean; onChange: (e: any) => void }) {
+  return (
+    <input
+      type="checkbox"
+      checked={checked}
+      onChange={onChange}
+      style={{ width: 18, height: 18, cursor: 'pointer' }}
+    />
   )
 }

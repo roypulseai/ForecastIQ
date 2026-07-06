@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
-import { Box, Typography, Grid, Button, Alert, Snackbar, CircularProgress } from '@mui/material'
-import { CloudUpload } from '@mui/icons-material'
+import { Box, Typography, Grid, Button, Alert, Snackbar, CircularProgress, Card, CardContent, Chip } from '@mui/material'
+import { CloudUpload, Download, Description, Cloud } from '@mui/icons-material'
 import { FileUploader } from '../components/upload/FileUploader'
 import { DataAnalysis } from '../components/forecast/DataAnalysis'
 import { forecastApi, UploadResponse } from '../services/api'
@@ -12,31 +12,68 @@ const fileTypes = [
     title: 'Sales Data',
     description: 'Historical sales data with dates and values',
     acceptedTypes: '.csv, .xlsx, .xls',
+    required: true,
   },
   {
     type: 'media_plan',
     title: 'Media Plan',
-    description: 'Marketing spend and channel data',
+    description: 'Marketing spend by channel (TV, digital, social)',
     acceptedTypes: '.csv, .xlsx, .xls',
+    required: false,
   },
   {
     type: 'promotions',
     title: 'Promotions',
     description: 'Promotional campaigns and discounts',
     acceptedTypes: '.csv, .xlsx, .xls',
+    required: false,
   },
   {
     type: 'holidays',
     title: 'Holidays',
     description: 'Holiday calendar with impact factors',
     acceptedTypes: '.csv, .xlsx, .xls',
+    required: false,
   },
   {
     type: 'events',
     title: 'Events',
-    description: 'Special events that may affect demand',
+    description: 'Special events that affect demand',
     acceptedTypes: '.csv, .xlsx, .xls',
+    required: false,
   },
+  {
+    type: 'weather',
+    title: 'Weather',
+    description: 'Weather conditions (temp, rain, snow)',
+    acceptedTypes: '.csv, .xlsx, .xls',
+    required: false,
+  },
+  {
+    type: 'competitor',
+    title: 'Competitor',
+    description: 'Competitor pricing and market share',
+    acceptedTypes: '.csv, .xlsx, .xls',
+    required: false,
+  },
+  {
+    type: 'economic',
+    title: 'Economic',
+    description: 'Economic indicators (GDP, inflation)',
+    acceptedTypes: '.csv, .xlsx, .xls',
+    required: false,
+  },
+]
+
+const templates = [
+  { name: 'Sales Template', file: 'templates/01_sales_template.csv', description: 'Required for forecasting' },
+  { name: 'Media Plan', file: 'templates/02_media_plan_template.csv', description: 'Channel spend data' },
+  { name: 'Promotions', file: 'templates/03_promotions_template.csv', description: 'Promo campaigns' },
+  { name: 'Holidays', file: 'templates/04_holidays_template.csv', description: 'Holiday impact' },
+  { name: 'Events', file: 'templates/05_events_template.csv', description: 'Special events' },
+  { name: 'Weather', file: 'templates/06_weather_template.csv', description: 'Weather conditions' },
+  { name: 'Competitor', file: 'templates/07_competitor_template.csv', description: 'Competitor data' },
+  { name: 'Economic', file: 'templates/08_economic_template.csv', description: 'Economic indicators' },
 ]
 
 export function DataUpload() {
@@ -84,8 +121,20 @@ export function DataUpload() {
     [addUploadedFile, setSalesFileId, setAnalysisData]
   )
 
+  const handleDownloadTemplate = (templateFile: string) => {
+    const link = document.createElement('a')
+    link.href = `/${templateFile}`
+    link.download = templateFile.split('/').pop() || 'template.csv'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
   const salesFile = uploadedFiles.find((f) => f.type === 'sales')
   const analysisData = useStore((state) => state.analysisData)
+
+  const uploadedTypes = new Set(uploadedFiles.map(f => f.type))
+  const allRequiredUploaded = uploadedTypes.has('sales')
 
   return (
     <Box>
@@ -94,15 +143,64 @@ export function DataUpload() {
           Data Upload
         </Typography>
         <Typography variant="body1" color="text.secondary">
-          Upload your data files for forecasting analysis
+          Upload your data files for forecasting. Download templates below.
         </Typography>
       </Box>
 
+      <Card sx={{ mb: 4, bgcolor: 'primary.lighter' }}>
+        <CardContent sx={{ p: 3 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+            <Download sx={{ color: 'primary.main', fontSize: 32 }} />
+            <Box>
+              <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                Download CSV Templates
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Use these templates to format your external data correctly
+              </Typography>
+            </Box>
+          </Box>
+          <Grid container spacing={2}>
+            {templates.map((template) => (
+              <Grid item xs={12} sm={6} md={3} key={template.name}>
+                <Box
+                  sx={{
+                    p: 2,
+                    bgcolor: 'background.paper',
+                    borderRadius: 2,
+                    cursor: 'pointer',
+                    '&:hover': { bgcolor: 'action.hover' },
+                  }}
+                  onClick={() => handleDownloadTemplate(template.file)}
+                >
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                    <Description sx={{ fontSize: 18, color: 'primary.main' }} />
+                    <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                      {template.name}
+                    </Typography>
+                  </Box>
+                  <Typography variant="caption" color="text.secondary">
+                    {template.description}
+                  </Typography>
+                </Box>
+              </Grid>
+            ))}
+          </Grid>
+        </CardContent>
+      </Card>
+
       <Grid container spacing={3}>
         <Grid item xs={12} md={8}>
-          <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
-            Upload Files
-          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+            <Typography variant="h6" sx={{ fontWeight: 600 }}>
+              Upload Files
+            </Typography>
+            <Chip
+              label={allRequiredUploaded ? 'Ready' : 'Sales Required'}
+              color={allRequiredUploaded ? 'success' : 'warning'}
+              size="small"
+            />
+          </Box>
 
           <Grid container spacing={3}>
             {fileTypes.map((fileType) => (

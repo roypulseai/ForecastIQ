@@ -1,0 +1,6 @@
+date,promo_id,promo_type,discount,original_price,promo_price,eligible_items
+2024-01-01,PROMO_001,percentage,20,100,80,Item_001,Item_002
+2024-01-01,PROMO_002,percentage,15,50,42.5,Item_003
+2024-01-07,PROMO_003,buy_x_get_y,30,100,70,Item_001
+2024-01-15,PROMO_004,cash_discount,10,200,180,Item_002,Item_003
+2024-01-20,PROMO_005,percentage,25,80,60,Item_001

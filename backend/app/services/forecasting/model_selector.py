@@ -7,7 +7,8 @@ warnings.filterwarnings('ignore')
 
 from .models import (
     BaseForecaster, ARIMAForecaster, SARIMAXForecaster, 
-    ProphetForecaster, LightGBMForecaster, WMAForecaster
+    ProphetForecaster, LightGBMForecaster, WMAForecaster,
+    XGBoostForecaster, ETSForecaster, ThetaForecaster, STLForecaster
 )
 
 class ModelSelector:
@@ -17,7 +18,11 @@ class ModelSelector:
             'sarimax': SARIMAXForecaster,
             'prophet': ProphetForecaster,
             'lightgbm': LightGBMForecaster,
-            'wma': WMAForecaster
+            'xgboost': XGBoostForecaster,
+            'wma': WMAForecaster,
+            'ets': ETSForecaster,
+            'theta': ThetaForecaster,
+            'stl': STLForecaster
         }
         self._data_characteristics = {}
     
@@ -94,16 +99,21 @@ class ModelSelector:
         
         if data_chars['length'] < 14:
             recommendations.append({'model': 'wma', 'score': 0.9, 'reason': 'Limited data, simple methods preferred'})
-            return recommendations
+            recommendations.append({'model': 'theta', 'score': 0.85, 'reason': 'Simple but effective for short series'})
+            return recommendations[:5]
         
         if data_chars['cv'] > 0.5:
             recommendations.append({'model': 'lightgbm', 'score': 0.85, 'reason': 'High variance, ML can capture patterns'})
+            recommendations.append({'model': 'xgboost', 'score': 0.82, 'reason': 'Robust boosting for complex patterns'})
         elif data_chars['cv'] < 0.2:
             recommendations.append({'model': 'wma', 'score': 0.8, 'reason': 'Low variance, stable demand'})
+            recommendations.append({'model': 'ets', 'score': 0.78, 'reason': 'Exponential smoothing for stable series'})
         
         if data_chars['seasonality'] != 'none':
             recommendations.append({'model': 'prophet', 'score': 0.9, 'reason': f'Detected {data_chars["seasonality"]} seasonality'})
-            recommendations.append({'model': 'sarimax', 'score': 0.8, 'reason': 'Can capture seasonal patterns'})
+            recommendations.append({'model': 'sarimax', 'score': 0.82, 'reason': 'Can capture seasonal patterns'})
+            recommendations.append({'model': 'stl', 'score': 0.8, 'reason': 'STL decomposition for flexible seasonality'})
+            recommendations.append({'model': 'theta', 'score': 0.78, 'reason': 'Simple seasonal decomposition'})
         
         if data_chars['stationarity']:
             recommendations.append({'model': 'arima', 'score': 0.75, 'reason': 'Data is stationary'})
@@ -111,6 +121,7 @@ class ModelSelector:
         if has_external_features:
             recommendations.append({'model': 'prophet', 'score': 0.85, 'reason': 'Can incorporate external regressors'})
             recommendations.append({'model': 'lightgbm', 'score': 0.85, 'reason': 'Handles multiple features well'})
+            recommendations.append({'model': 'xgboost', 'score': 0.82, 'reason': 'Robust to feature interactions'})
         
         recommendations.sort(key=lambda x: x['score'], reverse=True)
         
@@ -128,7 +139,7 @@ class ModelSelector:
         
         if model_type == 'arima':
             p, d, q = 1, 1, 1
-            if params and 'arima' in params:
+            if params and params.get('arima'):
                 p = params['arima'].get('p', 1)
                 d = params['arima'].get('d', 1)
                 q = params['arima'].get('q', 1)
@@ -137,7 +148,7 @@ class ModelSelector:
         elif model_type == 'sarimax':
             p, d, q = 1, 1, 1
             sp, sd, sq, s_period = 1, 1, 1, 7
-            if params and 'sarimax' in params:
+            if params and params.get('sarimax'):
                 p = params['sarimax'].get('p', 1)
                 d = params['sarimax'].get('d', 1)
                 q = params['sarimax'].get('q', 1)
@@ -148,9 +159,7 @@ class ModelSelector:
             return SARIMAXForecaster(order=(p, d, q), seasonal_order=(sp, sd, sq, s_period))
         
         elif model_type == 'prophet':
-            prophet_params = {}
-            if params and 'prophet' in params:
-                prophet_params = params['prophet']
+            prophet_params = params.get('prophet', {}) if params else {}
             return ProphetForecaster(
                 seasonality_mode=prophet_params.get('seasonality_mode', 'additive'),
                 yearly_seasonality=prophet_params.get('yearly_seasonality', True),
@@ -162,9 +171,7 @@ class ModelSelector:
             )
         
         elif model_type == 'lightgbm':
-            lgbm_params = {}
-            if params and 'lightgbm' in params:
-                lgbm_params = params['lightgbm']
+            lgbm_params = params.get('lightgbm', {}) if params else {}
             return LightGBMForecaster(
                 n_estimators=lgbm_params.get('n_estimators', 100),
                 learning_rate=lgbm_params.get('learning_rate', 0.1),
@@ -173,11 +180,42 @@ class ModelSelector:
                 min_child_samples=lgbm_params.get('min_child_samples', 20)
             )
         
+        elif model_type == 'xgboost':
+            xgb_params = params.get('xgboost', {}) if params else {}
+            return XGBoostForecaster(
+                n_estimators=xgb_params.get('n_estimators', 100),
+                learning_rate=xgb_params.get('learning_rate', 0.1),
+                max_depth=xgb_params.get('max_depth', 5),
+                min_child_weight=xgb_params.get('min_child_weight', 1),
+                subsample=xgb_params.get('subsample', 1.0),
+                colsample_bytree=xgb_params.get('colsample_bytree', 1.0)
+            )
+        
         elif model_type == 'wma':
-            wma_params = {}
-            if params and 'wma' in params:
-                wma_params = params['wma']
+            wma_params = params.get('wma', {}) if params else {}
             return WMAForecaster(window=wma_params.get('window', 8))
+        
+        elif model_type == 'ets':
+            ets_params = params.get('ets', {}) if params else {}
+            return ETSForecaster(
+                trend=ets_params.get('trend', 'add'),
+                seasonal=ets_params.get('seasonal', 'add'),
+                seasonal_periods=ets_params.get('seasonal_periods', 7)
+            )
+        
+        elif model_type == 'theta':
+            theta_params = params.get('theta', {}) if params else {}
+            return ThetaForecaster(
+                period=theta_params.get('period', 7),
+                deseasonalize=theta_params.get('deseasonalize', True)
+            )
+        
+        elif model_type == 'stl':
+            stl_params = params.get('stl', {}) if params else {}
+            return STLForecaster(
+                period=stl_params.get('period', 7),
+                robust=stl_params.get('robust', True)
+            )
         
         if model_type not in self.model_classes:
             raise ValueError(f"Unknown model type: {model_type}")

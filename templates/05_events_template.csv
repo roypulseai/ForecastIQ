@@ -1,0 +1,7 @@
+date,event_name,event_type,impact_factor,expected_attendance,location
+2024-03-17,St. Patrick's Day,festival,1.8,50000,Downtown
+2024-04-01,Spring Festival,community,1.5,20000,City Park
+2024-06-15,Summer Concert,entertainment,1.6,30000,Stadium
+2024-09-01,Labor Day Parade,community,1.4,15000,Main Street
+2024-10-10,Sports Final,entertainment,1.9,80000,Stadium
+2024-11-15,Food Festival,commercial,1.7,40000,Convention Center

@@ -14,8 +14,6 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
-  Collapse,
-  IconButton,
   Chip,
   Tooltip,
 } from '@mui/material'
@@ -26,7 +24,11 @@ interface ModelParams {
   sarimax?: { p: number; d: number; q: number; seasonal_p: number; seasonal_d: number; seasonal_q: number; seasonal_period: number }
   prophet?: { seasonality_mode: string; yearly_seasonality: boolean; weekly_seasonality: boolean; daily_seasonality: boolean; changepoint_prior_scale: number; seasonality_prior_scale: number; holidays_prior_scale: number }
   lightgbm?: { n_estimators: number; learning_rate: number; max_depth: number; num_leaves: number; min_child_samples: number }
+  xgboost?: { n_estimators: number; learning_rate: number; max_depth: number; min_child_weight: number; subsample: number; colsample_bytree: number }
   wma?: { window: number }
+  ets?: { trend: string; seasonal: string; seasonal_periods: number }
+  theta?: { period: number; deseasonalize: boolean }
+  stl?: { period: number; robust: boolean }
 }
 
 interface ParametersPanelProps {
@@ -356,7 +358,7 @@ function LightGBMParams({ value, onChange }: { value: ModelParams['lightgbm']; o
 
 function WMAParams({ value, onChange }: { value: ModelParams['wma']; onChange: (v: ModelParams['wma']) => void }) {
   const params = value || { window: 8 }
-  
+
   return (
     <Box sx={{ px: 1, maxWidth: 300 }}>
       <Typography variant="caption" gutterBottom>
@@ -371,6 +373,171 @@ function WMAParams({ value, onChange }: { value: ModelParams['wma']; onChange: (
         marks={[{ value: 2 }, { value: 30 }, { value: 90 }, { value: 180 }, { value: 365 }]}
       />
     </Box>
+  )
+}
+
+function XGBoostParams({ value, onChange }: { value: ModelParams['xgboost']; onChange: (v: ModelParams['xgboost']) => void }) {
+  const params = value || { n_estimators: 100, learning_rate: 0.1, max_depth: 5, min_child_weight: 1, subsample: 1.0, colsample_bytree: 1.0 }
+
+  return (
+    <Grid container spacing={2}>
+      <Grid item xs={12} sm={6}>
+        <TextField
+          fullWidth
+          size="small"
+          label="Number of Estimators"
+          type="number"
+          value={params.n_estimators}
+          onChange={(e) => onChange({ ...params, n_estimators: parseInt(e.target.value) || 100 })}
+          inputProps={{ min: 10, max: 1000 }}
+        />
+      </Grid>
+      <Grid item xs={12} sm={6}>
+        <TextField
+          fullWidth
+          size="small"
+          label="Learning Rate"
+          type="number"
+          value={params.learning_rate}
+          onChange={(e) => onChange({ ...params, learning_rate: parseFloat(e.target.value) || 0.1 })}
+          inputProps={{ min: 0.01, max: 1, step: 0.01 }}
+        />
+      </Grid>
+      <Grid item xs={12} sm={6}>
+        <Box sx={{ px: 1 }}>
+          <Typography variant="caption" gutterBottom>
+            Max Depth: {params.max_depth}
+          </Typography>
+          <Slider
+            value={params.max_depth}
+            min={1}
+            max={20}
+            step={1}
+            onChange={(_, v) => onChange({ ...params, max_depth: v as number })}
+            marks={[{ value: 1 }, { value: 10 }, { value: 20 }]}
+          />
+        </Box>
+      </Grid>
+      <Grid item xs={12} sm={6}>
+        <TextField
+          fullWidth
+          size="small"
+          label="Min Child Weight"
+          type="number"
+          value={params.min_child_weight}
+          onChange={(e) => onChange({ ...params, min_child_weight: parseInt(e.target.value) || 1 })}
+          inputProps={{ min: 1, max: 100 }}
+        />
+      </Grid>
+    </Grid>
+  )
+}
+
+function ETSParams({ value, onChange }: { value: ModelParams['ets']; onChange: (v: ModelParams['ets']) => void }) {
+  const params = value || { trend: 'add', seasonal: 'add', seasonal_periods: 7 }
+
+  return (
+    <Grid container spacing={2}>
+      <Grid item xs={12} sm={4}>
+        <FormControl fullWidth size="small">
+          <InputLabel>Trend</InputLabel>
+          <Select
+            value={params.trend}
+            label="Trend"
+            onChange={(e) => onChange({ ...params, trend: e.target.value })}
+          >
+            <MenuItem value="add">Additive</MenuItem>
+            <MenuItem value="mul">Multiplicative</MenuItem>
+            <MenuItem value=None>None</MenuItem>
+          </Select>
+        </FormControl>
+      </Grid>
+      <Grid item xs={12} sm={4}>
+        <FormControl fullWidth size="small">
+          <InputLabel>Seasonal</InputLabel>
+          <Select
+            value={params.seasonal}
+            label="Seasonal"
+            onChange={(e) => onChange({ ...params, seasonal: e.target.value })}
+          >
+            <MenuItem value="add">Additive</MenuItem>
+            <MenuItem value="mul">Multiplicative</MenuItem>
+            <MenuItem value="None">None</MenuItem>
+          </Select>
+        </FormControl>
+      </Grid>
+      <Grid item xs={12} sm={4}>
+        <TextField
+          fullWidth
+          size="small"
+          label="Seasonal Period"
+          type="number"
+          value={params.seasonal_periods}
+          onChange={(e) => onChange({ ...params, seasonal_periods: parseInt(e.target.value) || 7 })}
+          inputProps={{ min: 2, max: 365 }}
+        />
+      </Grid>
+    </Grid>
+  )
+}
+
+function ThetaParams({ value, onChange }: { value: ModelParams['theta']; onChange: (v: ModelParams['theta']) => void }) {
+  const params = value || { period: 7, deseasonalize: true }
+
+  return (
+    <Grid container spacing={2}>
+      <Grid item xs={12} sm={6}>
+        <TextField
+          fullWidth
+          size="small"
+          label="Period"
+          type="number"
+          value={params.period}
+          onChange={(e) => onChange({ ...params, period: parseInt(e.target.value) || 7 })}
+          inputProps={{ min: 2, max: 365 }}
+        />
+      </Grid>
+      <Grid item xs={12} sm={6}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <input
+            type="checkbox"
+            checked={params.deseasonalize}
+            onChange={(e) => onChange({ ...params, deseasonalize: e.target.checked })}
+          />
+          <Typography>Deseasonalize</Typography>
+        </Box>
+      </Grid>
+    </Grid>
+  )
+}
+
+function STLParams({ value, onChange }: { value: ModelParams['stl']; onChange: (v: ModelParams['stl']) => void }) {
+  const params = value || { period: 7, robust: true }
+
+  return (
+    <Grid container spacing={2}>
+      <Grid item xs={12} sm={6}>
+        <TextField
+          fullWidth
+          size="small"
+          label="Seasonal Period"
+          type="number"
+          value={params.period}
+          onChange={(e) => onChange({ ...params, period: parseInt(e.target.value) || 7 })}
+          inputProps={{ min: 2, max: 365 }}
+        />
+      </Grid>
+      <Grid item xs={12} sm={6}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <input
+            type="checkbox"
+            checked={params.robust}
+            onChange={(e) => onChange({ ...params, robust: e.target.checked })}
+          />
+          <Typography>Robust Fitting</Typography>
+        </Box>
+      </Grid>
+    </Grid>
   )
 }
 
@@ -472,6 +639,62 @@ export function ParametersPanel({ selectedModels, parameters, onChange }: Parame
             </AccordionSummary>
             <AccordionDetails>
               <WMAParams value={parameters.wma} onChange={(v) => updateParams('wma', v)} />
+            </AccordionDetails>
+          </Accordion>
+        )}
+
+        {selectedModels.includes('xgboost') && (
+          <Accordion expanded={expanded === 'xgboost'} onChange={handleChange('xgboost')}>
+            <AccordionSummary expandIcon={<ExpandMore />}>
+              <Typography sx={{ fontWeight: 600 }}>XGBoost</Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ ml: 2 }}>
+                {parameters.xgboost?.n_estimators || 100} trees, lr={parameters.xgboost?.learning_rate || 0.1}
+              </Typography>
+            </AccordionSummary>
+            <AccordionDetails>
+              <XGBoostParams value={parameters.xgboost} onChange={(v) => updateParams('xgboost', v)} />
+            </AccordionDetails>
+          </Accordion>
+        )}
+
+        {selectedModels.includes('ets') && (
+          <Accordion expanded={expanded === 'ets'} onChange={handleChange('ets')}>
+            <AccordionSummary expandIcon={<ExpandMore />}>
+              <Typography sx={{ fontWeight: 600 }}>ETS</Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ ml: 2 }}>
+                {parameters.ets?.trend || 'add'} trend, {parameters.ets?.seasonal || 'add'} seasonal
+              </Typography>
+            </AccordionSummary>
+            <AccordionDetails>
+              <ETSParams value={parameters.ets} onChange={(v) => updateParams('ets', v)} />
+            </AccordionDetails>
+          </Accordion>
+        )}
+
+        {selectedModels.includes('theta') && (
+          <Accordion expanded={expanded === 'theta'} onChange={handleChange('theta')}>
+            <AccordionSummary expandIcon={<ExpandMore />}>
+              <Typography sx={{ fontWeight: 600 }}>Theta</Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ ml: 2 }}>
+                Period: {parameters.theta?.period || 7}, {parameters.theta?.deseasonalize ? 'deseasonalized' : 'not deseasonalized'}
+              </Typography>
+            </AccordionSummary>
+            <AccordionDetails>
+              <ThetaParams value={parameters.theta} onChange={(v) => updateParams('theta', v)} />
+            </AccordionDetails>
+          </Accordion>
+        )}
+
+        {selectedModels.includes('stl') && (
+          <Accordion expanded={expanded === 'stl'} onChange={handleChange('stl')}>
+            <AccordionSummary expandIcon={<ExpandMore />}>
+              <Typography sx={{ fontWeight: 600 }}>STL</Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ ml: 2 }}>
+                Period: {parameters.stl?.period || 7}, {parameters.stl?.robust ? 'robust' : 'standard'}
+              </Typography>
+            </AccordionSummary>
+            <AccordionDetails>
+              <STLParams value={parameters.stl} onChange={(v) => updateParams('stl', v)} />
             </AccordionDetails>
           </Accordion>
         )}

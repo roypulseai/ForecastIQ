@@ -13,7 +13,11 @@ class ModelType(str, Enum):
     SARIMAX = "sarimax"
     PROPHET = "prophet"
     LIGHTGBM = "lightgbm"
+    XGBOOST = "xgboost"
     WMA = "wma"
+    ETS = "ets"
+    THETA = "theta"
+    STL = "stl"
     ENSEMBLE = "ensemble"
 
 class DataStatus(str, Enum):
@@ -87,15 +91,40 @@ class LightGBMParams(BaseModel):
     num_leaves: int = Field(default=31, ge=2, le=255, description="Number of leaves")
     min_child_samples: int = Field(default=20, ge=1, le=100, description="Minimum samples in leaf")
 
+class XGBoostParams(BaseModel):
+    n_estimators: int = Field(default=100, ge=10, le=1000, description="Number of boosting iterations")
+    learning_rate: float = Field(default=0.1, ge=0.01, le=1.0, description="Step size shrinkage")
+    max_depth: int = Field(default=5, ge=1, le=20, description="Maximum tree depth")
+    min_child_weight: int = Field(default=1, ge=1, le=100, description="Minimum child weight")
+    subsample: float = Field(default=1.0, ge=0.1, le=1.0, description="Subsample ratio")
+    colsample_bytree: float = Field(default=1.0, ge=0.1, le=1.0, description="Column subsample ratio")
+
 class WMAParams(BaseModel):
     window: int = Field(default=8, ge=2, le=365, description="Lookback window for weighted average")
+
+class ETSParams(BaseModel):
+    trend: str = Field(default="add", description="Trend type (add, mul, or None)")
+    seasonal: str = Field(default="add", description="Seasonal type (add, mul, or None)")
+    seasonal_periods: int = Field(default=7, ge=2, le=365, description="Seasonal period")
+
+class ThetaParams(BaseModel):
+    period: int = Field(default=7, ge=2, le=365, description="Period for deseasonalization")
+    deseasonalize: bool = Field(default=True, description="Whether to deseasonalize")
+
+class STLParams(BaseModel):
+    period: int = Field(default=7, ge=2, le=365, description="Seasonal period")
+    robust: bool = Field(default=True, description="Robust fitting")
 
 class ModelParameters(BaseModel):
     arima: Optional[ARIMAParams] = None
     sarimax: Optional[SARIMAXParams] = None
     prophet: Optional[ProphetParams] = None
     lightgbm: Optional[LightGBMParams] = None
+    xgboost: Optional[XGBoostParams] = None
     wma: Optional[WMAParams] = None
+    ets: Optional[ETSParams] = None
+    theta: Optional[ThetaParams] = None
+    stl: Optional[STLParams] = None
 
 class ForecastRequest(BaseModel):
     name: str
@@ -111,6 +140,9 @@ class ForecastRequest(BaseModel):
     include_promotions: bool = False
     include_holidays: bool = False
     include_events: bool = False
+    include_weather: bool = False
+    include_competitor: bool = False
+    include_economic: bool = False
     country: Optional[str] = None
 
 class ForecastResponse(BaseModel):
@@ -119,6 +151,20 @@ class ForecastResponse(BaseModel):
     message: str
     best_model: Optional[ModelType] = None
     model_rankings: Optional[List[Dict[str, Any]]] = None
+
+class WhatIfScenario(BaseModel):
+    name: str
+    scenario_type: str
+    parameters: Dict[str, Any]
+
+class WhatIfRequest(BaseModel):
+    forecast_id: str
+    scenarios: List[WhatIfScenario]
+
+class WhatIfResponse(BaseModel):
+    forecast_id: str
+    scenarios: List[Dict[str, Any]]
+    comparison: Dict[str, Any]
 
 class ForecastValue(BaseModel):
     date: str
@@ -143,9 +189,17 @@ class EnsembleResult(BaseModel):
     baseline_values: Optional[List[ForecastValue]] = None
     individual_results: List[ModelResult]
 
+class ExternalFactorAnalysis(BaseModel):
+    media_plan_impact: Optional[Dict[str, Any]] = None
+    promotion_impact: Optional[Dict[str, Any]] = None
+    holiday_impact: Optional[Dict[str, Any]] = None
+    weather_impact: Optional[Dict[str, Any]] = None
+    price_elasticity: Optional[float] = None
+
 class ForecastResult(BaseModel):
     forecast_id: str
     request: ForecastRequest
     results: Dict[str, ModelResult]
     ensemble: Optional[EnsembleResult] = None
+    external_factor_analysis: Optional[ExternalFactorAnalysis] = None
     created_at: datetime
