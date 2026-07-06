@@ -1,3 +1,4 @@
+import * as React from 'react'
 import { useState, useEffect } from 'react'
 import { Box, Typography, Card, CardContent, Grid, Button, alpha, CircularProgress } from '@mui/material'
 import { Link as RouterLink } from 'react-router-dom'
@@ -159,7 +160,7 @@ export function Dashboard() {
                       mb: 2,
                     }}
                   >
-                    <Icon sx={{ color: feature.color, fontSize: 24 }} />
+                    {React.createElement(Icon, { sx: { color: feature.color, fontSize: 24 } })}
                   </Box>
                   <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
                     {feature.title}
