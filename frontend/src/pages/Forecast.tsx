@@ -18,8 +18,9 @@ import {
   CircularProgress,
 } from '@mui/material'
 import { PlayArrow, Info } from '@mui/icons-material'
-import { forecastApi, ForecastRequest } from '../services/api'
+import { forecastApi, ForecastRequest, ModelParameters } from '../services/api'
 import { useStore } from '../store/appStore'
+import { ParametersPanel } from '../components/forecast/ParametersPanel'
 
 const modelOptions = [
   { value: 'arima', label: 'ARIMA', description: 'AutoRegressive Integrated Moving Average' },
@@ -42,6 +43,7 @@ export function Forecast() {
   const [selectedModels, setSelectedModels] = useState<string[]>(['prophet'])
   const [useEnsemble, setUseEnsemble] = useState(false)
   const [ensembleModels, setEnsembleModels] = useState<string[]>(['prophet', 'lightgbm'])
+  const [parameters, setParameters] = useState<ModelParameters>({})
 
   const [formData, setFormData] = useState({
     name: '',
@@ -49,7 +51,6 @@ export function Forecast() {
     dateColumn: analysisData?.validation?.date_column || '',
     frequency: 'D' as 'D' | 'W' | 'M',
     horizon: 30,
-    seasonalityMode: 'additive' as 'additive' | 'multiplicative',
     country: '',
     includeMediaPlan: false,
     includePromotions: false,
@@ -73,6 +74,10 @@ export function Forecast() {
       }
       return [...prev, modelValue]
     })
+  }
+
+  const handleParametersChange = (newParams: ModelParameters) => {
+    setParameters(newParams)
   }
 
   const handleSubmit = async () => {
@@ -102,13 +107,13 @@ export function Forecast() {
         frequency: formData.frequency,
         horizon: formData.horizon,
         models: selectedModels,
+        parameters: parameters,
         ensemble_models: useEnsemble ? ensembleModels : undefined,
         ensemble_weights: useEnsemble ? ensembleModels.map(() => 1 / ensembleModels.length) : undefined,
         include_media_plan: formData.includeMediaPlan,
         include_promotions: formData.includePromotions,
         include_holidays: formData.includeHolidays,
         include_events: formData.includeEvents,
-        seasonality_mode: formData.seasonalityMode,
         country: formData.country || undefined,
       }
 
@@ -202,24 +207,6 @@ export function Forecast() {
                     }
                     inputProps={{ min: 1, max: 365 }}
                   />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <FormControl fullWidth>
-                    <InputLabel>Seasonality Mode</InputLabel>
-                    <Select
-                      value={formData.seasonalityMode}
-                      label="Seasonality Mode"
-                      onChange={(e) =>
-                        setFormData({
-                          ...formData,
-                          seasonalityMode: e.target.value as 'additive' | 'multiplicative',
-                        })
-                      }
-                    >
-                      <MenuItem value="additive">Additive</MenuItem>
-                      <MenuItem value="multiplicative">Multiplicative</MenuItem>
-                    </Select>
-                  </FormControl>
                 </Grid>
                 <Grid item xs={12} sm={6}>
                   <TextField
@@ -316,7 +303,7 @@ export function Forecast() {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card sx={{ mb: 3 }}>
             <CardContent sx={{ p: 3 }}>
               <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
                 External Factors
@@ -378,6 +365,12 @@ export function Forecast() {
               </Grid>
             </CardContent>
           </Card>
+
+          <ParametersPanel
+            selectedModels={selectedModels}
+            parameters={parameters}
+            onChange={handleParametersChange}
+          />
         </Grid>
 
         <Grid item xs={12} md={4}>

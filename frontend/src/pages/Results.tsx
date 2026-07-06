@@ -18,7 +18,7 @@ import {
   Tab,
   Button,
 } from '@mui/material'
-import { Download, Refresh } from '@mui/icons-material'
+import { Download, Refresh, TrendingUp, ShowChart } from '@mui/icons-material'
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -45,6 +45,7 @@ export function Results() {
   const [error, setError] = useState<string | null>(null)
   const [selectedModel, setSelectedModel] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState(0)
+  const [showBaseline, setShowBaseline] = useState(true)
 
   useEffect(() => {
     const loadForecast = async () => {
@@ -110,33 +111,73 @@ export function Results() {
     )
   }
 
-  const selectedData = selectedModel && forecastData.results[selectedModel]
+  const selectedData = selectedModel ? forecastData.results[selectedModel] : null
   const ensembleData = forecastData.ensemble
+
+  const chartDatasets = []
+
+  if (selectedData) {
+    chartDatasets.push({
+      label: `${selectedModel?.toUpperCase()} Forecast`,
+      data: selectedData.forecast_values.map((v) => v.forecast),
+      borderColor: colors[0],
+      backgroundColor: `${colors[0]}20`,
+      fill: true,
+      tension: 0.4,
+    })
+
+    if (showBaseline && selectedData.baseline_values) {
+      chartDatasets.push({
+        label: 'Baseline (Trend)',
+        data: selectedData.baseline_values.map((v) => v.forecast),
+        borderColor: colors[1],
+        backgroundColor: `${colors[1]}10`,
+        borderDash: [5, 5],
+        fill: false,
+        tension: 0.4,
+      })
+    }
+
+    if (showBaseline && selectedData.forecast_values.some(v => v.uplift !== undefined)) {
+      const upliftData = selectedData.forecast_values.map((v) => v.uplift || 0)
+      chartDatasets.push({
+        label: 'Uplift %',
+        data: upliftData,
+        borderColor: colors[2],
+        backgroundColor: `${colors[2]}20`,
+        yAxisID: 'y1',
+        fill: true,
+        tension: 0.4,
+      })
+    }
+  }
+
+  if (ensembleData) {
+    chartDatasets.push({
+      label: 'ENSEMBLE Forecast',
+      data: ensembleData.forecast_values.map((v) => v.forecast),
+      borderColor: colors[3],
+      backgroundColor: `${colors[3]}20`,
+      fill: true,
+      tension: 0.4,
+    })
+
+    if (showBaseline && ensembleData.baseline_values) {
+      chartDatasets.push({
+        label: 'ENSEMBLE Baseline',
+        data: ensembleData.baseline_values.map((v) => v.forecast),
+        borderColor: colors[4],
+        backgroundColor: `${colors[4]}10`,
+        borderDash: [5, 5],
+        fill: false,
+        tension: 0.4,
+      })
+    }
+  }
 
   const chartData = {
     labels: selectedData?.forecast_values.map((v) => v.date) || [],
-    datasets: [
-      {
-        label: selectedModel?.toUpperCase() || '',
-        data: selectedData?.forecast_values.map((v) => v.forecast) || [],
-        borderColor: colors[0],
-        backgroundColor: `${colors[0]}20`,
-        fill: true,
-        tension: 0.4,
-      },
-      ...(ensembleData
-        ? [
-            {
-              label: 'ENSEMBLE',
-              data: ensembleData.forecast_values.map((v) => v.forecast),
-              borderColor: colors[1],
-              backgroundColor: `${colors[1]}20`,
-              fill: true,
-              tension: 0.4,
-            },
-          ]
-        : []),
-    ],
+    datasets: chartDatasets,
   }
 
   const chartOptions = {
@@ -156,7 +197,27 @@ export function Results() {
     },
     scales: {
       y: {
+        type: 'linear' as const,
+        display: true,
+        position: 'left' as const,
         beginAtZero: true,
+        title: {
+          display: true,
+          text: 'Forecast Value',
+        },
+      },
+      y1: {
+        type: 'linear' as const,
+        display: showBaseline && selectedData?.forecast_values.some(v => v.uplift !== undefined),
+        position: 'right' as const,
+        beginAtZero: true,
+        title: {
+          display: true,
+          text: 'Uplift %',
+        },
+        grid: {
+          drawOnChartArea: false,
+        },
       },
     },
     interaction: {
@@ -195,6 +256,7 @@ export function Results() {
 
       <Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)} sx={{ mb: 3 }}>
         <Tab label="Forecast Chart" />
+        <Tab label="Baseline vs Forecast" />
         <Tab label="Model Comparison" />
         <Tab label="Detailed Results" />
       </Tabs>
@@ -204,26 +266,36 @@ export function Results() {
           <Grid item xs={12}>
             <Card>
               <CardContent sx={{ p: 3 }}>
-                <Box sx={{ display: 'flex', gap: 2, mb: 3, flexWrap: 'wrap' }}>
-                  {Object.keys(forecastData.results).map((model, idx) => (
-                    <Chip
-                      key={model}
-                      label={model.toUpperCase()}
-                      onClick={() => setSelectedModel(model)}
-                      color={selectedModel === model ? 'primary' : 'default'}
-                      sx={{ cursor: 'pointer' }}
-                    />
-                  ))}
-                  {ensembleData && (
-                    <Chip
-                      label="ENSEMBLE"
-                      onClick={() => setSelectedModel('ensemble')}
-                      color="secondary"
-                      sx={{ cursor: 'pointer' }}
-                    />
-                  )}
+                <Box sx={{ display: 'flex', gap: 2, mb: 3, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <Box sx={{ display: 'flex', gap: 1 }}>
+                    {Object.keys(forecastData.results).map((model, idx) => (
+                      <Chip
+                        key={model}
+                        label={model.toUpperCase()}
+                        onClick={() => setSelectedModel(model)}
+                        color={selectedModel === model ? 'primary' : 'default'}
+                        sx={{ cursor: 'pointer' }}
+                      />
+                    ))}
+                    {ensembleData && (
+                      <Chip
+                        label="ENSEMBLE"
+                        onClick={() => setSelectedModel('ensemble')}
+                        color="secondary"
+                        sx={{ cursor: 'pointer' }}
+                      />
+                    )}
+                  </Box>
+                  <Box sx={{ flex: 1 }} />
+                  <Chip
+                    icon={<ShowChart />}
+                    label={showBaseline ? 'Hide Baseline' : 'Show Baseline'}
+                    onClick={() => setShowBaseline(!showBaseline)}
+                    color={showBaseline ? 'primary' : 'default'}
+                    variant={showBaseline ? 'filled' : 'outlined'}
+                  />
                 </Box>
-                <Box sx={{ height: 400 }}>
+                <Box sx={{ height: 450 }}>
                   <Line data={chartData} options={chartOptions} />
                 </Box>
               </CardContent>
@@ -233,6 +305,94 @@ export function Results() {
       )}
 
       {activeTab === 1 && (
+        <Grid container spacing={3}>
+          <Grid item xs={12}>
+            <Card>
+              <CardContent sx={{ p: 3 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
+                  <TrendingUp sx={{ color: 'primary.main' }} />
+                  <Box>
+                    <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                      Baseline vs Forecast Analysis
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Compare baseline trend (without external factors) vs. full forecast (with promotions, media, etc.)
+                    </Typography>
+                  </Box>
+                </Box>
+                <TableContainer sx={{ maxHeight: 500 }}>
+                  <Table stickyHeader size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell sx={{ fontWeight: 600 }}>Date</TableCell>
+                        {Object.keys(forecastData.results).map((model) => (
+                          <TableCell key={model} align="center" colSpan={3}>
+                            <Chip label={model.toUpperCase()} size="small" />
+                          </TableCell>
+                        ))}
+                      </TableRow>
+                      <TableRow>
+                        <TableCell />
+                        {Object.keys(forecastData.results).map(() => (
+                          <>
+                            <TableCell key={`${Math.random()}-baseline`} align="right" sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
+                              Baseline
+                            </TableCell>
+                            <TableCell key={`${Math.random()}-forecast`} align="right" sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
+                              Forecast
+                            </TableCell>
+                            <TableCell key={`${Math.random()}-uplift`} align="right" sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
+                              Uplift %
+                            </TableCell>
+                          </>
+                        ))}
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {sortedDates.slice(0, 30).map((date) => (
+                        <TableRow key={date}>
+                          <TableCell sx={{ fontWeight: 500 }}>{date}</TableCell>
+                          {Object.entries(forecastData.results).map(([model, result]) => {
+                            const forecast = result.forecast_values.find((v) => v.date === date)
+                            const baseline = result.baseline_values?.find((v) => v.date === date)
+                            return (
+                              <>
+                                <TableCell key={`${model}-baseline`} align="right">
+                                  {baseline?.forecast.toFixed(2) || '-'}
+                                </TableCell>
+                                <TableCell key={`${model}-forecast`} align="right" sx={{ fontWeight: 600 }}>
+                                  {forecast?.forecast.toFixed(2) || '-'}
+                                </TableCell>
+                                <TableCell
+                                  key={`${model}-uplift`}
+                                  align="right"
+                                  sx={{
+                                    color: (forecast?.uplift || 0) > 0 ? 'success.main' : (forecast?.uplift || 0) < 0 ? 'error.main' : 'text.secondary',
+                                    fontWeight: 600,
+                                  }}
+                                >
+                                  {forecast?.uplift ? `${forecast.uplift > 0 ? '+' : ''}${forecast.uplift.toFixed(1)}%` : '-'}
+                                </TableCell>
+                              </>
+                            )
+                          })}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+                {sortedDates.length > 30 && (
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 2, textAlign: 'center' }}>
+                    Showing first 30 rows of {sortedDates.length} total forecasts
+                  </Typography>
+                )}
+              </CardContent>
+            </Card>
+          </Grid>
+        </Grid>
+      )}
+
+      {activeTab === 2 && (
         <Grid container spacing={3}>
           <Grid item xs={12}>
             <Card>
@@ -278,7 +438,7 @@ export function Results() {
         </Grid>
       )}
 
-      {activeTab === 2 && (
+      {activeTab === 3 && (
         <Grid container spacing={3}>
           <Grid item xs={12}>
             <Card>

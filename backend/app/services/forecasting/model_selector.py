@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 from datetime import datetime
 import warnings
 warnings.filterwarnings('ignore')
@@ -123,14 +123,70 @@ class ModelSelector:
         
         return unique_recs[:5]
     
-    def get_model(self, model_type: str, **kwargs) -> BaseForecaster:
-        if model_type.lower() not in self.model_classes:
+    def get_model(self, model_type: str, params: Optional[Dict[str, Any]] = None, **kwargs) -> BaseForecaster:
+        model_type = model_type.lower()
+        
+        if model_type == 'arima':
+            p, d, q = 1, 1, 1
+            if params and 'arima' in params:
+                p = params['arima'].get('p', 1)
+                d = params['arima'].get('d', 1)
+                q = params['arima'].get('q', 1)
+            return ARIMAForecaster(order=(p, d, q))
+        
+        elif model_type == 'sarimax':
+            p, d, q = 1, 1, 1
+            sp, sd, sq, s_period = 1, 1, 1, 7
+            if params and 'sarimax' in params:
+                p = params['sarimax'].get('p', 1)
+                d = params['sarimax'].get('d', 1)
+                q = params['sarimax'].get('q', 1)
+                sp = params['sarimax'].get('seasonal_p', 1)
+                sd = params['sarimax'].get('seasonal_d', 1)
+                sq = params['sarimax'].get('seasonal_q', 1)
+                s_period = params['sarimax'].get('seasonal_period', 7)
+            return SARIMAXForecaster(order=(p, d, q), seasonal_order=(sp, sd, sq, s_period))
+        
+        elif model_type == 'prophet':
+            prophet_params = {}
+            if params and 'prophet' in params:
+                prophet_params = params['prophet']
+            return ProphetForecaster(
+                seasonality_mode=prophet_params.get('seasonality_mode', 'additive'),
+                yearly_seasonality=prophet_params.get('yearly_seasonality', True),
+                weekly_seasonality=prophet_params.get('weekly_seasonality', True),
+                daily_seasonality=prophet_params.get('daily_seasonality', False),
+                changepoint_prior_scale=prophet_params.get('changepoint_prior_scale', 0.05),
+                seasonality_prior_scale=prophet_params.get('seasonality_prior_scale', 10.0),
+                holidays_prior_scale=prophet_params.get('holidays_prior_scale', 10.0)
+            )
+        
+        elif model_type == 'lightgbm':
+            lgbm_params = {}
+            if params and 'lightgbm' in params:
+                lgbm_params = params['lightgbm']
+            return LightGBMForecaster(
+                n_estimators=lgbm_params.get('n_estimators', 100),
+                learning_rate=lgbm_params.get('learning_rate', 0.1),
+                max_depth=lgbm_params.get('max_depth', 5),
+                num_leaves=lgbm_params.get('num_leaves', 31),
+                min_child_samples=lgbm_params.get('min_child_samples', 20)
+            )
+        
+        elif model_type == 'wma':
+            wma_params = {}
+            if params and 'wma' in params:
+                wma_params = params['wma']
+            return WMAForecaster(window=wma_params.get('window', 8))
+        
+        if model_type not in self.model_classes:
             raise ValueError(f"Unknown model type: {model_type}")
         
-        return self.model_classes[model_type.lower()](**kwargs)
+        return self.model_classes[model_type](**kwargs)
     
     def cross_validate_score(self, df: pd.DataFrame, date_col: str, value_col: str,
-                             model_type: str, horizon: int = 7) -> Dict[str, float]:
+                             model_type: str, params: Optional[Dict] = None,
+                             horizon: int = 7) -> Dict[str, float]:
         ts = df.set_index(date_col)[value_col].sort_index()
         ts.index = pd.to_datetime(ts.index)
         
@@ -141,7 +197,7 @@ class ModelSelector:
         train = ts.iloc[:train_size]
         test = ts.iloc[train_size:]
         
-        model = self.get_model(model_type)
+        model = self.get_model(model_type, params)
         
         try:
             train_df = train.reset_index()

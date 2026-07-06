@@ -46,6 +46,22 @@ export interface AnalysisResponse {
   }
 }
 
+export interface ModelParameters {
+  arima?: { p: number; d: number; q: number }
+  sarimax?: { p: number; d: number; q: number; seasonal_p: number; seasonal_d: number; seasonal_q: number; seasonal_period: number }
+  prophet?: { 
+    seasonality_mode: string
+    yearly_seasonality: boolean
+    weekly_seasonality: boolean
+    daily_seasonality: boolean
+    changepoint_prior_scale: number
+    seasonality_prior_scale: number
+    holidays_prior_scale: number
+  }
+  lightgbm?: { n_estimators: number; learning_rate: number; max_depth: number; num_leaves: number; min_child_samples: number }
+  wma?: { window: number }
+}
+
 export interface ForecastRequest {
   name: string
   target_column: string
@@ -53,13 +69,13 @@ export interface ForecastRequest {
   frequency: 'D' | 'W' | 'M'
   horizon: number
   models: string[]
+  parameters?: ModelParameters
   ensemble_models?: string[]
   ensemble_weights?: number[]
   include_media_plan: boolean
   include_promotions: boolean
   include_holidays: boolean
   include_events: boolean
-  seasonality_mode: 'additive' | 'multiplicative'
   country?: string
 }
 
@@ -71,20 +87,36 @@ export interface ForecastResponse {
   model_rankings?: Array<{ model: string; mae: number; rmse: number }>
 }
 
+export interface ForecastValue {
+  date: string
+  forecast: number
+  lower_ci: number
+  upper_ci: number
+  baseline?: number
+  uplift?: number
+}
+
+export interface ModelResult {
+  model_name: string
+  forecast_values: ForecastValue[]
+  baseline_values?: ForecastValue[]
+  metrics: { mae: number; rmse: number; mape: number }
+  feature_importance?: Record<string, number>
+  components?: Record<string, any>
+}
+
 export interface ForecastResult {
   forecast_id: string
   name: string
   created_at: string
   request: ForecastRequest
-  results: Record<string, {
-    model_name: string
-    metrics: { mae: number; rmse: number; mape: number }
-    forecast_values: Array<{ date: string; forecast: number; lower_ci: number; upper_ci: number }>
-  }>
+  results: Record<string, ModelResult>
   ensemble?: {
     models_used: string[]
     weights: number[]
-    forecast_values: Array<{ date: string; forecast: number; lower_ci: number; upper_ci: number }>
+    forecast_values: ForecastValue[]
+    baseline_values?: ForecastValue[]
+    individual_results: ModelResult[]
   }
 }
 

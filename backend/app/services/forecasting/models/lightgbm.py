@@ -10,16 +10,18 @@ from .base import BaseForecaster
 
 class LightGBMForecaster(BaseForecaster):
     def __init__(self, n_estimators: int = 100, learning_rate: float = 0.1,
-                 max_depth: int = 5, num_leaves: int = 31):
+                 max_depth: int = 5, num_leaves: int = 31, min_child_samples: int = 20):
         super().__init__("LightGBM")
         self.n_estimators = n_estimators
         self.learning_rate = learning_rate
         self.max_depth = max_depth
         self.num_leaves = num_leaves
+        self.min_child_samples = min_child_samples
         self._fitted_model = None
         self._feature_names = []
         self._scaler = StandardScaler()
         self._last_values = None
+        self._baseline_mean = None
     
     def _create_features(self, df: pd.DataFrame, date_col: str) -> pd.DataFrame:
         df = df.copy()
@@ -35,17 +37,11 @@ class LightGBMForecaster(BaseForecaster):
         df['is_month_start'] = df[date_col].dt.is_month_start.astype(int)
         df['is_month_end'] = df[date_col].dt.is_month_end.astype(int)
         
-        for lag in [1, 2, 3, 7, 14, 21, 28]:
-            df[f'lag_{lag}'] = df[date_col].diff(lag)
-        
-        for window in [7, 14, 28]:
-            df[f'rolling_mean_{window}'] = df[date_col].rolling(window).mean()
-            df[f'rolling_std_{window}'] = df[date_col].rolling(window).std()
-        
         return df
     
-    def _add_external_features(self, df: pd.DataFrame, exog_data: Optional[Dict]) -> pd.DataFrame:
-        if exog_data is None:
+    def _add_external_features(self, df: pd.DataFrame, exog_data: Optional[Dict], 
+                               include_external: bool = True) -> pd.DataFrame:
+        if exog_data is None or not include_external:
             return df
         
         df = df.copy()
@@ -74,9 +70,10 @@ class LightGBMForecaster(BaseForecaster):
     def fit(self, df: pd.DataFrame, date_col: str, value_col: str,
             exog_data: Optional[Dict] = None, **kwargs) -> 'LightGBMForecaster':
         df_feat = self._create_features(df, date_col)
-        df_feat = self._add_external_features(df_feat, exog_data)
+        df_feat = self._add_external_features(df_feat, exog_data, include_external=True)
         
         self._last_values = df.set_index(date_col)[value_col]
+        self._baseline_mean = df[value_col].mean()
         
         exclude_cols = [date_col, value_col]
         feature_cols = [c for c in df_feat.columns if c not in exclude_cols and c not in ['date']]
@@ -93,6 +90,7 @@ class LightGBMForecaster(BaseForecaster):
             learning_rate=self.learning_rate,
             max_depth=self.max_depth,
             num_leaves=self.num_leaves,
+            min_child_samples=self.min_child_samples,
             random_state=42,
             verbose=-1
         )
@@ -112,7 +110,7 @@ class LightGBMForecaster(BaseForecaster):
         df_full = pd.concat([pd.DataFrame({date_col: self._last_values.index}), future_df], ignore_index=True)
         
         df_feat = self._create_features(df_full, date_col)
-        df_feat = self._add_external_features(df_feat, exog_data)
+        df_feat = self._add_external_features(df_feat, exog_data, include_external=True)
         
         X_future = df_feat[feature_cols].fillna(0)
         X_future_scaled = self._scaler.transform(X_future)
@@ -130,12 +128,49 @@ class LightGBMForecaster(BaseForecaster):
         
         return results
     
+    def get_baseline(self, horizon: int, exog_data: Optional[Dict] = None,
+                     **kwargs) -> List[Dict[str, Any]]:
+        if self._fitted_model is None:
+            raise ValueError("Model not fitted")
+        
+        last_date = pd.to_datetime(self._last_values.index[-1])
+        future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=horizon)
+        
+        future_df = pd.DataFrame({date_col: future_dates})
+        df_full = pd.concat([pd.DataFrame({date_col: self._last_values.index}), future_df], ignore_index=True)
+        
+        df_feat = self._create_features(df_full, date_col)
+        df_feat = self._add_external_features(df_feat, exog_data, include_external=False)
+        
+        for col in self._feature_names:
+            if col not in df_feat.columns:
+                df_feat[col] = 0
+        
+        X_future = df_feat[self._feature_names].fillna(0)
+        X_future_scaled = self._scaler.transform(X_future)
+        
+        predictions = self._fitted_model.predict(X_future_scaled)
+        
+        baseline = []
+        for i, date in enumerate(future_dates):
+            baseline.append({
+                'date': str(date.date()),
+                'forecast': float(max(0, predictions[i])),
+                'lower_ci': float(max(0, predictions[i] * 0.85)),
+                'upper_ci': float(predictions[i] * 1.15)
+            })
+        
+        return baseline
+    
     def get_feature_importance(self) -> Dict[str, float]:
         if self._fitted_model is None:
             return {}
         
         importance = self._fitted_model.feature_importances_
         return {name: float(imp) for name, imp in zip(self._feature_names, importance)}
+    
+    def get_components(self, horizon: int) -> Dict[str, Any]:
+        return {'feature_importance': self.get_feature_importance()}
     
     def get_metrics(self) -> Dict[str, float]:
         return {}

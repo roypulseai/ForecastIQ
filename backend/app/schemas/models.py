@@ -57,6 +57,46 @@ class HolidayEventData(BaseModel):
     type: str
     impact_factor: float = 1.0
 
+class ARIMAParams(BaseModel):
+    p: int = Field(default=1, ge=0, le=10, description="AR order")
+    d: int = Field(default=1, ge=0, le=2, description="Differencing order")
+    q: int = Field(default=1, ge=0, le=10, description="MA order")
+
+class SARIMAXParams(BaseModel):
+    p: int = Field(default=1, ge=0, le=10, description="AR order")
+    d: int = Field(default=1, ge=0, le=2, description="Differencing order")
+    q: int = Field(default=1, ge=0, le=10, description="MA order")
+    seasonal_p: int = Field(default=1, ge=0, le=5, description="Seasonal AR order")
+    seasonal_d: int = Field(default=1, ge=0, le=2, description="Seasonal differencing")
+    seasonal_q: int = Field(default=1, ge=0, le=5, description="Seasonal MA order")
+    seasonal_period: int = Field(default=7, ge=2, le=365, description="Seasonal period (days)")
+
+class ProphetParams(BaseModel):
+    seasonality_mode: str = Field(default="additive", description="additive or multiplicative")
+    yearly_seasonality: bool = Field(default=True, description="Include yearly seasonality")
+    weekly_seasonality: bool = Field(default=True, description="Include weekly seasonality")
+    daily_seasonality: bool = Field(default=False, description="Include daily seasonality")
+    changepoint_prior_scale: float = Field(default=0.05, ge=0.001, le=10, description="Trend changepoint flexibility")
+    seasonality_prior_scale: float = Field(default=10.0, ge=0.01, le=100, description="Seasonality flexibility")
+    holidays_prior_scale: float = Field(default=10.0, ge=0.01, le=100, description="Holidays flexibility")
+
+class LightGBMParams(BaseModel):
+    n_estimators: int = Field(default=100, ge=10, le=1000, description="Number of boosting iterations")
+    learning_rate: float = Field(default=0.1, ge=0.01, le=1.0, description="Step size shrinkage")
+    max_depth: int = Field(default=5, ge=1, le=20, description="Maximum tree depth")
+    num_leaves: int = Field(default=31, ge=2, le=255, description="Number of leaves")
+    min_child_samples: int = Field(default=20, ge=1, le=100, description="Minimum samples in leaf")
+
+class WMAParams(BaseModel):
+    window: int = Field(default=8, ge=2, le=365, description="Lookback window for weighted average")
+
+class ModelParameters(BaseModel):
+    arima: Optional[ARIMAParams] = None
+    sarimax: Optional[SARIMAXParams] = None
+    prophet: Optional[ProphetParams] = None
+    lightgbm: Optional[LightGBMParams] = None
+    wma: Optional[WMAParams] = None
+
 class ForecastRequest(BaseModel):
     name: str
     target_column: str
@@ -64,13 +104,13 @@ class ForecastRequest(BaseModel):
     frequency: ForecastFrequency
     horizon: int = Field(ge=1, le=365)
     models: List[ModelType] = [ModelType.PROPHET]
+    parameters: Optional[ModelParameters] = None
     ensemble_models: Optional[List[ModelType]] = None
     ensemble_weights: Optional[List[float]] = None
     include_media_plan: bool = False
     include_promotions: bool = False
     include_holidays: bool = False
     include_events: bool = False
-    seasonality_mode: str = "additive"
     country: Optional[str] = None
 
 class ForecastResponse(BaseModel):
@@ -80,16 +120,27 @@ class ForecastResponse(BaseModel):
     best_model: Optional[ModelType] = None
     model_rankings: Optional[List[Dict[str, Any]]] = None
 
+class ForecastValue(BaseModel):
+    date: str
+    forecast: float
+    lower_ci: float
+    upper_ci: float
+    baseline: Optional[float] = None
+    uplift: Optional[float] = None
+
 class ModelResult(BaseModel):
     model_name: str
-    forecast_values: List[Dict[str, Any]]
+    forecast_values: List[ForecastValue]
+    baseline_values: Optional[List[ForecastValue]] = None
     metrics: Dict[str, float]
     feature_importance: Optional[Dict[str, float]] = None
+    components: Optional[Dict[str, Any]] = None
 
 class EnsembleResult(BaseModel):
     models_used: List[str]
     weights: List[float]
-    forecast_values: List[Dict[str, Any]]
+    forecast_values: List[ForecastValue]
+    baseline_values: Optional[List[ForecastValue]] = None
     individual_results: List[ModelResult]
 
 class ForecastResult(BaseModel):

@@ -1,7 +1,7 @@
-from typing import Dict, Any, List, Optional
-from datetime import datetime
 import pandas as pd
 import numpy as np
+from typing import Dict, Any, List, Optional
+from datetime import datetime
 import json
 import os
 import uuid
@@ -10,7 +10,7 @@ from .model_selector import ModelSelector
 from .ensemble import EnsembleForecaster, RollingEnsemble
 from ...schemas.models import (
     ForecastRequest, ForecastResponse, ForecastResult, ModelResult,
-    EnsembleResult, ModelType, DataStatus
+    EnsembleResult, ModelType, DataStatus, ForecastValue
 )
 
 class ForecastingService:
@@ -55,16 +55,22 @@ class ForecastingService:
         if request.include_events and 'events' in data:
             exog_data['events'] = data['events']
         
+        params_dict = None
+        if request.parameters:
+            params_dict = {
+                'arima': request.parameters.arima.dict() if request.parameters.arima else None,
+                'sarimax': request.parameters.sarimax.dict() if request.parameters.sarimax else None,
+                'prophet': request.parameters.prophet.dict() if request.parameters.prophet else None,
+                'lightgbm': request.parameters.lightgbm.dict() if request.parameters.lightgbm else None,
+                'wma': request.parameters.wma.dict() if request.parameters.wma else None,
+            }
+        
         results: Dict[str, ModelResult] = {}
         model_rankings = []
         
         for model_type in request.models:
             try:
-                model = self.model_selector.get_model(
-                    model_type.value,
-                    seasonality_mode=request.seasonality_mode,
-                    country=request.country
-                )
+                model = self.model_selector.get_model(model_type.value, params_dict)
                 
                 if model_type == ModelType.PROPHET:
                     model.fit(sales_df, date_col, value_col, exog_data=exog_data)
@@ -73,8 +79,22 @@ class ForecastingService:
                 
                 forecast_values = model.forecast(request.horizon, exog_data=exog_data)
                 
+                baseline_values = None
+                if hasattr(model, 'get_baseline'):
+                    try:
+                        baseline_values = model.get_baseline(request.horizon, exog_data=exog_data)
+                    except Exception:
+                        baseline_values = None
+                
+                components = None
+                if hasattr(model, 'get_components'):
+                    try:
+                        components = model.get_components(request.horizon)
+                    except Exception:
+                        components = None
+                
                 metrics = self.model_selector.cross_validate_score(
-                    sales_df, date_col, value_col, model_type.value, 
+                    sales_df, date_col, value_col, model_type.value, params_dict,
                     horizon=min(7, request.horizon)
                 )
                 
@@ -82,11 +102,42 @@ class ForecastingService:
                 if hasattr(model, 'get_feature_importance'):
                     feature_importance = model.get_feature_importance()
                 
+                forecast_value_objects = [
+                    ForecastValue(
+                        date=v['date'],
+                        forecast=v['forecast'],
+                        lower_ci=v['lower_ci'],
+                        upper_ci=v['upper_ci']
+                    ) for v in forecast_values
+                ]
+                
+                if baseline_values:
+                    for i, bv in enumerate(baseline_values):
+                        if i < len(forecast_value_objects):
+                            forecast_value_objects[i].baseline = bv['forecast']
+                            forecast_value_objects[i].uplift = (
+                                (forecast_value_objects[i].forecast - bv['forecast']) / bv['forecast'] * 100
+                                if bv['forecast'] != 0 else 0
+                            )
+                
+                baseline_value_objects = None
+                if baseline_values:
+                    baseline_value_objects = [
+                        ForecastValue(
+                            date=v['date'],
+                            forecast=v['forecast'],
+                            lower_ci=v['lower_ci'],
+                            upper_ci=v['upper_ci']
+                        ) for v in baseline_values
+                    ]
+                
                 results[model_type.value] = ModelResult(
                     model_name=model.name,
-                    forecast_values=forecast_values,
+                    forecast_values=forecast_value_objects,
+                    baseline_values=baseline_value_objects,
                     metrics=metrics,
-                    feature_importance=feature_importance
+                    feature_importance=feature_importance,
+                    components=components
                 )
                 
                 model_rankings.append({
@@ -115,9 +166,7 @@ class ForecastingService:
                 for model_type in request.ensemble_models:
                     if model_type.value in results:
                         model = self.model_selector.get_model(
-                            model_type.value,
-                            seasonality_mode=request.seasonality_mode,
-                            country=request.country
+                            model_type.value, params_dict
                         )
                         model.fit(sales_df, date_col, value_col, exog_data=exog_data)
                         ensemble_models.append(model)
@@ -127,10 +176,47 @@ class ForecastingService:
                     ensemble = EnsembleForecaster(ensemble_models, weights)
                     ensemble_forecast = ensemble.forecast(request.horizon, exog_data=exog_data)
                     
+                    ensemble_baseline = None
+                    if hasattr(ensemble_models[0], 'get_baseline'):
+                        try:
+                            ensemble_baseline = ensemble_models[0].get_baseline(request.horizon, exog_data=exog_data)
+                        except Exception:
+                            ensemble_baseline = None
+                    
+                    ensemble_forecast_values = [
+                        ForecastValue(
+                            date=v['date'],
+                            forecast=v['forecast'],
+                            lower_ci=v['lower_ci'],
+                            upper_ci=v['upper_ci']
+                        ) for v in ensemble_forecast
+                    ]
+                    
+                    if ensemble_baseline:
+                        for i, bv in enumerate(ensemble_baseline):
+                            if i < len(ensemble_forecast_values):
+                                ensemble_forecast_values[i].baseline = bv['forecast']
+                                ensemble_forecast_values[i].uplift = (
+                                    (ensemble_forecast_values[i].forecast - bv['forecast']) / bv['forecast'] * 100
+                                    if bv['forecast'] != 0 else 0
+                                )
+                    
+                    ensemble_baseline_values = None
+                    if ensemble_baseline:
+                        ensemble_baseline_values = [
+                            ForecastValue(
+                                date=v['date'],
+                                forecast=v['forecast'],
+                                lower_ci=v['lower_ci'],
+                                upper_ci=v['upper_ci']
+                            ) for v in ensemble_baseline
+                        ]
+                    
                     ensemble_result = EnsembleResult(
                         models_used=[m.name for m in ensemble_models],
                         weights=weights,
-                        forecast_values=ensemble_forecast,
+                        forecast_values=ensemble_forecast_values,
+                        baseline_values=ensemble_baseline_values,
                         individual_results=[results[m.value] for m in request.ensemble_models if m.value in results]
                     )
                     
@@ -159,11 +245,11 @@ class ForecastingService:
         all_dates = set()
         for model_result in result.results.values():
             for val in model_result.forecast_values:
-                all_dates.add(val['date'])
+                all_dates.add(val.date)
         
         if result.ensemble:
             for val in result.ensemble.forecast_values:
-                all_dates.add(val['date'])
+                all_dates.add(val.date)
         
         sorted_dates = sorted(all_dates)
         
@@ -173,14 +259,18 @@ class ForecastingService:
             
             for model_name, model_result in result.results.items():
                 for val in model_result.forecast_values:
-                    if val['date'] == date:
-                        row[model_name] = val['forecast']
+                    if val.date == date:
+                        row[f'{model_name}_forecast'] = val.forecast
+                        row[f'{model_name}_baseline'] = val.baseline
+                        row[f'{model_name}_uplift'] = val.uplift
                         break
             
             if result.ensemble:
                 for val in result.ensemble.forecast_values:
-                    if val['date'] == date:
-                        row['ensemble'] = val['forecast']
+                    if val.date == date:
+                        row['ensemble_forecast'] = val.forecast
+                        row['ensemble_baseline'] = val.baseline
+                        row['ensemble_uplift'] = val.uplift
                         break
             
             data_rows.append(row)

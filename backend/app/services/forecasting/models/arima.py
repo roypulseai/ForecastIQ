@@ -49,6 +49,12 @@ class ARIMAForecaster(BaseForecaster):
         
         return results
     
+    def get_baseline(self, horizon: int) -> List[Dict[str, Any]]:
+        return self.forecast(horizon)
+    
+    def get_components(self, horizon: int) -> Dict[str, Any]:
+        return {}
+    
     def get_metrics(self) -> Dict[str, float]:
         if self._fitted_model is None:
             return {}
@@ -66,6 +72,7 @@ class SARIMAXForecaster(BaseForecaster):
         self.seasonal_order = seasonal_order
         self._fitted_model = None
         self._last_values = None
+        self._has_seasonal = True
     
     def fit(self, df: pd.DataFrame, date_col: str, value_col: str,
             exog_data: Optional[Dict] = None, **kwargs) -> 'SARIMAXForecaster':
@@ -118,6 +125,28 @@ class SARIMAXForecaster(BaseForecaster):
             })
         
         return results
+    
+    def get_baseline(self, horizon: int) -> List[Dict[str, Any]]:
+        if self._fitted_model is None:
+            raise ValueError("Model not fitted")
+        
+        pred = self._fitted_model.get_forecast(steps=horizon)
+        pred_mean = pred.predicted_mean
+        pred_conf = pred.conf_int()
+        
+        baseline = []
+        for i, (date, value) in enumerate(pred_mean.items()):
+            baseline.append({
+                'date': str(date),
+                'forecast': float(value),
+                'lower_ci': float(pred_conf.iloc[i, 0]),
+                'upper_ci': float(pred_conf.iloc[i, 1])
+            })
+        
+        return baseline
+    
+    def get_components(self, horizon: int) -> Dict[str, Any]:
+        return {}
     
     def get_metrics(self) -> Dict[str, float]:
         if self._fitted_model is None:
