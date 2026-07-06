@@ -1,0 +1,16 @@
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "demand-forecaster"
+version = "0.1.0"
+description = "Attribute-aware forecasting with weekday/week-of-month/month-of-year baselines, trends, promos & events."
+authors = [{name="Your Team"}]
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["pandas", "numpy"]
+
+[project.scripts]
+demand-forecast = "demand_forecaster.cli:main"

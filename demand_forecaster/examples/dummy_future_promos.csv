@@ -1,0 +1,4 @@
+date,region,store,item,discount_pct,holiday_flag,event_intensity
+2025-08-21,East,S1,I1,10,0,2
+2025-08-22,East,S1,I1,20,1,3
+2025-08-23,West,S2,I2,5,0,1
