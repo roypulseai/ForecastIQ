@@ -1,570 +1,473 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
+  Alert,
   Box,
-  Typography,
+  Button,
   Card,
   CardContent,
-  Grid,
-  TextField,
-  Select,
-  MenuItem,
-  FormControl,
-  InputLabel,
-  FormControlLabel,
-  Button,
   Chip,
-  Alert,
   CircularProgress,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  Tabs,
-  Tab,
-  Slider,
-} from '@mui/material'
-import { PlayArrow, Info, Download, ExpandMore, Compare } from '@mui/icons-material'
-import { forecastApi, ForecastRequest, ModelParameters } from '../services/api'
-import { useStore } from '../store/appStore'
-import { ParametersPanel } from '../components/forecast/ParametersPanel'
-import { WhatIfSimulator } from '../components/forecast/WhatIfSimulator'
-import { AggregationPanel } from '../components/forecast/AggregationPanel'
+  Divider,
+  FormControlLabel,
+  Grid,
+  MenuItem,
+  Stack,
+  Switch,
+  TextField,
+  Typography,
+} from '@mui/material';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import { PageContainer } from '../components/layout/PageContainer';
+import { ModelSelector } from '../components/forecast/ModelSelector';
+import { ParametersPanel } from '../components/forecast/ParametersPanel';
+import { ExternalFactors } from '../components/forecast/ExternalFactors';
+import { AggregationPanel } from '../components/forecast/AggregationPanel';
+import { ForecastSummaryCard } from '../components/forecast/ForecastSummary';
+import { useFiles } from '../hooks/useFiles';
+import { useCreateForecast } from '../hooks/useForecast';
+import { useStore } from '../store/appStore';
+import { getErrorMessage } from '../services/api';
+import {
+  FILE_TYPE_LABELS,
+  type AggregationConfig,
+  type FileType,
+  type Frequency,
+  type ForecastRequest,
+  type ModelParameters,
+} from '../types';
 
-const modelOptions = [
-  { value: 'arima', label: 'ARIMA', description: 'AutoRegressive Integrated Moving Average' },
-  { value: 'sarimax', label: 'SARIMAX', description: 'Seasonal ARIMAX with exogenous variables' },
-  { value: 'prophet', label: 'Prophet', description: 'Facebook\'s time series forecasting' },
-  { value: 'lightgbm', label: 'LightGBM', description: 'Gradient boosting for time series' },
-  { value: 'xgboost', label: 'XGBoost', description: 'Extreme gradient boosting' },
-  { value: 'wma', label: 'WMA', description: 'Weighted Moving Average' },
-  { value: 'ets', label: 'ETS', description: 'Error-Trend-Seasonal' },
-  { value: 'theta', label: 'Theta', description: 'Theta method (M3 winner)' },
-  { value: 'stl', label: 'STL', description: 'Seasonal-Trend decomposition' },
-]
 
-const frequencyOptions = [
+const FREQ_OPTIONS: Array<{ value: Frequency; label: string }> = [
   { value: 'D', label: 'Daily' },
   { value: 'W', label: 'Weekly' },
+  { value: 'F', label: 'Fortnightly' },
   { value: 'M', label: 'Monthly' },
-]
+  { value: 'Q', label: 'Quarterly' },
+  { value: 'Y', label: 'Yearly' },
+];
 
-export function Forecast() {
-  const { uploadedFiles, analysisData, setCurrentForecast, setForecasts, currentForecast } = useStore()
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [selectedModels, setSelectedModels] = useState<string[]>(['prophet'])
-  const [useEnsemble, setUseEnsemble] = useState(false)
-  const [ensembleModels, setEnsembleModels] = useState<string[]>(['prophet', 'lightgbm'])
-  const [parameters, setParameters] = useState<ModelParameters>({})
-  const [showWhatIf, setShowWhatIf] = useState(false)
-  const [forecastResult, setForecastResult] = useState<any>(null)
-  const [aggConfig, setAggConfig] = useState({
-    time_rollup: 'D',
-    product_level: 'sku',
-    region_level: 'store',
-    agg_function: 'sum',
-  })
+const DEFAULT_AGGREGATION: AggregationConfig = {
+  time_rollup: 'M',
+  product_level: 'category',
+  region_level: 'national',
+  agg_function: 'sum',
+};
 
-  const [formData, setFormData] = useState({
-    name: '',
-    targetColumn: analysisData?.validation?.value_column || '',
-    dateColumn: analysisData?.validation?.date_column || '',
-    frequency: 'D' as 'D' | 'W' | 'M',
-    horizon: 30,
-    country: '',
-    includeMediaPlan: false,
-    includePromotions: false,
-    includeHolidays: false,
-    includeEvents: false,
-    includeWeather: false,
-    includeCompetitor: false,
-    includeEconomic: false,
-  })
+const DEFAULT_PARAMETERS: ModelParameters = {};
 
-  const handleModelToggle = (modelValue: string) => {
-    setSelectedModels((prev) => {
-      if (prev.includes(modelValue)) {
-        return prev.filter((m) => m !== modelValue)
-      }
-      return [...prev, modelValue]
-    })
+const initialRequest = (dateColumn: string, valueColumn: string): ForecastRequest => ({
+  name: 'Untitled forecast',
+  target_column: valueColumn,
+  date_column: dateColumn,
+  frequency: 'D',
+  horizon: 30,
+  models: ['prophet'],
+  parameters: DEFAULT_PARAMETERS,
+  ensemble_models: ['prophet', 'ets'],
+  include_media_plan: false,
+  include_promotions: false,
+  include_holidays: false,
+  include_events: false,
+  include_weather: false,
+  include_competitor: false,
+  include_economic: false,
+  aggregation: DEFAULT_AGGREGATION,
+});
+
+interface ExternalState {
+  media_plan: boolean;
+  promotions: boolean;
+  holidays: boolean;
+  events: boolean;
+  weather: boolean;
+  competitor: boolean;
+  economic: boolean;
+}
+
+const initialExternal: ExternalState = {
+  media_plan: false,
+  promotions: false,
+  holidays: false,
+  events: false,
+  weather: false,
+  competitor: false,
+  economic: false,
+};
+
+export function ForecastPage(): ReactNode {
+  const navigate = useNavigate();
+  const analysisData = useStore((s) => s.analysisData);
+  const uploadedFiles = useStore((s) => s.uploadedFiles);
+  const setCurrentForecastId = useStore((s) => s.setCurrentForecastId);
+  const filesQuery = useFiles();
+  const createMut = useCreateForecast();
+  const [error, setError] = useState<string | null>(null);
+
+  const dateColumn = analysisData?.validation.date_column ?? 'date';
+  const valueColumn = analysisData?.validation.value_column ?? 'value';
+  const columns = useMemo(() => {
+    const sales = uploadedFiles.find((f) => f.type === 'sales');
+    return sales?.columns ?? [];
+  }, [uploadedFiles]);
+
+  const [request, setRequest] = useState<ForecastRequest>(() => initialRequest(dateColumn, valueColumn));
+  const [external, setExternal] = useState<ExternalState>(initialExternal);
+  const [useEnsemble, setUseEnsemble] = useState<boolean>(false);
+  const [useAdvanced, setUseAdvanced] = useState<boolean>(false);
+  const [useAggregation, setUseAggregation] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (analysisData && request.date_column === 'date' && request.target_column === 'value') {
+      setRequest((r) => ({
+        ...r,
+        date_column: dateColumn,
+        target_column: valueColumn,
+      }));
+    }
+  }, [analysisData, dateColumn, valueColumn, request.date_column, request.target_column]);
+
+  if (!analysisData) {
+    return (
+      <PageContainer title="Forecast">
+        <Card sx={{ p: 4, textAlign: 'center' }}>
+          <Alert severity="info" sx={{ mb: 2 }}>
+            No sales analysis available. Upload data and run analysis first.
+          </Alert>
+          <Button variant="contained" onClick={() => navigate('/upload')}>
+            Go to upload
+          </Button>
+        </Card>
+      </PageContainer>
+    );
   }
 
-  const handleEnsembleModelToggle = (modelValue: string) => {
-    setEnsembleModels((prev) => {
-      if (prev.includes(modelValue)) {
-        return prev.filter((m) => m !== modelValue)
-      }
-      return [...prev, modelValue]
-    })
-  }
+  const recommendations = analysisData.model_recommendations.map((r) => r.model);
 
-  const handleParametersChange = (newParams: ModelParameters) => {
-    setParameters(newParams)
-  }
+  const update = <K extends keyof ForecastRequest>(key: K, value: ForecastRequest[K]) =>
+    setRequest((r) => ({ ...r, [key]: value }));
+
+  const updateParam = (next: ModelParameters) => setRequest((r) => ({ ...r, parameters: next }));
+
+  const updateAggregation = (next: AggregationConfig) =>
+    setRequest((r) => ({ ...r, aggregation: useAggregation ? next : undefined }));
 
   const handleSubmit = async () => {
-    if (!formData.name) {
-      setError('Please enter a forecast name')
-      return
+    setError(null);
+    if (!request.models.length) {
+      setError('Select at least one model');
+      return;
     }
-
-    if (selectedModels.length === 0) {
-      setError('Please select at least one model')
-      return
+    if (request.horizon < 1) {
+      setError('Horizon must be at least 1 period');
+      return;
     }
-
-    if (useEnsemble && ensembleModels.length < 2) {
-      setError('Please select at least 2 models for ensemble')
-      return
-    }
-
-    setIsLoading(true)
-    setError(null)
-
+    const payload: ForecastRequest = {
+      ...request,
+      include_media_plan: external.media_plan,
+      include_promotions: external.promotions,
+      include_holidays: external.holidays,
+      include_events: external.events,
+      include_weather: external.weather,
+      include_competitor: external.competitor,
+      include_economic: external.economic,
+      ensemble_models: useEnsemble && request.ensemble_models?.length ? request.ensemble_models : undefined,
+      aggregation: useAggregation ? request.aggregation : undefined,
+      parameters: Object.keys(request.parameters ?? {}).length > 0 ? request.parameters : undefined,
+    };
     try {
-      const request: ForecastRequest = {
-        name: formData.name,
-        target_column: formData.targetColumn,
-        date_column: formData.dateColumn,
-        frequency: formData.frequency,
-        horizon: formData.horizon,
-        models: selectedModels,
-        parameters: parameters,
-        ensemble_models: useEnsemble ? ensembleModels : undefined,
-        ensemble_weights: useEnsemble ? ensembleModels.map(() => 1 / ensembleModels.length) : undefined,
-        include_media_plan: formData.includeMediaPlan,
-        include_promotions: formData.includePromotions,
-        include_holidays: formData.includeHolidays,
-        include_events: formData.includeEvents,
-        include_weather: formData.includeWeather,
-        include_competitor: formData.includeCompetitor,
-        include_economic: formData.includeEconomic,
-        country: formData.country || undefined,
-        aggregation: aggConfig,
-      }
-
-      const response = await forecastApi.createForecast(request)
-      setCurrentForecast(response.id)
-
-      const forecasts = await forecastApi.listForecasts()
-      setForecasts(forecasts)
-
-      const result = await forecastApi.getForecast(response.id)
-      setForecastResult(result)
-      setShowWhatIf(true)
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Forecast failed')
-    } finally {
-      setIsLoading(false)
+      const res = await createMut.mutateAsync(payload);
+      setCurrentForecastId(res.forecast_id);
+      navigate('/results');
+    } catch (e) {
+      setError(getErrorMessage(e));
     }
-  }
-
-  const salesFile = uploadedFiles.find((f) => f.type === 'sales')
-
-  if (!salesFile) {
-    return (
-      <Box sx={{ textAlign: 'center', py: 8 }}>
-        <Typography variant="h5" sx={{ mb: 2 }}>
-          No Sales Data Uploaded
-        </Typography>
-        <Typography color="text.secondary" sx={{ mb: 4 }}>
-          Please upload your sales data first before creating a forecast.
-        </Typography>
-        <Button variant="contained" href="/upload">
-          Go to Data Upload
-        </Button>
-      </Box>
-    )
-  }
+  };
 
   return (
-    <Box>
-      <Box sx={{ mb: 4 }}>
-        <Typography variant="h4" sx={{ fontWeight: 700, mb: 1 }}>
-          Create Forecast
-        </Typography>
-        <Typography variant="body1" color="text.secondary">
-          Configure and run your forecasting model with external factors
-        </Typography>
-      </Box>
+    <PageContainer
+      title="Configure forecast"
+      subtitle="Choose models, set parameters, and add external factors."
+      actions={
+        <Button
+          variant="contained"
+          size="large"
+          startIcon={createMut.isPending ? <CircularProgress size={16} color="inherit" /> : <PlayArrowIcon />}
+          onClick={handleSubmit}
+          disabled={createMut.isPending || !request.models.length}
+        >
+          {createMut.isPending ? 'Running…' : 'Run forecast'}
+        </Button>
+      }
+    >
+      {error && (
+        <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
+          {error}
+        </Alert>
+      )}
 
       <Grid container spacing={3}>
-        <Grid item xs={12} md={8}>
+        <Grid item xs={12} lg={8}>
           <Card sx={{ mb: 3 }}>
-            <CardContent sx={{ p: 3 }}>
-              <Typography variant="h6" sx={{ mb: 3, fontWeight: 600 }}>
-                Forecast Configuration
+            <CardContent>
+              <Typography variant="h5" gutterBottom>
+                1. Basic configuration
               </Typography>
-
-              <Grid container spacing={3}>
+              <Grid container spacing={2}>
                 <Grid item xs={12} sm={6}>
                   <TextField
                     fullWidth
-                    label="Forecast Name"
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    placeholder="e.g., Q1 2024 Sales Forecast"
+                    label="Forecast name"
+                    value={request.name}
+                    onChange={(e) => update('name', e.target.value)}
+                    inputProps={{ maxLength: 80 }}
                   />
                 </Grid>
-                <Grid item xs={12} sm={6}>
-                  <FormControl fullWidth>
-                    <InputLabel>Frequency</InputLabel>
-                    <Select
-                      value={formData.frequency}
-                      label="Frequency"
-                      onChange={(e) =>
-                        setFormData({ ...formData, frequency: e.target.value as 'D' | 'W' | 'M' })
-                      }
-                    >
-                      {frequencyOptions.map((opt) => (
-                        <MenuItem key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
+                <Grid item xs={12} sm={3}>
+                  <TextField
+                    fullWidth
+                    select
+                    label="Frequency"
+                    value={request.frequency}
+                    onChange={(e) => update('frequency', e.target.value as Frequency)}
+                  >
+                    {FREQ_OPTIONS.map((o) => (
+                      <MenuItem key={o.value} value={o.value}>
+                        {o.label}
+                      </MenuItem>
+                    ))}
+                  </TextField>
                 </Grid>
-                <Grid item xs={12} sm={6}>
+                <Grid item xs={12} sm={3}>
                   <TextField
                     fullWidth
                     type="number"
-                    label="Forecast Horizon"
-                    value={formData.horizon}
-                    onChange={(e) =>
-                      setFormData({ ...formData, horizon: parseInt(e.target.value) || 30 })
-                    }
+                    label={`Horizon (${request.frequency})`}
+                    value={request.horizon}
                     inputProps={{ min: 1, max: 365 }}
+                    onChange={(e) => update('horizon', Math.max(1, Math.min(365, Number(e.target.value) || 1)))}
                   />
                 </Grid>
                 <Grid item xs={12} sm={6}>
                   <TextField
                     fullWidth
-                    label="Country (for holidays)"
-                    value={formData.country}
-                    onChange={(e) => setFormData({ ...formData, country: e.target.value })}
-                    placeholder="e.g., US, UK, IN"
-                  />
+                    select
+                    label="Date column"
+                    value={request.date_column}
+                    onChange={(e) => update('date_column', e.target.value)}
+                    disabled={!columns.length}
+                    helperText={columns.length ? `${columns.length} columns available` : 'no columns detected'}
+                  >
+                    {columns.map((c) => (
+                      <MenuItem key={c} value={c}>
+                        {c}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    select
+                    label="Target column"
+                    value={request.target_column}
+                    onChange={(e) => update('target_column', e.target.value)}
+                    disabled={!columns.length}
+                    helperText={columns.length ? `${columns.length} columns available` : 'no columns detected'}
+                  >
+                    {columns.map((c) => (
+                      <MenuItem key={c} value={c}>
+                        {c}
+                      </MenuItem>
+                    ))}
+                  </TextField>
                 </Grid>
               </Grid>
             </CardContent>
           </Card>
 
           <Card sx={{ mb: 3 }}>
-            <CardContent sx={{ p: 3 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                  Select Models
-                </Typography>
-                <Info sx={{ fontSize: 18, color: 'text.secondary' }} />
-              </Box>
-
-              <Grid container spacing={2}>
-                {modelOptions.map((model) => (
-                  <Grid item xs={12} sm={6} key={model.value}>
-                    <Card
-                      variant="outlined"
-                      sx={{
-                        cursor: 'pointer',
-                        borderColor: selectedModels.includes(model.value)
-                          ? 'primary.main'
-                          : 'divider',
-                        bgcolor: selectedModels.includes(model.value)
-                          ? 'primary.lighter'
-                          : 'transparent',
-                        '&:hover': {
-                          borderColor: 'primary.main',
-                        },
-                      }}
-                      onClick={() => handleModelToggle(model.value)}
-                    >
-                      <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                          <Box
-                            sx={{
-                              width: 20,
-                              height: 20,
-                              borderRadius: 1,
-                              border: '2px solid',
-                              borderColor: selectedModels.includes(model.value)
-                                ? 'primary.main'
-                                : 'divider',
-                              bgcolor: selectedModels.includes(model.value)
-                                ? 'primary.main'
-                                : 'transparent',
-                            }}
-                          />
-                          <Box>
-                            <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                              {model.label}
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary">
-                              {model.description}
-                            </Typography>
-                          </Box>
-                        </Box>
-                      </CardContent>
-                    </Card>
-                  </Grid>
-                ))}
-              </Grid>
-
-              <Box sx={{ mt: 3 }}>
-                <FormControlControlLabel
+            <CardContent>
+              <Stack
+                direction="row"
+                alignItems="center"
+                justifyContent="space-between"
+                sx={{ mb: 2 }}
+              >
+                <Box>
+                  <Typography variant="h5">2. Models</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {recommendations.length > 0
+                      ? 'Pre-selected from the model recommender. Toggle to customize.'
+                      : 'Select one or more models to run.'}
+                  </Typography>
+                </Box>
+                <FormControlLabel
                   control={
-                    <Checkbox
+                    <Switch
                       checked={useEnsemble}
-                      onChange={(e) => setUseEnsemble(e.target.checked)}
+                      onChange={(_, c) => setUseEnsemble(c)}
                     />
                   }
-                  label="Create Ensemble (Average of Multiple Models)"
+                  label="Ensemble"
                 />
-
-                {useEnsemble && (
-                  <Box sx={{ mt: 2, ml: 4 }}>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                      Select models for ensemble:
-                    </Typography>
-                    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                      {modelOptions.map((model) => (
-                        <Chip
-                          key={model.value}
-                          label={model.label}
-                          onClick={() => handleEnsembleModelToggle(model.value)}
-                          color={ensembleModels.includes(model.value) ? 'primary' : 'default'}
-                          variant={ensembleModels.includes(model.value) ? 'filled' : 'outlined'}
-                        />
-                      ))}
-                    </Box>
-                  </Box>
-                )}
-              </Box>
+              </Stack>
+              <ModelSelector
+                models={[]}
+                selected={request.models}
+                onChange={(m) => update('models', m)}
+                recommended={recommendations}
+              />
+              {useEnsemble && (
+                <Box sx={{ mt: 3 }}>
+                  <Divider sx={{ mb: 2 }} />
+                  <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+                    Ensemble members
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    Choose which models to combine. The ensemble weights are auto-computed from cross-validation
+                    performance.
+                  </Typography>
+                  <ModelSelector
+                    models={request.models}
+                    selected={request.ensemble_models ?? []}
+                    onChange={(m) => update('ensemble_models', m)}
+                  />
+                </Box>
+              )}
             </CardContent>
           </Card>
 
           <Card sx={{ mb: 3 }}>
-            <CardContent sx={{ p: 3 }}>
-              <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
-                External Factors
+            <CardContent>
+              <Stack
+                direction="row"
+                alignItems="center"
+                justifyContent="space-between"
+                sx={{ mb: 1 }}
+              >
+                <Typography variant="h5">3. External factors</Typography>
+                <Chip
+                  label={`${uploadedFiles.length} file${uploadedFiles.length === 1 ? '' : 's'} loaded`}
+                  size="small"
+                  variant="outlined"
+                />
+              </Stack>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Enable to feed additional signals to models that support exogenous regressors (SARIMAX, LightGBM, XGBoost).
               </Typography>
-
-              <Grid container spacing={2}>
-                <Grid item xs={12} sm={6}>
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        checked={formData.includeMediaPlan}
-                        onChange={(e) =>
-                          setFormData({ ...formData, includeMediaPlan: e.target.checked })
-                        }
-                      />
-                    }
-                    label="Include Media Plan"
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        checked={formData.includePromotions}
-                        onChange={(e) =>
-                          setFormData({ ...formData, includePromotions: e.target.checked })
-                        }
-                      />
-                    }
-                    label="Include Promotions"
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        checked={formData.includeHolidays}
-                        onChange={(e) =>
-                          setFormData({ ...formData, includeHolidays: e.target.checked })
-                        }
-                      />
-                    }
-                    label="Include Holidays"
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        checked={formData.includeEvents}
-                        onChange={(e) =>
-                          setFormData({ ...formData, includeEvents: e.target.checked })
-                        }
-                      />
-                    }
-                    label="Include Events"
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        checked={formData.includeWeather}
-                        onChange={(e) =>
-                          setFormData({ ...formData, includeWeather: e.target.checked })
-                        }
-                      />
-                    }
-                    label="Include Weather"
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        checked={formData.includeCompetitor}
-                        onChange={(e) =>
-                          setFormData({ ...formData, includeCompetitor: e.target.checked })
-                        }
-                      />
-                    }
-                    label="Include Competitor Data"
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        checked={formData.includeEconomic}
-                        onChange={(e) =>
-                          setFormData({ ...formData, includeEconomic: e.target.checked })
-                        }
-                      />
-                    }
-                    label="Include Economic Indicators"
-                  />
-                </Grid>
-              </Grid>
+              <ExternalFactors files={uploadedFiles} values={external} onChange={setExternal} />
             </CardContent>
           </Card>
 
-          <ParametersPanel
-            selectedModels={selectedModels}
-            parameters={parameters}
-            onChange={handleParametersChange}
-          />
-
-          <AggregationPanel
-            config={aggConfig}
-            onChange={setAggConfig}
-            hasHierarchy={!!analysisData?.hierarchy}
-          />
+          <Card sx={{ mb: 3 }}>
+            <CardContent>
+              <Stack
+                direction="row"
+                alignItems="center"
+                justifyContent="space-between"
+                sx={{ mb: 1 }}
+              >
+                <Typography variant="h5">4. Advanced</Typography>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={useAdvanced}
+                      onChange={(_, c) => setUseAdvanced(c)}
+                    />
+                  }
+                  label="Customize parameters"
+                />
+              </Stack>
+              {useAdvanced ? (
+                <ParametersPanel models={request.models} value={request.parameters ?? {}} onChange={updateParam} />
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  Defaults work for most use cases. Toggle on to fine-tune individual model hyperparameters.
+                </Typography>
+              )}
+              <Divider sx={{ my: 3 }} />
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={useAggregation}
+                    onChange={(_, c) => setUseAggregation(c)}
+                  />
+                }
+                label="Aggregate data before forecasting"
+              />
+              {useAggregation && (
+                <Box sx={{ mt: 2 }}>
+                  <AggregationPanel
+                    value={request.aggregation ?? DEFAULT_AGGREGATION}
+                    onChange={updateAggregation}
+                  />
+                </Box>
+              )}
+            </CardContent>
+          </Card>
         </Grid>
 
-        <Grid item xs={12} md={4}>
-          <Card sx={{ position: 'sticky', top: 16 }}>
-            <CardContent sx={{ p: 3 }}>
-              <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
-                Summary
-              </Typography>
-
-              <Box sx={{ mb: 3 }}>
-                <Typography variant="body2" color="text.secondary">
-                  Selected Models
-                </Typography>
-                <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 1 }}>
-                  {selectedModels.map((m) => (
-                    <Chip key={m} label={m.toUpperCase()} size="small" />
-                  ))}
-                </Box>
-              </Box>
-
-              {useEnsemble && (
-                <Box sx={{ mb: 3 }}>
-                  <Typography variant="body2" color="text.secondary">
-                    Ensemble Models
-                  </Typography>
-                  <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 1 }}>
-                    {ensembleModels.map((m) => (
-                      <Chip key={m} label={m.toUpperCase()} size="small" color="secondary" />
-                    ))}
-                  </Box>
-                </Box>
-              )}
-
-              <Box sx={{ mb: 3 }}>
-                <Typography variant="body2" color="text.secondary">
-                  External Factors
-                </Typography>
-                <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 1 }}>
-                  {formData.includeMediaPlan && <Chip label="Media" size="small" variant="outlined" />}
-                  {formData.includePromotions && <Chip label="Promo" size="small" variant="outlined" />}
-                  {formData.includeHolidays && <Chip label="Holidays" size="small" variant="outlined" />}
-                  {formData.includeEvents && <Chip label="Events" size="small" variant="outlined" />}
-                  {formData.includeWeather && <Chip label="Weather" size="small" variant="outlined" />}
-                  {formData.includeCompetitor && <Chip label="Competitor" size="small" variant="outlined" />}
-                  {formData.includeEconomic && <Chip label="Economic" size="small" variant="outlined" />}
-                </Box>
-              </Box>
-
-              <Box sx={{ mb: 3 }}>
-                <Typography variant="body2" color="text.secondary">
-                  Data Files
-                </Typography>
-                <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 1 }}>
-                  {uploadedFiles.map((f) => (
-                    <Chip key={f.file_id} label={f.type} size="small" variant="outlined" />
-                  ))}
-                </Box>
-              </Box>
-
-              {error && (
-                <Alert severity="error" sx={{ mb: 2 }}>
-                  {error}
-                </Alert>
-              )}
-
-              <Button
-                fullWidth
-                variant="contained"
-                size="large"
-                startIcon={isLoading ? <CircularProgress size={20} color="inherit" /> : <PlayArrow />}
-                onClick={handleSubmit}
-                disabled={isLoading}
-              >
-                {isLoading ? 'Running Forecast...' : 'Run Forecast'}
-              </Button>
-            </CardContent>
-          </Card>
+        <Grid item xs={12} lg={4}>
+          <Box sx={{ position: { lg: 'sticky' }, top: { lg: 80 } }}>
+            <ForecastSummaryCard
+              name={request.name}
+              horizon={request.horizon}
+              frequency={request.frequency}
+              dateColumn={request.date_column}
+              targetColumn={request.target_column}
+              models={request.models}
+              external={Object.entries(external)
+                .filter(([, v]) => v)
+                .map(([k]) => FILE_TYPE_LABELS[k as FileType] ?? k)}
+              ensemble={useEnsemble}
+              hasAggregation={useAggregation}
+            />
+            <Card sx={{ mt: 3 }}>
+              <CardContent>
+                <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 1 }}>
+                  <CheckCircleIcon color="success" />
+                  <Typography variant="h5">Quick start</Typography>
+                </Stack>
+                <Stack spacing={1.5}>
+                  <Tip
+                    title="Pick 2–3 models"
+                    body="Prophet for trend+seasonality, ETS as a smooth baseline, LightGBM for non-linear patterns."
+                  />
+                  <Tip
+                    title="External factors matter"
+                    body="Add holidays + promotions for a quick uplift — they often drive 10–20% of the lift."
+                  />
+                  <Tip
+                    title="30-day horizon"
+                    body="Daily data with a 30-day horizon is a sweet spot for retail forecasting."
+                  />
+                </Stack>
+              </CardContent>
+            </Card>
+          </Box>
         </Grid>
       </Grid>
 
-      {showWhatIf && forecastResult && (
-        <WhatIfSimulator
-          open={showWhatIf}
-          onClose={() => setShowWhatIf(false)}
-          forecastResult={forecastResult}
-        />
+      {filesQuery.isError && (
+        <Alert severity="warning" sx={{ mt: 3 }}>
+          {getErrorMessage(filesQuery.error)}
+        </Alert>
       )}
-    </Box>
-  )
+    </PageContainer>
+  );
 }
 
-function FormControlControlLabel({ control, label }: { control: any; label: string }) {
+function Tip({ title, body }: { title: string; body: string }): ReactNode {
   return (
-    <Box sx={{ display: 'flex', alignItems: 'center' }}>
-      {control}
-      <Typography sx={{ ml: 1 }}>{label}</Typography>
+    <Box>
+      <Typography variant="body2" sx={{ fontWeight: 600 }}>
+        {title}
+      </Typography>
+      <Typography variant="caption" color="text.secondary">
+        {body}
+      </Typography>
     </Box>
-  )
-}
-
-function Checkbox({ checked, onChange }: { checked: boolean; onChange: (e: any) => void }) {
-  return (
-    <input
-      type="checkbox"
-      checked={checked}
-      onChange={onChange}
-      style={{ width: 18, height: 18, cursor: 'pointer' }}
-    />
-  )
+  );
 }

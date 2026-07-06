@@ -1,296 +1,379 @@
-import { useState, useCallback } from 'react'
-import { Box, Typography, Grid, Button, Alert, Snackbar, CircularProgress, Card, CardContent, Chip } from '@mui/material'
-import { CloudUpload, Download, Description, Cloud } from '@mui/icons-material'
-import { FileUploader } from '../components/upload/FileUploader'
-import { DataAnalysis } from '../components/forecast/DataAnalysis'
-import { forecastApi, UploadResponse } from '../services/api'
-import { useStore } from '../store/appStore'
+import { useEffect, type ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  CardContent,
+  Chip,
+  CircularProgress,
+  Divider,
+  Grid,
+  LinearProgress,
+  Stack,
+  Typography,
+} from '@mui/material';
+import DownloadIcon from '@mui/icons-material/Download';
+import InsightsIcon from '@mui/icons-material/Insights';
+import StorageIcon from '@mui/icons-material/Storage';
+import RestartAltIcon from '@mui/icons-material/RestartAlt';
+import { PageContainer } from '../components/layout/PageContainer';
+import { FileUploader } from '../components/upload/FileUploader';
+import { DataPreview } from '../components/upload/DataPreview';
+import { useDeleteFile, useFiles, useUploadFile } from '../hooks/useFiles';
+import { useAnalyze } from '../hooks/useAnalysis';
+import { useStore } from '../store/appStore';
+import { getErrorMessage } from '../services/api';
+import { FILE_TYPE_DESCRIPTIONS, FILE_TYPE_LABELS, FILE_TYPES, type FileType, type UploadedFile } from '../types';
+import { downloadBlob } from '../utils/csv';
+import { useState } from 'react';
+import { formatDate, formatNumber } from '../utils/format';
 
-const fileTypes = [
-  {
-    type: 'sales',
-    title: 'Sales Data',
-    description: 'Historical sales data with dates and values',
-    acceptedTypes: '.csv, .xlsx, .xls',
-    required: true,
-  },
-  {
-    type: 'media_plan',
-    title: 'Media Plan',
-    description: 'Marketing spend by channel (TV, digital, social)',
-    acceptedTypes: '.csv, .xlsx, .xls',
-    required: false,
-  },
-  {
-    type: 'promotions',
-    title: 'Promotions',
-    description: 'Promotional campaigns and discounts',
-    acceptedTypes: '.csv, .xlsx, .xls',
-    required: false,
-  },
-  {
-    type: 'holidays',
-    title: 'Holidays',
-    description: 'Holiday calendar with impact factors',
-    acceptedTypes: '.csv, .xlsx, .xls',
-    required: false,
-  },
-  {
-    type: 'events',
-    title: 'Events',
-    description: 'Special events that affect demand',
-    acceptedTypes: '.csv, .xlsx, .xls',
-    required: false,
-  },
-  {
-    type: 'weather',
-    title: 'Weather',
-    description: 'Weather conditions (temp, rain, snow)',
-    acceptedTypes: '.csv, .xlsx, .xls',
-    required: false,
-  },
-  {
-    type: 'competitor',
-    title: 'Competitor',
-    description: 'Competitor pricing and market share',
-    acceptedTypes: '.csv, .xlsx, .xls',
-    required: false,
-  },
-  {
-    type: 'economic',
-    title: 'Economic',
-    description: 'Economic indicators (GDP, inflation)',
-    acceptedTypes: '.csv, .xlsx, .xls',
-    required: false,
-  },
-]
+export function DataUploadPage(): ReactNode {
+  const navigate = useNavigate();
+  const uploadedFiles = useStore((s) => s.uploadedFiles);
+  const analysisData = useStore((s) => s.analysisData);
+  const salesFileId = useStore((s) => s.salesFileId);
+  const setAnalysisData = useStore((s) => s.setAnalysisData);
 
-const templates = [
-  { name: 'Sales Template', file: 'templates/01_sales_template.csv', description: 'Required for forecasting' },
-  { name: 'Media Plan', file: 'templates/02_media_plan_template.csv', description: 'Channel spend data' },
-  { name: 'Promotions', file: 'templates/03_promotions_template.csv', description: 'Promo campaigns' },
-  { name: 'Holidays', file: 'templates/04_holidays_template.csv', description: 'Holiday impact' },
-  { name: 'Events', file: 'templates/05_events_template.csv', description: 'Special events' },
-  { name: 'Weather', file: 'templates/06_weather_template.csv', description: 'Weather conditions' },
-  { name: 'Competitor', file: 'templates/07_competitor_template.csv', description: 'Competitor data' },
-  { name: 'Economic', file: 'templates/08_economic_template.csv', description: 'Economic indicators' },
-]
+  const filesQuery = useFiles();
+  const uploadMut = useUploadFile();
+  const deleteMut = useDeleteFile();
+  const analyzeMut = useAnalyze();
+  const [activeUpload, setActiveUpload] = useState<FileType | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-export function DataUpload() {
-  const { uploadedFiles, addUploadedFile, removeUploadedFile, setSalesFileId, setAnalysisData } = useStore()
-  const analysisData = useStore((state) => state.analysisData)
-  const [isAnalyzing, setIsAnalyzing] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string }>({
-    open: false,
-    message: '',
-  })
+  useEffect(() => {
+    if (!filesQuery.data) return;
+    if (filesQuery.data.length === 0 && analysisData) {
+      setAnalysisData(null);
+    }
+  }, [filesQuery.data, analysisData, setAnalysisData]);
 
-  const handleRemove = useCallback(
-    async (fileId: string) => {
-      try {
-        await forecastApi.deleteFile(fileId)
-        const file = uploadedFiles.find((f) => f.file_id === fileId)
-        removeUploadedFile(fileId)
-        if (file?.type === 'sales') {
-          setSalesFileId(null)
-          setAnalysisData(null)
+  const salesFile = uploadedFiles.find((f) => f.type === 'sales');
+  const otherFiles = uploadedFiles.filter((f) => f.type !== 'sales');
+
+  const handleFile = async (fileType: FileType, file: File) => {
+    setError(null);
+    setActiveUpload(fileType);
+    try {
+      const uploaded = await uploadMut.mutateAsync({ fileType, file });
+      if (fileType === 'sales' && !analysisData) {
+        try {
+          await analyzeMut.mutateAsync(uploaded.file_id);
+        } catch (e) {
+          console.warn('Auto-analyze failed:', e);
         }
-        setSnackbar({
-          open: true,
-          message: 'File removed successfully',
-        })
-      } catch (err: any) {
-        setError(err.response?.data?.detail || 'Failed to remove file')
       }
-    },
-    [uploadedFiles, removeUploadedFile, setSalesFileId, setAnalysisData]
-  )
+    } catch (e) {
+      setError(getErrorMessage(e));
+    } finally {
+      setActiveUpload(null);
+    }
+  };
 
-  const handleUpload = useCallback(
-    async (fileType: string, file: File) => {
-      try {
-        const response = await forecastApi.uploadFile(fileType, file)
-        const uploadResponse: UploadResponse = response
+  const handleAnalyze = async () => {
+    if (!salesFile) return;
+    setError(null);
+    try {
+      await analyzeMut.mutateAsync(salesFile.file_id);
+    } catch (e) {
+      setError(getErrorMessage(e));
+    }
+  };
 
-        addUploadedFile({
-          ...uploadResponse,
-          file_id: uploadResponse.file_id,
-        })
+  const handleDelete = async (file: UploadedFile) => {
+    setError(null);
+    try {
+      await deleteMut.mutateAsync(file.file_id);
+    } catch (e) {
+      setError(getErrorMessage(e));
+    }
+  };
 
-        if (fileType === 'sales') {
-          setSalesFileId(uploadResponse.file_id)
-          setIsAnalyzing(true)
-
-          try {
-            const analysis = await forecastApi.analyzeData(uploadResponse.file_id)
-            setAnalysisData(analysis)
-          } catch (err) {
-            console.error('Analysis error:', err)
-          } finally {
-            setIsAnalyzing(false)
-          }
-        }
-
-        setSnackbar({
-          open: true,
-          message: `${file.name} uploaded successfully`,
-        })
-      } catch (err: any) {
-        setError(err.response?.data?.detail || 'Upload failed')
-      }
-    },
-    [addUploadedFile, setSalesFileId, setAnalysisData]
-  )
-
-  const handleDownloadTemplate = (templateFile: string) => {
-    const link = document.createElement('a')
-    link.href = `/${templateFile}`
-    link.download = templateFile.split('/').pop() || 'template.csv'
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-  }
-
-  const salesFile = uploadedFiles.find((f) => f.type === 'sales')
-
-  const uploadedTypes = new Set(uploadedFiles.map(f => f.type))
-  const allRequiredUploaded = uploadedTypes.has('sales')
+  const handleTemplate = async (fileType: FileType) => {
+    const mapping: Record<FileType, string> = {
+      sales: '01_sales_template.csv',
+      media_plan: '02_media_plan_template.csv',
+      promotions: '03_promotions_template.csv',
+      holidays: '04_holidays_template.csv',
+      events: '05_events_template.csv',
+      weather: '06_weather_template.csv',
+      competitor: '07_competitor_template.csv',
+      economic: '08_economic_template.csv',
+    };
+    const filename = mapping[fileType];
+    const url = `/templates/${filename}`;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Template unavailable (${res.status})`);
+      const text = await res.text();
+      downloadBlob(text, filename, 'text/csv');
+    } catch (e) {
+      setError(getErrorMessage(e));
+    }
+  };
 
   return (
-    <Box>
-      <Box sx={{ mb: 4 }}>
-        <Typography variant="h4" sx={{ fontWeight: 700, mb: 1 }}>
-          Data Upload
-        </Typography>
-        <Typography variant="body1" color="text.secondary">
-          Upload your data files for forecasting. Download templates below.
-        </Typography>
-      </Box>
+    <PageContainer
+      title="Data upload"
+      subtitle="Upload your sales history plus any supporting data sources (media plan, promotions, holidays, etc.)."
+      actions={
+        salesFile && (
+          <Button
+            variant="contained"
+            startIcon={
+              analyzeMut.isPending ? <CircularProgress size={16} color="inherit" /> : <InsightsIcon />
+            }
+            disabled={analyzeMut.isPending}
+            onClick={handleAnalyze}
+          >
+            {analyzeMut.isPending ? 'Analyzing…' : 'Analyze sales data'}
+          </Button>
+        )
+      }
+    >
+      {error && (
+        <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
+          {error}
+        </Alert>
+      )}
 
-      <Card sx={{ mb: 4, bgcolor: 'primary.lighter' }}>
-        <CardContent sx={{ p: 3 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-            <Download sx={{ color: 'primary.main', fontSize: 32 }} />
-            <Box>
-              <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                Download CSV Templates
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Use these templates to format your external data correctly
-              </Typography>
-            </Box>
-          </Box>
-          <Grid container spacing={2}>
-            {templates.map((template) => (
-              <Grid item xs={12} sm={6} md={3} key={template.name}>
-                <Box
-                  sx={{
-                    p: 2,
-                    bgcolor: 'background.paper',
-                    borderRadius: 2,
-                    cursor: 'pointer',
-                    '&:hover': { bgcolor: 'action.hover' },
-                  }}
-                  onClick={() => handleDownloadTemplate(template.file)}
-                >
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-                    <Description sx={{ fontSize: 18, color: 'primary.main' }} />
-                    <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                      {template.name}
-                    </Typography>
-                  </Box>
-                  <Typography variant="caption" color="text.secondary">
-                    {template.description}
-                  </Typography>
-                </Box>
-              </Grid>
-            ))}
-          </Grid>
-        </CardContent>
-      </Card>
+      {filesQuery.isLoading && <LinearProgress sx={{ mb: 3 }} />}
 
       <Grid container spacing={3}>
-        <Grid item xs={12} md={8}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-            <Typography variant="h6" sx={{ fontWeight: 600 }}>
-              Upload Files
-            </Typography>
-            <Chip
-              label={allRequiredUploaded ? 'Ready' : 'Sales Required'}
-              color={allRequiredUploaded ? 'success' : 'warning'}
-              size="small"
-            />
-          </Box>
+        <Grid item xs={12} lg={4}>
+          <Card sx={{ position: { lg: 'sticky' }, top: { lg: 80 } }}>
+            <CardContent>
+              <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 2 }}>
+                <Box
+                  sx={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 1.5,
+                    backgroundColor: 'primary.lighter',
+                    color: 'primary.main',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <StorageIcon />
+                </Box>
+                <Box>
+                  <Typography variant="h5">Sales data</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Required
+                  </Typography>
+                </Box>
+              </Stack>
+              <FileUploader
+                fileType="sales"
+                label="Upload sales CSV"
+                description={FILE_TYPE_DESCRIPTIONS.sales}
+                isLoading={activeUpload === 'sales'}
+                onFileSelected={(f) => handleFile('sales', f)}
+              />
+              {salesFile && (
+                <Box sx={{ mt: 2 }}>
+                  <Stack
+                    direction="row"
+                    spacing={1}
+                    alignItems="center"
+                    justifyContent="space-between"
+                    sx={{ mb: 1.5 }}
+                  >
+                    <Typography variant="subtitle2">Current</Typography>
+                    <Chip
+                      label={`${formatNumber(salesFile.row_count)} rows`}
+                      size="small"
+                      color="success"
+                    />
+                  </Stack>
+                  <Stack spacing={0.5}>
+                    <Row label="Filename" value={salesFile.filename} />
+                    <Row label="Columns" value={salesFile.columns.join(', ') || '—'} />
+                    {salesFile.column_mapping && Object.keys(salesFile.column_mapping).length > 0 && (
+                      <Row
+                        label="Mapping"
+                        value={Object.entries(salesFile.column_mapping)
+                          .map(([k, v]) => `${k}←${v}`)
+                          .join(', ')}
+                      />
+                    )}
+                  </Stack>
+                </Box>
+              )}
+              {analysisData && (
+                <Box sx={{ mt: 2, p: 1.5, borderRadius: 1.5, backgroundColor: 'success.lighter' }}>
+                  <Typography variant="caption" color="success.dark" sx={{ fontWeight: 600 }}>
+                    ✓ Analysis complete
+                  </Typography>
+                  <Typography variant="body2" color="success.dark" sx={{ mt: 0.5 }}>
+                    {formatNumber(analysisData.data_characteristics.length)} observations,{' '}
+                    {analysisData.data_characteristics.trend} trend,{' '}
+                    {analysisData.data_characteristics.seasonality} seasonality.
+                  </Typography>
+                </Box>
+              )}
+            </CardContent>
+          </Card>
+        </Grid>
 
-          <Grid container spacing={3}>
-            {fileTypes.map((fileType) => (
-              <Grid item xs={12} sm={6} md={4} key={fileType.type}>
-                <FileUploader
-                  fileType={fileType.type}
-                  title={fileType.title}
-                  description={fileType.description}
-                  acceptedTypes={fileType.acceptedTypes}
-                  uploadedFile={uploadedFiles.find((f) => f.type === fileType.type) || null}
-                  onUpload={(file) => handleUpload(fileType.type, file)}
-                  onRemove={handleRemove}
-                />
+        <Grid item xs={12} lg={8}>
+          {salesFile && (
+            <Box sx={{ mb: 3 }}>
+              <DataPreview file={salesFile} onDelete={(id) => void handleDelete(uploadedFiles.find((f) => f.file_id === id) ?? { file_id: id, filename: '', type: '', size: 0, row_count: 0, columns: [] })} showDownloadTemplate onDownloadTemplate={() => handleTemplate('sales')} />
+            </Box>
+          )}
+
+          <Typography variant="h4" sx={{ mb: 2 }}>
+            Supporting data sources
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+            Optional files that enrich the forecast. Models can incorporate them as exogenous variables.
+          </Typography>
+          <Grid container spacing={2}>
+            {FILE_TYPES.filter((t) => t !== 'sales').map((t) => (
+              <Grid key={t} item xs={12} sm={6}>
+                <Card sx={{ height: '100%' }}>
+                  <CardContent>
+                    <Stack
+                      direction="row"
+                      alignItems="center"
+                      justifyContent="space-between"
+                      sx={{ mb: 1.5 }}
+                    >
+                      <Typography variant="h5">{FILE_TYPE_LABELS[t]}</Typography>
+                      <Button
+                        size="small"
+                        startIcon={<DownloadIcon />}
+                        onClick={() => handleTemplate(t)}
+                      >
+                        Template
+                      </Button>
+                    </Stack>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                      {FILE_TYPE_DESCRIPTIONS[t]}
+                    </Typography>
+                    <FileUploader
+                      fileType={t}
+                      label={`Upload ${FILE_TYPE_LABELS[t].toLowerCase()}`}
+                      isLoading={activeUpload === t}
+                      onFileSelected={(f) => handleFile(t, f)}
+                    />
+                    {otherFiles
+                      .filter((f) => f.type === t)
+                      .map((f) => (
+                        <Box key={f.file_id} sx={{ mt: 1.5 }}>
+                          <DataPreview
+                            file={f}
+                            onDelete={() => void handleDelete(f)}
+                            showDownloadTemplate={false}
+                          />
+                        </Box>
+                      ))}
+                  </CardContent>
+                </Card>
               </Grid>
             ))}
           </Grid>
-        </Grid>
 
-        <Grid item xs={12} md={4}>
-          {isAnalyzing ? (
-            <Box
-              sx={{
-                p: 4,
-                textAlign: 'center',
-                bgcolor: 'background.paper',
-                borderRadius: 2,
-              }}
-            >
-              <CircularProgress sx={{ mb: 2 }} />
-              <Typography>Analyzing data...</Typography>
+          {analysisData && salesFileId && (
+            <Box sx={{ mt: 4 }}>
+              <Divider sx={{ mb: 3 }} />
+              <Stack
+                direction={{ xs: 'column', sm: 'row' }}
+                spacing={2}
+                alignItems={{ xs: 'flex-start', sm: 'center' }}
+                justifyContent="space-between"
+              >
+                <Box>
+                  <Typography variant="h5">Ready to forecast?</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {formatNumber(analysisData.data_characteristics.length)} observations ·{' '}
+                    {analysisData.data_characteristics.trend} trend ·{' '}
+                    {analysisData.data_characteristics.seasonality} seasonality
+                  </Typography>
+                </Box>
+                <Stack direction="row" spacing={1.5}>
+                  <Button
+                    variant="outlined"
+                    startIcon={<RestartAltIcon />}
+                    onClick={handleAnalyze}
+                    disabled={analyzeMut.isPending}
+                  >
+                    Re-analyze
+                  </Button>
+                  <Button variant="contained" onClick={() => navigate('/explore')}>
+                    Explore data
+                  </Button>
+                  <Button variant="contained" color="secondary" onClick={() => navigate('/forecast')}>
+                    Configure forecast
+                  </Button>
+                </Stack>
+              </Stack>
             </Box>
-          ) : (
-            <DataAnalysis
-              characteristics={analysisData?.analysis?.data_characteristics || null}
-              recommendations={analysisData?.analysis?.model_recommendations || []}
-            />
+          )}
+
+          {uploadedFiles.length > 0 && (
+            <Box sx={{ mt: 4 }}>
+              <Typography variant="overline" color="text.secondary">
+                All files
+              </Typography>
+              <Stack spacing={1.5} sx={{ mt: 1 }}>
+                {uploadedFiles
+                  .slice()
+                  .sort((a, b) => (a.uploaded_at ?? '').localeCompare(b.uploaded_at ?? ''))
+                  .reverse()
+                  .map((f) => (
+                    <Stack
+                      key={f.file_id}
+                      direction="row"
+                      alignItems="center"
+                      spacing={2}
+                      sx={{
+                        p: 1.5,
+                        borderRadius: 1.5,
+                        border: '1px solid',
+                        borderColor: 'divider',
+                      }}
+                    >
+                      <Box sx={{ flexGrow: 1 }}>
+                        <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                          {f.filename}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {FILE_TYPE_LABELS[f.type as FileType] ?? f.type} ·{' '}
+                          {formatNumber(f.row_count)} rows · uploaded{' '}
+                          {f.uploaded_at ? formatDate(f.uploaded_at, true) : 'just now'}
+                        </Typography>
+                      </Box>
+                    </Stack>
+                  ))}
+              </Stack>
+            </Box>
           )}
         </Grid>
       </Grid>
+    </PageContainer>
+  );
+}
 
-      {salesFile && (
-        <Box sx={{ mt: 4 }}>
-          <Button
-            variant="contained"
-            size="large"
-            endIcon={<CloudUpload />}
-            onClick={() => window.location.href = '/forecast'}
-          >
-            Proceed to Forecast
-          </Button>
-        </Box>
-      )}
-
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={4000}
-        onClose={() => setSnackbar({ ...snackbar, open: false })}
-        message={snackbar.message}
-      />
-
-      <Snackbar
-        open={!!error}
-        autoHideDuration={6000}
-        onClose={() => setError(null)}
+function Row({ label, value }: { label: string; value: string }): ReactNode {
+  return (
+    <Stack direction="row" spacing={1} alignItems="flex-start">
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{ minWidth: 80, fontWeight: 600, pt: 0.25 }}
       >
-        <Alert severity="error" onClose={() => setError(null)}>
-          {error}
-        </Alert>
-      </Snackbar>
-    </Box>
-  )
+        {label}
+      </Typography>
+      <Typography variant="body2" sx={{ wordBreak: 'break-word' }}>
+        {value}
+      </Typography>
+    </Stack>
+  );
 }

@@ -1,1 +1,1 @@
-# ForecastIQ Backend Schemas
+"""Pydantic schemas for API request/response validation."""

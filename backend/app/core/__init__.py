@@ -1,1 +1,1 @@
-# ForecastIQ Backend Core
+"""Core configuration and utilities for ForecastIQ."""

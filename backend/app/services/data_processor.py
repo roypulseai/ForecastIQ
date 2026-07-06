@@ -1,0 +1,604 @@
+"""Unified data processor for all supported file types.
+
+Responsibilities:
+    * Load CSV / Excel from disk
+    * Detect + parse date columns robustly
+    * Map arbitrary user column names to a standardized schema
+    * Validate required columns per file type
+    * Coerce numeric columns, fill missing values
+    * Return a clean, standardized DataFrame per file type
+
+Standard output schemas:
+    * sales        : date, value, [entity columns...]
+    * media_plan   : date, media_channel, media_spend, [reach, impressions, ...]
+    * promotions   : date, discount, [promo_id, promo_type, ...]
+    * holidays     : date, holiday_impact, [holiday_name, holiday_type]
+    * events       : date, event_impact, [event_name, event_type]
+    * weather      : date, temperature, [humidity, rainfall, snowfall]
+    * competitor   : date, competitor_price, [competitor_name, market_share, ...]
+    * economic     : date, [gdp, inflation, unemployment, cpi, ...]
+"""
+from __future__ import annotations
+
+import logging
+import os
+import warnings
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
+import pandas as pd
+
+warnings.filterwarnings("ignore")
+logger = logging.getLogger(__name__)
+
+
+# --------------------------------------------------------------------------- #
+# File-type definitions
+# --------------------------------------------------------------------------- #
+
+DATE_ALIASES = [
+    "date", "ds", "timestamp", "datetime", "order_date", "sales_date",
+    "transaction_date", "day", "time", "report_date", "calendar_date",
+]
+
+
+@dataclass
+class FileTypeSpec:
+    """Describes how to normalize one file type."""
+    name: str
+    required_columns: List[str]
+    optional_columns: List[str] = field(default_factory=list)
+    date_column_aliases: List[str] = field(default_factory=lambda: list(DATE_ALIASES))
+    # date column output (after standardization)
+    standard_date: str = "date"
+    # extra outputs to keep (after renaming)
+    passthrough: List[str] = field(default_factory=list)
+
+
+FILE_TYPE_SPECS: Dict[str, FileTypeSpec] = {
+    "sales": FileTypeSpec(
+        name="sales",
+        required_columns=[],  # validation handled separately — date/value optional from spec
+        optional_columns=["value", "y", "sales", "demand", "revenue",
+                          "quantity", "qty", "units", "amount",
+                          "sku", "product", "category", "sub_category",
+                          "store", "region", "portfolio", "brand"],
+    ),
+    "media_plan": FileTypeSpec(
+        name="media_plan",
+        required_columns=["spend"],
+        optional_columns=["channel", "reach", "impressions", "media_channel", "media_spend"],
+        passthrough=["reach", "impressions"],
+    ),
+    "promotions": FileTypeSpec(
+        name="promotions",
+        required_columns=[],  # discount optional too — bare minimum is a date column
+        optional_columns=["discount", "discount_pct", "discount_percent", "off", "promo_id",
+                          "promo_type", "original_price", "promo_price"],
+    ),
+    "holidays": FileTypeSpec(
+        name="holidays",
+        required_columns=[],
+        optional_columns=["name", "holiday_name", "type", "holiday_type",
+                          "impact", "impact_factor", "holiday_impact"],
+    ),
+    "events": FileTypeSpec(
+        name="events",
+        required_columns=[],
+        optional_columns=["name", "event_name", "type", "event_type",
+                          "impact", "impact_factor", "event_impact"],
+    ),
+    "weather": FileTypeSpec(
+        name="weather",
+        required_columns=[],
+        optional_columns=["temperature", "temp", "humidity", "rain", "rainfall",
+                          "precipitation", "snow", "snowfall"],
+    ),
+    "competitor": FileTypeSpec(
+        name="competitor",
+        required_columns=[],
+        optional_columns=["competitor_price", "price", "competitor_name", "name",
+                          "market_share", "share", "promotion_flag"],
+    ),
+    "economic": FileTypeSpec(
+        name="economic",
+        required_columns=[],
+        optional_columns=["gdp", "growth_rate", "consumer_confidence", "inflation",
+                          "cpi", "unemployment", "interest_rate", "indicator_value"],
+    ),
+}
+
+
+# --------------------------------------------------------------------------- #
+# Helpers
+# --------------------------------------------------------------------------- #
+
+def _normalize_col(col: str) -> str:
+    return str(col).strip().lower().replace(" ", "_").replace("-", "_")
+
+
+def _find_column(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
+    """Find a column in df whose normalized name matches any candidate."""
+    norm_map = {_normalize_col(c): c for c in df.columns}
+    for cand in candidates:
+        if _normalize_col(cand) in norm_map:
+            return norm_map[_normalize_col(cand)]
+    return None
+
+
+def _find_date_column(df: pd.DataFrame, aliases: List[str]) -> Optional[str]:
+    """Locate a date column by alias list, then by dtype sniffing."""
+    # Explicit aliases
+    found = _find_column(df, aliases)
+    if found:
+        return found
+    # Fuzzy: any column whose normalized name contains "date"
+    for c in df.columns:
+        if "date" in _normalize_col(c):
+            return c
+    # Datetime dtype
+    for c in df.columns:
+        try:
+            if pd.api.types.is_datetime64_any_dtype(df[c]):
+                return c
+        except Exception:
+            continue
+    return None
+
+
+def _parse_date_column(df: pd.DataFrame, col: str) -> pd.Series:
+    """Parse a date column robustly. Returns datetime64 Series."""
+    s = df[col]
+    if pd.api.types.is_datetime64_any_dtype(s):
+        return s
+    # Try ISO / common formats
+    try:
+        return pd.to_datetime(s, errors="coerce", format="mixed", utc=False)
+    except (ValueError, TypeError):
+        return pd.to_datetime(s, errors="coerce", infer_datetime_format=True)
+
+
+def _coerce_numeric(s: pd.Series) -> pd.Series:
+    return pd.to_numeric(s, errors="coerce")
+
+
+# --------------------------------------------------------------------------- #
+# Main processor
+# --------------------------------------------------------------------------- #
+
+class DataProcessor:
+    """Unified loader + normalizer for all supported file types."""
+
+    SUPPORTED_TYPES = list(FILE_TYPE_SPECS.keys())
+
+    # ------------------------------------------------------------ loading
+    @staticmethod
+    def load_file(file_path: str) -> pd.DataFrame:
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"File not found: {file_path}")
+        ext = os.path.splitext(file_path)[1].lower()
+        if ext == ".csv":
+            return pd.read_csv(file_path)
+        if ext in (".xlsx", ".xls"):
+            return pd.read_excel(file_path)
+        raise ValueError(f"Unsupported file format: {ext}")
+
+    @staticmethod
+    def load_bytes(content: bytes, filename: str) -> pd.DataFrame:
+        import io
+        ext = os.path.splitext(filename)[1].lower()
+        if ext == ".csv":
+            return pd.read_csv(io.BytesIO(content))
+        if ext in (".xlsx", ".xls"):
+            return pd.read_excel(io.BytesIO(content))
+        raise ValueError(f"Unsupported file format: {ext}")
+
+    # --------------------------------------------------------- normalization
+    def process(self, df: pd.DataFrame, file_type: str) -> Tuple[pd.DataFrame, Dict[str, str]]:
+        """Normalize df for the given file_type. Returns (clean_df, column_mapping)."""
+        if file_type not in FILE_TYPE_SPECS:
+            raise ValueError(f"Unknown file_type: {file_type}. "
+                             f"Supported: {self.SUPPORTED_TYPES}")
+        spec = FILE_TYPE_SPECS[file_type]
+        df = df.copy()
+        df.columns = [str(c) for c in df.columns]
+
+        # Drop completely empty rows / cols
+        df = df.dropna(how="all").dropna(axis=1, how="all")
+        if df.empty:
+            raise ValueError("File contains no data rows")
+
+        # --- locate + parse date column
+        date_col = _find_date_column(df, spec.date_column_aliases)
+        if date_col is None:
+            raise ValueError(
+                f"{file_type} data must contain a date column. "
+                f"Expected one of: {spec.date_column_aliases}"
+            )
+        df[spec.standard_date] = _parse_date_column(df, date_col)
+        bad_dates = df[spec.standard_date].isna().sum()
+        if bad_dates == len(df):
+            raise ValueError(
+                f"Could not parse any values in date column '{date_col}'. "
+                f"Expected ISO or common date formats."
+            )
+
+        # Drop rows where date failed to parse
+        df = df.dropna(subset=[spec.standard_date])
+
+        # --- drop the original date column (we standardized to 'date')
+        if date_col != spec.standard_date:
+            df = df.drop(columns=[date_col])
+
+        # --- type-specific normalization
+        mapping: Dict[str, str] = {date_col: spec.standard_date}
+        if file_type == "sales":
+            df, m = self._normalize_sales(df)
+        elif file_type == "media_plan":
+            df, m = self._normalize_media_plan(df)
+        elif file_type == "promotions":
+            df, m = self._normalize_promotions(df)
+        elif file_type == "holidays":
+            df, m = self._normalize_holidays(df)
+        elif file_type == "events":
+            df, m = self._normalize_events(df)
+        elif file_type == "weather":
+            df, m = self._normalize_weather(df)
+        elif file_type == "competitor":
+            df, m = self._normalize_competitor(df)
+        elif file_type == "economic":
+            df, m = self._normalize_economic(df)
+        else:
+            m = {}
+
+        mapping.update(m)
+
+        # --- drop columns that were renamed (keep only standardized + passthrough)
+        renamed_sources = set(mapping.keys()) - {spec.standard_date}
+        df = df.drop(columns=[c for c in renamed_sources if c in df.columns],
+                      errors="ignore")
+
+        # --- final ordering: date first, then standardized cols, then any extras
+        keep = [spec.standard_date]
+        other = [c for c in df.columns if c not in keep]
+        df = df[keep + other]
+
+        # Deduplicate rows by date (sum for numeric, first for object)
+        agg = {c: "sum" if pd.api.types.is_numeric_dtype(df[c]) else "first"
+               for c in df.columns if c != spec.standard_date}
+        df = df.groupby(spec.standard_date, as_index=False, sort=True).agg(agg)
+        df = df.sort_values(spec.standard_date).reset_index(drop=True)
+
+        return df, mapping
+
+    # ----------------------------------------------------- type-specific ops
+    @staticmethod
+    def _normalize_sales(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, str]]:
+        mapping: Dict[str, str] = {}
+        # Find value column
+        value_col = _find_column(df, ["value", "y", "sales", "demand", "revenue",
+                                       "quantity", "qty", "units", "amount"])
+        if value_col is None:
+            # Fallback: any numeric column other than date
+            for c in df.columns:
+                if c == "date":
+                    continue
+                if pd.api.types.is_numeric_dtype(df[c]):
+                    value_col = c
+                    break
+        if value_col is None:
+            raise ValueError("Sales data must have a numeric value column "
+                             "(value / sales / revenue / quantity / etc.)")
+        if value_col != "value":
+            df["value"] = _coerce_numeric(df[value_col])
+            mapping[value_col] = "value"
+        else:
+            df["value"] = _coerce_numeric(df["value"])
+        df["value"] = df["value"].fillna(0.0)
+        return df, mapping
+
+    @staticmethod
+    def _normalize_media_plan(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, str]]:
+        mapping: Dict[str, str] = {}
+
+        # spend
+        spend_col = _find_column(df, ["spend", "media_spend", "cost", "amount", "investment"])
+        if spend_col is None:
+            raise ValueError("Media plan requires a 'spend' column")
+        if spend_col != "media_spend":
+            df["media_spend"] = _coerce_numeric(df[spend_col]).fillna(0.0)
+            mapping[spend_col] = "media_spend"
+        else:
+            df["media_spend"] = _coerce_numeric(df["media_spend"]).fillna(0.0)
+
+        # channel
+        channel_col = _find_column(df, ["channel", "media_channel", "platform"])
+        if channel_col and channel_col != "media_channel":
+            df["media_channel"] = df[channel_col].astype(str).fillna("unknown")
+            mapping[channel_col] = "media_channel"
+        elif "media_channel" not in df.columns:
+            df["media_channel"] = "default"
+        else:
+            df["media_channel"] = df["media_channel"].astype(str).fillna("default")
+
+        # optional reach / impressions
+        for src_candidates, std_name in [
+            (["reach"], "reach"),
+            (["impressions", "imps"], "impressions"),
+        ]:
+            col = _find_column(df, src_candidates)
+            if col and col != std_name:
+                df[std_name] = _coerce_numeric(df[col]).fillna(0.0)
+                mapping[col] = std_name
+            elif std_name in df.columns:
+                df[std_name] = _coerce_numeric(df[std_name]).fillna(0.0)
+
+        return df, mapping
+
+    @staticmethod
+    def _normalize_promotions(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, str]]:
+        mapping: Dict[str, str] = {}
+        discount_col = _find_column(df, ["discount", "discount_pct", "discount_percent",
+                                          "discount_amount", "off", "pct_off"])
+        if discount_col and discount_col != "discount":
+            df["discount"] = _coerce_numeric(df[discount_col]).fillna(0.0)
+            mapping[discount_col] = "discount"
+        elif "discount" in df.columns:
+            df["discount"] = _coerce_numeric(df["discount"]).fillna(0.0)
+        else:
+            df["discount"] = 0.0
+
+        # If discount appears to be a percentage (0-100), keep as-is.  If a
+        # fraction (0-1), it is still meaningful.  We do not transform it.
+        promo_id_col = _find_column(df, ["promo_id", "id", "campaign_id"])
+        if promo_id_col and promo_id_col != "promo_id":
+            df["promo_id"] = df[promo_id_col].astype(str)
+            mapping[promo_id_col] = "promo_id"
+
+        promo_type_col = _find_column(df, ["promo_type", "type", "campaign_type"])
+        if promo_type_col and promo_type_col != "promo_type":
+            df["promo_type"] = df[promo_type_col].astype(str)
+            mapping[promo_type_col] = "promo_type"
+
+        return df, mapping
+
+    @staticmethod
+    def _normalize_holidays(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, str]]:
+        return DataProcessor._normalize_impact_table(
+            df,
+            holiday_or_event="holiday",
+        )
+
+    @staticmethod
+    def _normalize_events(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, str]]:
+        return DataProcessor._normalize_impact_table(
+            df,
+            holiday_or_event="event",
+        )
+
+    @staticmethod
+    def _normalize_impact_table(
+        df: pd.DataFrame, holiday_or_event: str
+    ) -> Tuple[pd.DataFrame, Dict[str, str]]:
+        """Holidays and events share an identical structure."""
+        prefix = holiday_or_event
+        mapping: Dict[str, str] = {}
+
+        # impact: column is renamed to <prefix>_impact
+        impact_col = _find_column(
+            df,
+            [f"{prefix}_impact", "impact", "impact_factor", "lift", "multiplier", "weight"],
+        )
+        if impact_col and impact_col != f"{prefix}_impact":
+            df[f"{prefix}_impact"] = _coerce_numeric(df[impact_col]).fillna(1.0)
+            mapping[impact_col] = f"{prefix}_impact"
+        elif f"{prefix}_impact" in df.columns:
+            df[f"{prefix}_impact"] = _coerce_numeric(df[f"{prefix}_impact"]).fillna(1.0)
+        else:
+            df[f"{prefix}_impact"] = 1.0
+
+        # name
+        name_col = _find_column(df, [f"{prefix}_name", "name", "label"])
+        if name_col and name_col != f"{prefix}_name":
+            df[f"{prefix}_name"] = df[name_col].astype(str).fillna("Unknown")
+            mapping[name_col] = f"{prefix}_name"
+
+        # type
+        type_col = _find_column(df, [f"{prefix}_type", "type", "category", "kind"])
+        if type_col and type_col != f"{prefix}_type":
+            df[f"{prefix}_type"] = df[type_col].astype(str)
+            mapping[type_col] = f"{prefix}_type"
+
+        return df, mapping
+
+    @staticmethod
+    def _normalize_weather(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, str]]:
+        mapping: Dict[str, str] = {}
+        # temperature
+        temp_col = _find_column(df, ["temperature", "temp", "temp_c", "temp_f", "avg_temp"])
+        if temp_col and temp_col != "temperature":
+            df["temperature"] = _coerce_numeric(df[temp_col])
+            mapping[temp_col] = "temperature"
+        elif "temperature" in df.columns:
+            df["temperature"] = _coerce_numeric(df["temperature"])
+        else:
+            df["temperature"] = np.nan
+        df["temperature"] = df["temperature"].fillna(df["temperature"].mean()
+                                                     if df["temperature"].notna().any()
+                                                     else 20.0)
+
+        for src_candidates, std_name in [
+            (["humidity"], "humidity"),
+            (["rainfall", "rain", "precipitation", "precip"], "rainfall"),
+            (["snowfall", "snow"], "snowfall"),
+        ]:
+            col = _find_column(df, src_candidates)
+            if col and col != std_name:
+                df[std_name] = _coerce_numeric(df[col]).fillna(0.0)
+                mapping[col] = std_name
+            elif std_name in df.columns:
+                df[std_name] = _coerce_numeric(df[std_name]).fillna(0.0)
+            else:
+                df[std_name] = 0.0
+
+        return df, mapping
+
+    @staticmethod
+    def _normalize_competitor(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, str]]:
+        mapping: Dict[str, str] = {}
+        price_col = _find_column(df, ["competitor_price", "price", "comp_price", "rival_price"])
+        if price_col and price_col != "competitor_price":
+            df["competitor_price"] = _coerce_numeric(df[price_col])
+            mapping[price_col] = "competitor_price"
+        elif "competitor_price" in df.columns:
+            df["competitor_price"] = _coerce_numeric(df["competitor_price"])
+        else:
+            df["competitor_price"] = np.nan
+
+        # If no price col, fall back to any numeric column
+        if df["competitor_price"].isna().all():
+            for c in df.columns:
+                if c == "date":
+                    continue
+                if pd.api.types.is_numeric_dtype(df[c]):
+                    df["competitor_price"] = _coerce_numeric(df[c])
+                    mapping[c] = "competitor_price"
+                    break
+        df["competitor_price"] = df["competitor_price"].fillna(0.0)
+
+        name_col = _find_column(df, ["competitor_name", "name", "competitor", "brand"])
+        if name_col and name_col != "competitor_name":
+            df["competitor_name"] = df[name_col].astype(str).fillna("Unknown")
+            mapping[name_col] = "competitor_name"
+        elif "competitor_name" in df.columns:
+            df["competitor_name"] = df["competitor_name"].astype(str).fillna("Unknown")
+        else:
+            df["competitor_name"] = "Unknown"
+
+        share_col = _find_column(df, ["market_share", "share"])
+        if share_col and share_col != "market_share":
+            df["market_share"] = _coerce_numeric(df[share_col]).fillna(0.0)
+            mapping[share_col] = "market_share"
+        elif "market_share" in df.columns:
+            df["market_share"] = _coerce_numeric(df["market_share"]).fillna(0.0)
+        else:
+            df["market_share"] = 0.0
+
+        promo_col = _find_column(df, ["promotion_flag", "is_promo", "on_promo"])
+        if promo_col:
+            df["promotion_flag"] = (
+                _coerce_numeric(df[promo_col]).fillna(0).astype(int)
+            )
+        else:
+            df["promotion_flag"] = 0
+
+        return df, mapping
+
+    @staticmethod
+    def _normalize_economic(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, str]]:
+        """Economic: keep any numeric column found, with sensible fills."""
+        mapping: Dict[str, str] = {}
+        for c in list(df.columns):
+            if c == "date":
+                continue
+            df[c] = _coerce_numeric(df[c])
+            # Forward/backward fill then zero
+            if df[c].isna().any():
+                df[c] = df[c].ffill().bfill().fillna(0.0)
+        return df, mapping
+
+    # ---------------------------------------------------------- validation
+    def validate_sales(self, df: pd.DataFrame) -> Dict[str, Any]:
+        errors: List[str] = []
+        warnings: List[str] = []
+
+        if df.empty:
+            errors.append("DataFrame is empty")
+            return {"valid": False, "errors": errors, "warnings": warnings,
+                    "date_column": None, "value_column": None, "row_count": 0}
+
+        date_col = "date" if "date" in df.columns else _find_date_column(df, DATE_ALIASES)
+        value_col = "value" if "value" in df.columns else _find_column(
+            df, ["value", "y", "sales", "demand", "revenue", "quantity", "qty", "units", "amount"]
+        )
+        if value_col is None:
+            for c in df.columns:
+                if c == date_col:
+                    continue
+                if pd.api.types.is_numeric_dtype(df[c]):
+                    value_col = c
+                    break
+
+        if date_col is None:
+            errors.append("Could not identify a date column")
+        if value_col is None:
+            errors.append("Could not identify a numeric value column")
+        if "value" in df.columns and df["value"].isna().sum() > 0:
+            warnings.append(f"{df['value'].isna().sum()} missing values filled with 0")
+        if date_col and len(df) < 14:
+            warnings.append("Series is short (<14 points) — forecasts may be unreliable")
+
+        # Detect frequency
+        frequency = None
+        if date_col and not df.empty:
+            try:
+                ts = pd.to_datetime(df[date_col]).sort_values().drop_duplicates()
+                if len(ts) >= 3:
+                    diffs = ts.diff().dropna()
+                    if not diffs.empty:
+                        median = diffs.median()
+                        if median <= pd.Timedelta(days=1):
+                            frequency = "D"
+                        elif median <= pd.Timedelta(days=7):
+                            frequency = "W"
+                        elif median <= pd.Timedelta(days=31):
+                            frequency = "M"
+                        else:
+                            frequency = "M"
+            except Exception:
+                frequency = None
+
+        extra_cols = [c for c in df.columns if c not in (date_col, value_col)]
+        return {
+            "valid": len(errors) == 0,
+            "errors": errors,
+            "warnings": warnings,
+            "date_column": date_col,
+            "value_column": value_col,
+            "row_count": int(len(df)),
+            "frequency": frequency,
+            "extra_columns": extra_cols,
+        }
+
+    # ----------------------------------------------------- time features
+    def add_calendar_features(
+        self, df: pd.DataFrame, date_col: str = "date"
+    ) -> pd.DataFrame:
+        df = df.copy()
+        if date_col not in df.columns:
+            return df
+        d = pd.to_datetime(df[date_col], errors="coerce")
+        df["dayofweek"] = d.dt.dayofweek.astype("Int64")
+        df["dayofmonth"] = d.dt.day.astype("Int64")
+        df["dayofyear"] = d.dt.dayofyear.astype("Int64")
+        df["weekofyear"] = d.dt.isocalendar().week.astype("Int64")
+        df["month"] = d.dt.month.astype("Int64")
+        df["quarter"] = d.dt.quarter.astype("Int64")
+        df["year"] = d.dt.year.astype("Int64")
+        df["is_weekend"] = d.dt.dayofweek.isin([5, 6]).astype("Int64")
+        df["is_month_start"] = d.dt.is_month_start.astype("Int64")
+        df["is_month_end"] = d.dt.is_month_end.astype("Int64")
+        return df
+
+    # ----------------------------------------------------- aggregation
+    @staticmethod
+    def resample(
+        df: pd.DataFrame, date_col: str, value_col: str, freq: str = "D"
+    ) -> pd.DataFrame:
+        ts = df.set_index(date_col)[value_col].sort_index()
+        ts.index = pd.to_datetime(ts.index)
+        agg = ts.resample(freq).sum()
+        out = pd.DataFrame({date_col: agg.index, value_col: agg.values})
+        return out.dropna().reset_index(drop=True)

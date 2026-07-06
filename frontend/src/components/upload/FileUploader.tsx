@@ -1,179 +1,117 @@
-import { useCallback, useState } from 'react'
-import { Box, Typography, Card, CardContent, alpha, IconButton } from '@mui/material'
-import { useDropzone } from 'react-dropzone'
-import { CloudUpload, InsertDriveFile, CheckCircle, Delete } from '@mui/icons-material'
-
-interface UploadedFile {
-  file_id: string
-  filename: string
-  type: string
-  size: number
-  row_count: number
-  columns: string[]
-}
+import { useCallback, type ReactNode } from 'react';
+import { useDropzone } from 'react-dropzone';
+import { Box, CircularProgress, Stack, Typography } from '@mui/material';
+import CloudUploadIcon from '@mui/icons-material/CloudUpload';
+import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
+import { alpha, useTheme } from '@mui/material/styles';
 
 interface FileUploaderProps {
-  fileType: string
-  title: string
-  description: string
-  acceptedTypes: string
-  uploadedFile: UploadedFile | null
-  onUpload: (file: File) => void
-  onRemove?: (fileId: string) => void
+  fileType: string;
+  label: string;
+  description?: string;
+  isLoading?: boolean;
+  disabled?: boolean;
+  onFileSelected: (file: File) => void;
 }
 
 export function FileUploader({
   fileType,
-  title,
+  label,
   description,
-  acceptedTypes,
-  uploadedFile,
-  onUpload,
-  onRemove,
-}: FileUploaderProps) {
-  const [isUploading, setIsUploading] = useState(false)
+  isLoading = false,
+  disabled = false,
+  onFileSelected,
+}: FileUploaderProps): ReactNode {
+  const theme = useTheme();
 
-  const handleDrop = useCallback(
-    (acceptedFiles: File[]) => {
-      if (acceptedFiles.length > 0) {
-        setIsUploading(true)
-        onUpload(acceptedFiles[0])
-        setTimeout(() => setIsUploading(false), 500)
-      }
+  const onDrop = useCallback(
+    (accepted: File[]) => {
+      if (accepted.length > 0) onFileSelected(accepted[0]);
     },
-    [onUpload]
-  )
+    [onFileSelected],
+  );
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+  const { getRootProps, getInputProps, isDragActive, isDragReject } = useDropzone({
+    onDrop,
+    multiple: false,
+    disabled: disabled || isLoading,
     accept: {
       'text/csv': ['.csv'],
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
       'application/vnd.ms-excel': ['.xls'],
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
     },
-    maxFiles: 1,
-    disabled: !!uploadedFile || isUploading,
-    onDrop: handleDrop,
-  } as any)
+  });
 
-  if (uploadedFile) {
-    return (
-      <Card sx={{ height: '100%' }}>
-        <CardContent sx={{ p: 3 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-            <Box
-              sx={{
-                width: 48,
-                height: 48,
-                borderRadius: 2,
-                bgcolor: alpha('#2e7d32', 0.1),
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <CheckCircle sx={{ color: 'success.main', fontSize: 24 }} />
-            </Box>
-            <Box sx={{ flex: 1 }}>
-              <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-                {uploadedFile.filename}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                {uploadedFile.type.replace('_', ' ')} • {(uploadedFile.size / 1024).toFixed(1)} KB • {uploadedFile.row_count.toLocaleString()} rows
-              </Typography>
-            </Box>
-            {onRemove && (
-              <IconButton
-                color="error"
-                onClick={() => onRemove(uploadedFile.file_id)}
-                size="small"
-              >
-                <Delete />
-              </IconButton>
-            )}
-          </Box>
-          <Box sx={{ mt: 2, p: 2, bgcolor: 'background.default', borderRadius: 1 }}>
-            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
-              Columns:
-            </Typography>
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 1 }}>
-              {uploadedFile.columns.map((col) => (
-                <Box
-                  key={col}
-                  sx={{
-                    px: 1,
-                    py: 0.25,
-                    bgcolor: 'primary.lighter',
-                    borderRadius: 0.5,
-                    fontSize: '0.75rem',
-                  }}
-                >
-                  {col}
-                </Box>
-              ))}
-            </Box>
-          </Box>
-        </CardContent>
-      </Card>
-    )
-  }
+  const primary = theme.palette.primary.main;
+  const borderColor = isDragActive
+    ? primary
+    : isDragReject
+      ? theme.palette.error.main
+      : 'divider';
+  const bg = isDragActive
+    ? alpha(primary, 0.06)
+    : isDragReject
+      ? alpha(theme.palette.error.main, 0.06)
+      : 'background.paper';
 
   return (
-    <Card
+    <Box
       {...getRootProps()}
+      role="button"
+      tabIndex={0}
+      aria-label={`Upload ${label}. ${description ?? ''}`}
       sx={{
-        height: '100%',
-        cursor: 'pointer',
-        transition: 'all 0.2s',
         border: '2px dashed',
-        borderColor: isDragActive ? 'primary.main' : 'divider',
-        bgcolor: isDragActive ? alpha('#1976d2', 0.04) : 'transparent',
-        '&:hover': {
-          borderColor: 'primary.light',
-          bgcolor: alpha('#1976d2', 0.04),
+        borderColor,
+        borderRadius: 2,
+        p: 3,
+        backgroundColor: bg,
+        cursor: disabled || isLoading ? 'not-allowed' : 'pointer',
+        textAlign: 'center',
+        transition: 'all 200ms ease',
+        outline: 'none',
+        '&:focus-visible': {
+          boxShadow: `0 0 0 3px ${alpha(primary, 0.2)}`,
         },
+        opacity: disabled && !isLoading ? 0.5 : 1,
       }}
     >
-      <input {...getInputProps()} />
-      <CardContent sx={{ p: 4, textAlign: 'center' }}>
+      <input {...getInputProps()} aria-label={`File input for ${fileType}`} />
+      <Stack spacing={1.5} alignItems="center">
         <Box
           sx={{
-            width: 64,
-            height: 64,
+            width: 48,
+            height: 48,
             borderRadius: '50%',
-            bgcolor: alpha('#1976d2', 0.1),
+            backgroundColor: alpha(primary, 0.1),
+            color: primary,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            mx: 'auto',
-            mb: 2,
           }}
         >
-          {isUploading ? (
-            <InsertDriveFile sx={{ color: 'primary.main', fontSize: 32 }} />
+          {isLoading ? (
+            <CircularProgress size={24} />
+          ) : isDragActive ? (
+            <InsertDriveFileIcon />
           ) : (
-            <CloudUpload sx={{ color: 'primary.main', fontSize: 32 }} />
+            <CloudUploadIcon />
           )}
         </Box>
-        <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 0.5 }}>
-          {title}
-        </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          {description}
-        </Typography>
-        <Box
-          sx={{
-            display: 'inline-block',
-            px: 2,
-            py: 1,
-            bgcolor: alpha('#1976d2', 0.1),
-            borderRadius: 1,
-          }}
-        >
-          <Typography variant="caption" color="primary" sx={{ fontWeight: 600 }}>
-            {acceptedTypes}
+        <Box>
+          <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+            {isLoading ? 'Uploading…' : label}
           </Typography>
+          {description && (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+              {description}
+            </Typography>
+          )}
         </Box>
-      </CardContent>
-    </Card>
-  )
+        <Typography variant="caption" color="text.secondary">
+          Drag a file here or click to browse. CSV, XLS, XLSX (max 100 MB).
+        </Typography>
+      </Stack>
+    </Box>
+  );
 }

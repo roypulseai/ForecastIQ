@@ -1,0 +1,7 @@
+date,promo_id,promo_type,discount,original_price,promo_price
+2024-01-05,PROMO-001,Percent Off,20,49.99,39.99
+2024-01-12,PROMO-002,BOGO,50,29.99,29.99
+2024-01-19,PROMO-003,Percent Off,15,59.99,50.99
+2024-01-26,PROMO-004,Free Shipping,10,39.99,35.99
+2024-02-02,PROMO-005,Percent Off,25,49.99,37.49
+2024-02-09,PROMO-006,Bundle,30,89.99,62.99

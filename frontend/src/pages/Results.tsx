@@ -1,495 +1,394 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import {
+  Alert,
   Box,
-  Typography,
+  Button,
   Card,
   CardContent,
-  Grid,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
   Chip,
   CircularProgress,
-  Alert,
-  Tabs,
+  FormControlLabel,
+  Grid,
+  IconButton,
+  LinearProgress,
+  MenuItem,
+  Stack,
+  Switch,
   Tab,
-  Button,
-} from '@mui/material'
-import { Download, Refresh, TrendingUp, ShowChart } from '@mui/icons-material'
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
+  Tabs,
+  TextField,
   Tooltip,
-  Legend,
-  Filler,
-} from 'chart.js'
-import { Line } from 'react-chartjs-2'
-import { forecastApi, ForecastResult } from '../services/api'
-import { useStore } from '../store/appStore'
+  Typography,
+} from '@mui/material';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import AssessmentIcon from '@mui/icons-material/Assessment';
+import { PageContainer } from '../components/layout/PageContainer';
+import { ForecastChart } from '../components/results/ForecastChart';
+import { ModelComparison } from '../components/results/ModelComparison';
+import { ResultsTable } from '../components/results/ResultsTable';
+import { ExportButton } from '../components/results/ExportButton';
+import { MetricsCards } from '../components/results/MetricsCards';
+import { useDeleteForecast, useForecastList } from '../hooks/useForecast';
+import { useForecastResult } from '../hooks/useForecastResults';
+import { useStore } from '../store/appStore';
+import { getErrorMessage } from '../services/api';
+import { formatDate } from '../utils/format';
+import type { ForecastListItem, ModelResult } from '../types';
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler)
-
-const colors = ['#1976d2', '#dc004e', '#2e7d32', '#ed6c02', '#7b1fa2', '#00acc1']
-
-export function Results() {
-  const { currentForecast, forecasts } = useStore()
-  const [forecastData, setForecastData] = useState<ForecastResult | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [selectedModel, setSelectedModel] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState(0)
-  const [showBaseline, setShowBaseline] = useState(true)
+export function ResultsPage(): ReactNode {
+  const navigate = useNavigate();
+  const currentForecastId = useStore((s) => s.currentForecastId);
+  const setCurrentForecastId = useStore((s) => s.setCurrentForecastId);
+  const forecasts = useStore((s) => s.forecasts);
+  const listQuery = useForecastList();
+  const resultQuery = useForecastResult(currentForecastId);
+  const deleteMut = useDeleteForecast();
+  const [tab, setTab] = useState(0);
+  const [selectedModel, setSelectedModel] = useState<string>('__ensemble__');
+  const [showBaseline, setShowBaseline] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const loadForecast = async () => {
-      const forecastId = currentForecast || (forecasts.length > 0 ? forecasts[0].forecast_id : null)
+    if (listQuery.isError) setError(getErrorMessage(listQuery.error));
+  }, [listQuery.isError, listQuery.error]);
 
-      if (!forecastId) {
-        setError('No forecast found. Please create a forecast first.')
-        setIsLoading(false)
-        return
-      }
+  useEffect(() => {
+    if (resultQuery.isError) setError(getErrorMessage(resultQuery.error));
+  }, [resultQuery.isError, resultQuery.error]);
 
-      try {
-        const data = await forecastApi.getForecast(forecastId)
-        setForecastData(data)
-        const firstModel = Object.keys(data.results)[0]
-        setSelectedModel(firstModel || null)
-      } catch (err: any) {
-        setError(err.response?.data?.detail || 'Failed to load forecast')
-      } finally {
-        setIsLoading(false)
-      }
+  useEffect(() => {
+    if (resultQuery.data) {
+      setSelectedModel(resultQuery.data.ensemble ? '__ensemble__' : firstModelKey(resultQuery.data.results));
     }
+  }, [resultQuery.data]);
 
-    loadForecast()
-  }, [currentForecast, forecasts])
-
-  const handleRefresh = async () => {
-    setIsLoading(true)
-    try {
-      const forecastsList = await forecastApi.listForecasts()
-      if (forecastsList.length > 0) {
-        const data = await forecastApi.getForecast(forecastsList[0].forecast_id)
-        setForecastData(data)
-        const firstModel = Object.keys(data.results)[0]
-        setSelectedModel(firstModel || null)
-      }
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to refresh')
-    } finally {
-      setIsLoading(false)
+  const activeValues = useMemo(() => {
+    if (!resultQuery.data) return [];
+    if (selectedModel === '__ensemble__' && resultQuery.data.ensemble) {
+      return resultQuery.data.ensemble.forecast_values;
     }
-  }
+    const found = Object.values(resultQuery.data.results).find(
+      (r) => r.model_name === selectedModel,
+    );
+    return found?.forecast_values ?? [];
+  }, [resultQuery.data, selectedModel]);
 
-  if (isLoading) {
+  const activeModelLabel = useMemo(() => {
+    if (selectedModel === '__ensemble__') return 'Ensemble';
+    return selectedModel;
+  }, [selectedModel]);
+
+  if (listQuery.isLoading) {
     return (
-      <Box sx={{ textAlign: 'center', py: 8 }}>
-        <CircularProgress sx={{ mb: 2 }} />
-        <Typography>Loading forecast results...</Typography>
-      </Box>
-    )
+      <PageContainer title="Results">
+        <Stack alignItems="center" sx={{ py: 8 }}>
+          <CircularProgress />
+        </Stack>
+      </PageContainer>
+    );
   }
 
-  if (error || !forecastData) {
+  if (!forecasts.length) {
     return (
-      <Box sx={{ textAlign: 'center', py: 8 }}>
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error || 'No forecast data available'}
-        </Alert>
-        <Button variant="contained" href="/forecast">
-          Create New Forecast
-        </Button>
-      </Box>
-    )
+      <PageContainer title="Results">
+        <Card sx={{ p: 4, textAlign: 'center' }}>
+          <AssessmentIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
+          <Typography variant="h5" gutterBottom>
+            No forecasts yet
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+            Run a forecast to see results here.
+          </Typography>
+          <Button variant="contained" onClick={() => navigate('/forecast')}>
+            Configure a forecast
+          </Button>
+        </Card>
+      </PageContainer>
+    );
   }
-
-  const selectedData = selectedModel ? forecastData.results[selectedModel] : null
-  const ensembleData = forecastData.ensemble
-
-  const chartDatasets = []
-
-  if (selectedData) {
-    chartDatasets.push({
-      label: `${selectedModel?.toUpperCase()} Forecast`,
-      data: selectedData.forecast_values.map((v) => v.forecast),
-      borderColor: colors[0],
-      backgroundColor: `${colors[0]}20`,
-      fill: true,
-      tension: 0.4,
-    })
-
-    if (showBaseline && selectedData.baseline_values) {
-      chartDatasets.push({
-        label: 'Baseline (Trend)',
-        data: selectedData.baseline_values.map((v) => v.forecast),
-        borderColor: colors[1],
-        backgroundColor: `${colors[1]}10`,
-        borderDash: [5, 5],
-        fill: false,
-        tension: 0.4,
-      })
-    }
-
-    if (showBaseline && selectedData.forecast_values.some(v => v.uplift !== undefined)) {
-      const upliftData = selectedData.forecast_values.map((v) => v.uplift || 0)
-      chartDatasets.push({
-        label: 'Uplift %',
-        data: upliftData,
-        borderColor: colors[2],
-        backgroundColor: `${colors[2]}20`,
-        yAxisID: 'y1',
-        fill: true,
-        tension: 0.4,
-      })
-    }
-  }
-
-  if (ensembleData) {
-    chartDatasets.push({
-      label: 'ENSEMBLE Forecast',
-      data: ensembleData.forecast_values.map((v) => v.forecast),
-      borderColor: colors[3],
-      backgroundColor: `${colors[3]}20`,
-      fill: true,
-      tension: 0.4,
-    })
-
-    if (showBaseline && ensembleData.baseline_values) {
-      chartDatasets.push({
-        label: 'ENSEMBLE Baseline',
-        data: ensembleData.baseline_values.map((v) => v.forecast),
-        borderColor: colors[4],
-        backgroundColor: `${colors[4]}10`,
-        borderDash: [5, 5],
-        fill: false,
-        tension: 0.4,
-      })
-    }
-  }
-
-  const chartData = {
-    labels: selectedData?.forecast_values.map((v) => v.date) || [],
-    datasets: chartDatasets,
-  }
-
-  const chartOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: {
-        position: 'top' as const,
-      },
-      title: {
-        display: false,
-      },
-      tooltip: {
-        mode: 'index' as const,
-        intersect: false,
-      },
-    },
-    scales: {
-      y: {
-        type: 'linear' as const,
-        display: true,
-        position: 'left' as const,
-        beginAtZero: true,
-        title: {
-          display: true,
-          text: 'Forecast Value',
-        },
-      },
-      y1: {
-        type: 'linear' as const,
-        display: showBaseline && selectedData?.forecast_values.some(v => v.uplift !== undefined),
-        position: 'right' as const,
-        beginAtZero: true,
-        title: {
-          display: true,
-          text: 'Uplift %',
-        },
-        grid: {
-          drawOnChartArea: false,
-        },
-      },
-    },
-    interaction: {
-      mode: 'nearest' as const,
-      axis: 'x' as const,
-      intersect: false,
-    },
-  }
-
-  const allDates = new Set([
-    ...(selectedData?.forecast_values.map((v) => v.date) || []),
-    ...(ensembleData?.forecast_values.map((v) => v.date) || []),
-  ])
-  const sortedDates = Array.from(allDates).sort()
 
   return (
-    <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
-        <Box>
-          <Typography variant="h4" sx={{ fontWeight: 700, mb: 1 }}>
-            {forecastData.name}
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Created: {new Date(forecastData.created_at).toLocaleString()}
-          </Typography>
-        </Box>
-        <Box sx={{ display: 'flex', gap: 2 }}>
-          <Button variant="outlined" startIcon={<Refresh />} onClick={handleRefresh}>
-            Refresh
-          </Button>
-          <Button variant="contained" startIcon={<Download />}>
-            Export CSV
-          </Button>
-        </Box>
-      </Box>
+    <PageContainer
+      title="Results"
+      subtitle={resultQuery.data ? `${resultQuery.data.name} · ${formatDate(resultQuery.data.created_at, true)}` : 'Pick a forecast to view details'}
+      actions={
+        <Stack direction="row" spacing={1.5} alignItems="center">
+          <TextField
+            select
+            size="small"
+            label="Forecast"
+            value={currentForecastId ?? ''}
+            onChange={(e) => setCurrentForecastId(e.target.value)}
+            sx={{ minWidth: 260 }}
+          >
+            {forecasts.map((f) => (
+              <MenuItem key={f.forecast_id} value={f.forecast_id}>
+                {f.name} · {formatDate(f.created_at)}
+              </MenuItem>
+            ))}
+          </TextField>
+          {currentForecastId && (
+            <Tooltip title="Refresh">
+              <IconButton
+                onClick={() => resultQuery.refetch()}
+                aria-label="Refresh forecast"
+              >
+                <RefreshIcon />
+              </IconButton>
+            </Tooltip>
+          )}
+          {currentForecastId && (
+            <Tooltip title="Delete">
+              <IconButton
+                color="error"
+                onClick={async () => {
+                  if (!currentForecastId) return;
+                  if (!window.confirm('Delete this forecast?')) return;
+                  try {
+                    await deleteMut.mutateAsync(currentForecastId);
+                    setCurrentForecastId(null);
+                    setError(null);
+                  } catch (e) {
+                    setError(getErrorMessage(e));
+                  }
+                }}
+                aria-label="Delete forecast"
+              >
+                <DeleteOutlineIcon />
+              </IconButton>
+            </Tooltip>
+          )}
+          {resultQuery.data && activeValues.length > 0 && (
+            <ExportButton
+              detail={resultQuery.data}
+              values={activeValues}
+              modelName={activeModelLabel}
+            />
+          )}
+        </Stack>
+      }
+    >
+      {error && (
+        <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
+          {error}
+        </Alert>
+      )}
 
-      <Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)} sx={{ mb: 3 }}>
-        <Tab label="Forecast Chart" />
-        <Tab label="Baseline vs Forecast" />
-        <Tab label="Model Comparison" />
-        <Tab label="Detailed Results" />
-      </Tabs>
+      {resultQuery.isLoading && <LinearProgress sx={{ mb: 3 }} />}
 
-      {activeTab === 0 && (
-        <Grid container spacing={3}>
-          <Grid item xs={12}>
-            <Card>
-              <CardContent sx={{ p: 3 }}>
-                <Box sx={{ display: 'flex', gap: 2, mb: 3, flexWrap: 'wrap', alignItems: 'center' }}>
-                  <Box sx={{ display: 'flex', gap: 1 }}>
-                    {Object.keys(forecastData.results).map((model, idx) => (
-                      <Chip
-                        key={model}
-                        label={model.toUpperCase()}
-                        onClick={() => setSelectedModel(model)}
-                        color={selectedModel === model ? 'primary' : 'default'}
-                        sx={{ cursor: 'pointer' }}
-                      />
-                    ))}
-                    {ensembleData && (
-                      <Chip
-                        label="ENSEMBLE"
-                        onClick={() => setSelectedModel('ensemble')}
-                        color="secondary"
-                        sx={{ cursor: 'pointer' }}
-                      />
-                    )}
-                  </Box>
-                  <Box sx={{ flex: 1 }} />
-                  <Chip
-                    icon={<ShowChart />}
-                    label={showBaseline ? 'Hide Baseline' : 'Show Baseline'}
-                    onClick={() => setShowBaseline(!showBaseline)}
-                    color={showBaseline ? 'primary' : 'default'}
-                    variant={showBaseline ? 'filled' : 'outlined'}
+      {!resultQuery.data && currentForecastId && (
+        <Card sx={{ p: 4, textAlign: 'center' }}>
+          <CircularProgress />
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+            Loading forecast…
+          </Typography>
+        </Card>
+      )}
+
+      {!currentForecastId && (
+        <Card>
+          <CardContent>
+            <Typography variant="h5" sx={{ mb: 2 }}>
+              Pick a forecast
+            </Typography>
+            <Stack divider={<Box sx={{ borderBottom: '1px solid', borderBottomColor: 'divider' }} />}>
+              {forecasts.map((f) => (
+                <ForecastRow
+                  key={f.forecast_id}
+                  forecast={f}
+                  onSelect={() => setCurrentForecastId(f.forecast_id)}
+                />
+              ))}
+            </Stack>
+          </CardContent>
+        </Card>
+      )}
+
+      {resultQuery.data && (
+        <>
+          <Box sx={{ mb: 3 }}>
+            <MetricsCards
+              summary={resultQuery.data.summary ?? null}
+              bestModel={resultQuery.data.ensemble ? 'ensemble' : resultQuery.data.request.models[0] ?? null}
+              rankings={
+                resultQuery.data.ensemble
+                  ? [{ model: 'ensemble', mae: null, rmse: null, mape: null, score: 1, name: 'Ensemble' }]
+                  : Object.values(resultQuery.data.results).map((r) => ({
+                      model: r.model_name,
+                      mae: r.metrics.mae ?? null,
+                      rmse: r.metrics.rmse ?? null,
+                      mape: r.metrics.mape ?? null,
+                      score: r.metrics.score ?? null,
+                      name: r.model_name,
+                    }))
+              }
+            />
+          </Box>
+
+          <Card sx={{ mb: 3 }}>
+            <Tabs
+              value={tab}
+              onChange={(_, v) => setTab(v)}
+              variant="scrollable"
+              scrollButtons="auto"
+              sx={{ borderBottom: 1, borderColor: 'divider', px: 2 }}
+            >
+              <Tab label="Forecast chart" />
+              <Tab label="Model comparison" />
+              <Tab label="Detailed data" />
+              <Tab label="Metrics" />
+            </Tabs>
+            <CardContent>
+              {tab === 0 && (
+                <Stack spacing={2}>
+                  <Stack direction="row" spacing={1.5} alignItems="center">
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={showBaseline}
+                          onChange={(_, c) => setShowBaseline(c)}
+                        />
+                      }
+                      label="Show baseline"
+                    />
+                  </Stack>
+                  <ForecastChart
+                    detail={resultQuery.data}
+                    selectedModel={selectedModel}
+                    onModelChange={setSelectedModel}
+                    showBaseline={showBaseline}
+                    onShowBaselineChange={setShowBaseline}
                   />
-                </Box>
-                <Box sx={{ height: 450 }}>
-                  <Line data={chartData} options={chartOptions} />
-                </Box>
-              </CardContent>
-            </Card>
-          </Grid>
-        </Grid>
+                </Stack>
+              )}
+              {tab === 1 && (
+                <ModelComparison
+                  rankings={Object.values(resultQuery.data.results).map((r) => ({
+                    model: r.model_name,
+                    name: r.model_name,
+                    mae: r.metrics.mae ?? null,
+                    rmse: r.metrics.rmse ?? null,
+                    mape: r.metrics.mape ?? null,
+                    score: r.metrics.score ?? null,
+                  }))}
+                  bestModel={resultQuery.data.ensemble ? 'ensemble' : resultQuery.data.request.models[0] ?? null}
+                />
+              )}
+              {tab === 2 && (
+                <ResultsTable
+                  values={activeValues}
+                  modelName={activeModelLabel}
+                />
+              )}
+              {tab === 3 && (
+                <Grid container spacing={2}>
+                  {Object.values(resultQuery.data.results).map((r) => (
+                    <Grid key={r.model_name} item xs={12} sm={6} md={4}>
+                      <ModelMetricsCard result={r} />
+                    </Grid>
+                  ))}
+                </Grid>
+              )}
+            </CardContent>
+          </Card>
+        </>
       )}
+    </PageContainer>
+  );
+}
 
-      {activeTab === 1 && (
-        <Grid container spacing={3}>
-          <Grid item xs={12}>
-            <Card>
-              <CardContent sx={{ p: 3 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
-                  <TrendingUp sx={{ color: 'primary.main' }} />
-                  <Box>
-                    <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                      Baseline vs Forecast Analysis
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      Compare baseline trend (without external factors) vs. full forecast (with promotions, media, etc.)
-                    </Typography>
-                  </Box>
-                </Box>
-                <TableContainer sx={{ maxHeight: 500 }}>
-                  <Table stickyHeader size="small">
-                    <TableHead>
-                      <TableRow>
-                        <TableCell sx={{ fontWeight: 600 }}>Date</TableCell>
-                        {Object.keys(forecastData.results).map((model) => (
-                          <TableCell key={model} align="center" colSpan={3}>
-                            <Chip label={model.toUpperCase()} size="small" />
-                          </TableCell>
-                        ))}
-                      </TableRow>
-                      <TableRow>
-                        <TableCell />
-                        {Object.keys(forecastData.results).map(() => (
-                          <>
-                            <TableCell key={`${Math.random()}-baseline`} align="right" sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
-                              Baseline
-                            </TableCell>
-                            <TableCell key={`${Math.random()}-forecast`} align="right" sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
-                              Forecast
-                            </TableCell>
-                            <TableCell key={`${Math.random()}-uplift`} align="right" sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
-                              Uplift %
-                            </TableCell>
-                          </>
-                        ))}
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {sortedDates.slice(0, 30).map((date) => (
-                        <TableRow key={date}>
-                          <TableCell sx={{ fontWeight: 500 }}>{date}</TableCell>
-                          {Object.entries(forecastData.results).map(([model, result]) => {
-                            const forecast = result.forecast_values.find((v) => v.date === date)
-                            const baseline = result.baseline_values?.find((v) => v.date === date)
-                            return (
-                              <>
-                                <TableCell key={`${model}-baseline`} align="right">
-                                  {baseline?.forecast.toFixed(2) || '-'}
-                                </TableCell>
-                                <TableCell key={`${model}-forecast`} align="right" sx={{ fontWeight: 600 }}>
-                                  {forecast?.forecast.toFixed(2) || '-'}
-                                </TableCell>
-                                <TableCell
-                                  key={`${model}-uplift`}
-                                  align="right"
-                                  sx={{
-                                    color: (forecast?.uplift || 0) > 0 ? 'success.main' : (forecast?.uplift || 0) < 0 ? 'error.main' : 'text.secondary',
-                                    fontWeight: 600,
-                                  }}
-                                >
-                                  {forecast?.uplift ? `${forecast.uplift > 0 ? '+' : ''}${forecast.uplift.toFixed(1)}%` : '-'}
-                                </TableCell>
-                              </>
-                            )
-                          })}
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-                {sortedDates.length > 30 && (
-                  <Typography variant="body2" color="text.secondary" sx={{ mt: 2, textAlign: 'center' }}>
-                    Showing first 30 rows of {sortedDates.length} total forecasts
-                  </Typography>
-                )}
-              </CardContent>
-            </Card>
-          </Grid>
-        </Grid>
-      )}
+function firstModelKey(results: Record<string, ModelResult>): string {
+  const first = Object.values(results)[0];
+  return first ? first.model_name : '';
+}
 
-      {activeTab === 2 && (
-        <Grid container spacing={3}>
-          <Grid item xs={12}>
-            <Card>
-              <CardContent sx={{ p: 0 }}>
-                <TableContainer>
-                  <Table>
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Model</TableCell>
-                        <TableCell align="right">MAE</TableCell>
-                        <TableCell align="right">RMSE</TableCell>
-                        <TableCell align="right">MAPE (%)</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {Object.entries(forecastData.results).map(([model, result]) => (
-                        <TableRow
-                          key={model}
-                          hover
-                          onClick={() => setSelectedModel(model)}
-                          sx={{ cursor: 'pointer' }}
-                        >
-                          <TableCell>
-                            <Chip label={model.toUpperCase()} size="small" />
-                          </TableCell>
-                          <TableCell align="right">
-                            {result.metrics.mae?.toFixed(2) || 'N/A'}
-                          </TableCell>
-                          <TableCell align="right">
-                            {result.metrics.rmse?.toFixed(2) || 'N/A'}
-                          </TableCell>
-                          <TableCell align="right">
-                            {result.metrics.mape?.toFixed(2) || 'N/A'}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-              </CardContent>
-            </Card>
-          </Grid>
-        </Grid>
-      )}
-
-      {activeTab === 3 && (
-        <Grid container spacing={3}>
-          <Grid item xs={12}>
-            <Card>
-              <CardContent sx={{ p: 0 }}>
-                <TableContainer sx={{ maxHeight: 600 }}>
-                  <Table stickyHeader>
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Date</TableCell>
-                        {Object.keys(forecastData.results).map((m) => (
-                          <TableCell key={m} align="right">
-                            {m.toUpperCase()}
-                          </TableCell>
-                        ))}
-                        {ensembleData && (
-                          <TableCell align="right" sx={{ bgcolor: 'secondary.lighter' }}>
-                            ENSEMBLE
-                          </TableCell>
-                        )}
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {sortedDates.map((date) => (
-                        <TableRow key={date}>
-                          <TableCell sx={{ fontWeight: 500 }}>{date}</TableCell>
-                          {Object.entries(forecastData.results).map(([model, result]) => {
-                            const value = result.forecast_values.find((v) => v.date === date)
-                            return (
-                              <TableCell key={model} align="right">
-                                {value?.forecast.toFixed(2) || 'N/A'}
-                              </TableCell>
-                            )
-                          })}
-                          {ensembleData && (
-                            <TableCell
-                              align="right"
-                              sx={{ fontWeight: 600, bgcolor: 'secondary.lighter' }}
-                            >
-                              {ensembleData.forecast_values.find((v) => v.date === date)?.forecast.toFixed(2) || 'N/A'}
-                            </TableCell>
-                          )}
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-              </CardContent>
-            </Card>
-          </Grid>
-        </Grid>
-      )}
+function ForecastRow({
+  forecast,
+  onSelect,
+}: {
+  forecast: ForecastListItem;
+  onSelect: () => void;
+}): ReactNode {
+  return (
+    <Box
+      onClick={onSelect}
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        py: 1.5,
+        cursor: 'pointer',
+        '&:hover': { backgroundColor: 'background.subtle' },
+        px: 1,
+        borderRadius: 1,
+      }}
+    >
+      <Box>
+        <Typography variant="subtitle2">{forecast.name}</Typography>
+        <Typography variant="caption" color="text.secondary">
+          {formatDate(forecast.created_at, true)} · horizon {forecast.horizon} · {forecast.models.length} model
+          {forecast.models.length === 1 ? '' : 's'}
+        </Typography>
+      </Box>
+      <Stack direction="row" spacing={1}>
+        {forecast.best_model && (
+          <Chip label={forecast.best_model} size="small" color="primary" variant="outlined" />
+        )}
+        <Button component={RouterLink} to="/forecast" size="small">
+          New run
+        </Button>
+      </Stack>
     </Box>
-  )
+  );
+}
+
+function ModelMetricsCard({ result }: { result: ModelResult }): ReactNode {
+  const m = result.metrics;
+  return (
+    <Card>
+      <CardContent>
+        <Typography variant="overline" color="text.secondary">
+          {result.model_name.toUpperCase()}
+        </Typography>
+        <Stack spacing={1} sx={{ mt: 1 }}>
+          <MetricRow label="MAE" value={m.mae} />
+          <MetricRow label="RMSE" value={m.rmse} />
+          <MetricRow label="MAPE" value={m.mape} fmt="pct" />
+          <MetricRow label="R²" value={m.r2} />
+          {result.error && (
+            <Alert severity="warning">
+              {result.error}
+            </Alert>
+          )}
+        </Stack>
+      </CardContent>
+    </Card>
+  );
+}
+
+function MetricRow({
+  label,
+  value,
+  fmt = 'num',
+}: {
+  label: string;
+  value: number | undefined | null;
+  fmt?: 'num' | 'pct';
+}): ReactNode {
+  return (
+    <Stack direction="row" justifyContent="space-between" alignItems="center">
+      <Typography variant="body2" color="text.secondary">
+        {label}
+      </Typography>
+      <Typography variant="body2" sx={{ fontWeight: 600 }}>
+        {value === null || value === undefined || !Number.isFinite(value)
+          ? '—'
+          : fmt === 'pct'
+            ? `${(value * 100).toFixed(2)}%`
+            : value.toFixed(2)}
+      </Typography>
+    </Stack>
+  );
 }

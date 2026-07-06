@@ -3,15 +3,13 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: forecastiq-backend
     ports:
       - "8000:8000"
     volumes:
-      - ./backend/uploads:/app/uploads
-      - ./backend/outputs:/app/outputs
+      - forecastiq-data:/app/data
     environment:
-      - UPLOAD_DIR=/app/uploads
-      - OUTPUT_DIR=/app/outputs
+      - DATA_DIR=/app/data
+      - BACKEND_CORS_ORIGINS=["http://localhost:3000","http://127.0.0.1:3000"]
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
@@ -23,9 +21,11 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: forecastiq-frontend
     ports:
       - "3000:3000"
     depends_on:
       - backend
     restart: unless-stopped
+
+volumes:
+  forecastiq-data:
