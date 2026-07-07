@@ -23,8 +23,16 @@ storage = FileMetadataStore()
 processor = DataProcessor()
 
 
-@router.post("/upload/{file_type}")
-async def upload_file(file_type: str, file: UploadFile = File(...)) -> Dict[str, Any]:
+async def _process_and_save(
+    file_type: str,
+    file: UploadFile,
+    storage: FileMetadataStore,
+    processor: DataProcessor,
+) -> Dict[str, Any]:
+    """Reusable upload handler. Returns the JSON-serializable upload summary.
+    Raises HTTPException on validation/processing errors. Used by both the
+    internal /api/v1/upload/* and the public /v1/files/upload/* routes.
+    """
     if file_type not in FILE_TYPE_VALUES:
         raise HTTPException(
             status_code=400,
@@ -40,7 +48,6 @@ async def upload_file(file_type: str, file: UploadFile = File(...)) -> Dict[str,
                    f"Allowed: {settings.ALLOWED_EXTENSIONS}",
         )
 
-    # Read into temp file (so the processor can read it)
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
@@ -56,7 +63,6 @@ async def upload_file(file_type: str, file: UploadFile = File(...)) -> Dict[str,
         with open(tmp_path, "wb") as f:
             f.write(content)
 
-        # Load + normalize (load_file uses chunked reading for large CSVs)
         try:
             raw_df = processor.load_file(tmp_path)
         except Exception as e:
@@ -68,13 +74,11 @@ async def upload_file(file_type: str, file: UploadFile = File(...)) -> Dict[str,
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Processing error: {e}")
         finally:
-            # Drop the raw (possibly huge) DataFrame — only clean_df is kept
             try:
                 del raw_df
             except Exception:
                 pass
 
-        # Validate sales data
         warnings_list: list = []
         if file_type == "sales":
             v = processor.validate_sales(clean_df)
@@ -85,7 +89,6 @@ async def upload_file(file_type: str, file: UploadFile = File(...)) -> Dict[str,
                 )
             warnings_list = v.get("warnings", [])
 
-        # Persist
         entry = storage.save_upload(
             original_filename=file.filename,
             file_type=file_type,
@@ -116,6 +119,11 @@ async def upload_file(file_type: str, file: UploadFile = File(...)) -> Dict[str,
         raise HTTPException(status_code=500, detail=f"Upload failed: {e}")
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@router.post("/upload/{file_type}")
+async def upload_file(file_type: str, file: UploadFile = File(...)) -> Dict[str, Any]:
+    return await _process_and_save(file_type, file, storage, processor)
 
 
 @router.get("/upload/files")

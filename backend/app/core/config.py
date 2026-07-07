@@ -81,6 +81,16 @@ class Settings(BaseSettings):
 
     LOG_LEVEL: str = "INFO"
 
+    # ---- Public API ----
+    # Whether the public /v1/* API is exposed. When false, the routes are
+    # still registered but the auth dependency short-circuits. Useful for
+    # self-hosted single-user installations that don't want API key
+    # management. Defaults to enabled.
+    PUBLIC_API_ENABLED: bool = True
+    # Default tier for newly created API keys. Operators can override
+    # this to "pro" or "enterprise" to give all keys more headroom.
+    DEFAULT_API_KEY_TIER: str = "free"
+
     def ensure_dirs(self) -> None:
         """Create all required directories on startup."""
         for d in (self.DATA_DIR, self.UPLOAD_DIR, self.OUTPUT_DIR, self.TEMPLATE_DIR):

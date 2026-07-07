@@ -128,12 +128,126 @@ async def update_model(
 # -----------------------------------------------------------------------------
 # Upload
 # -----------------------------------------------------------------------------
+async def _upload_model_impl(
+    file: UploadFile,
+    name: Optional[str],
+    notes: str,
+    tags: Optional[str],
+) -> Dict[str, Any]:
+    """Reusable upload handler. Used by both /api/v1/models/upload (Form) and
+    /v1/models/upload (File)."""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Missing filename")
+    if not (file.filename.endswith(".pkl") or file.filename.endswith(".joblib")):
+        raise HTTPException(
+            status_code=400,
+            detail="Model file must be .pkl or .joblib",
+        )
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Empty file")
+    if len(content) > 200 * 1024 * 1024:  # 200MB cap
+        raise HTTPException(status_code=413, detail="Model file too large (max 200MB)")
+
+    # Try to deserialize. We import lazily to avoid loading the heavy
+    # ML deps for a metadata-only call.
+    import joblib
+    import pickle
+
+    payload: Optional[Dict[str, Any]] = None
+    framework = "joblib"
+    try:
+        bio = io.BytesIO(content)
+        payload = joblib.load(bio)
+    except Exception:
+        try:
+            bio = io.BytesIO(content)
+            payload = pickle.load(bio)
+            framework = "pickle"
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Could not deserialize model file. "
+                    "It must be a pickle/joblib blob produced by ForecastIQ. "
+                    f"Underlying error: {e}"
+                ),
+            )
+
+    if not isinstance(payload, dict) or "class_name" not in payload:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Model file is not a ForecastIQ artifact. "
+                "Expected a dict with 'class_name' and 'state' keys."
+            ),
+        )
+
+    model_type = payload.get("state", {}).get("name") or payload.get("class_name")
+    if not model_type:
+        raise HTTPException(status_code=400, detail="Model artifact missing 'name'")
+    model_type = str(model_type).lower()
+    if model_type not in ALLOWED_MODEL_TYPES:
+        aliases = {"arimaforecaster": "arima", "sarimaxforecaster": "sarimax"}
+        model_type = aliases.get(model_type, model_type)
+    if model_type not in ALLOWED_MODEL_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported model type '{model_type}'. Allowed: {sorted(ALLOWED_MODEL_TYPES)}",
+        )
+
+    try:
+        registry = get_model_registry()
+        mid = registry._new_id()
+        blob_path = registry.models_dir / f"{mid}.pkl"
+        blob_path.write_bytes(content)
+        sha = registry._hash_bytes(content)
+        from datetime import datetime
+        from ...services.models.registry import (
+            ModelArtifactMeta, ModelFramework, ModelMetrics, TrainingConfig,
+        )
+        now = datetime.utcnow().isoformat() + "Z"
+        state = payload.get("state", {})
+        training_cfg = TrainingConfig(
+            date_column=state.get("_date_col", "date"),
+            value_column=state.get("_value_col", "value"),
+            frequency=state.get("_frequency", "D"),
+            hyperparameters=state.get("params", {}),
+        )
+        meta = ModelArtifactMeta(
+            model_id=mid,
+            name=name or file.filename.replace(".pkl", "").replace(".joblib", ""),
+            model_type=model_type,
+            framework=ModelFramework(framework),
+            created_at=now,
+            updated_at=now,
+            file_size=len(content),
+            sha256=sha,
+            metrics=ModelMetrics(),
+            training=training_cfg,
+            tags=[t.strip() for t in (tags or "").split(",") if t.strip()],
+            notes=notes,
+        )
+        meta_path = registry.models_dir / f"{mid}.meta.json"
+        registry._write_json(meta_path, meta.to_dict())
+        index = registry._read_json(registry._index_path)
+        index[mid] = meta.to_dict()
+        registry._write_index(index)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Failed to register uploaded model")
+        raise HTTPException(status_code=500, detail=f"Failed to register uploaded model: {e}")
+
+    return _to_public(meta)
+
+
 @router.post("/upload")
 async def upload_model(
     file: UploadFile = File(...),
     name: Optional[str] = None,
     notes: str = "",
-    tags: Optional[str] = None,  # comma-separated
+    tags: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Upload a pre-trained model pickle.
 
@@ -142,6 +256,7 @@ async def upload_model(
     and re-registers it. The returned `model_id` can be used to forecast
     with `POST /models/{id}/forecast`.
     """
+    return await _upload_model_impl(file, name, notes, tags)
     if not file.filename:
         raise HTTPException(status_code=400, detail="Missing filename")
     if not (file.filename.endswith(".pkl") or file.filename.endswith(".joblib")):
@@ -256,25 +371,14 @@ async def upload_model(
 # -----------------------------------------------------------------------------
 # Train + save
 # -----------------------------------------------------------------------------
-@router.post("/train")
-async def train_model(
-    request: Dict[str, Any] = Body(...),
+async def _train_model_impl(
+    request: Dict[str, Any],
+    *,
+    storage: FileMetadataStore,
+    processor: DataProcessor,
+    service: ForecasterService,
 ) -> Dict[str, Any]:
-    """Train a model with proper train/test split and persist it.
-
-    The request should include:
-        * `model_type` (string) or `models` (list of strings) — which to train
-        * `file_id` or implicit sales file — the training data
-        * `train_test_split` (default 0.8) — fraction for training
-        * `horizon` — also used as the test-set size (if > 0)
-        * `date_column` (default 'date'), `target_column` (default 'value')
-        * `frequency` (default 'D')
-        * `parameters` (optional) — hyperparameters per model
-        * `name` (optional) — display name for the saved model
-        * `notes` (optional) — free-text notes
-        * `tags` (optional list) — labels
-        * `include_*` (booleans) — which external factors to include
-    """
+    """Reusable train-and-save handler."""
     file_id = request.get("file_id")
     if file_id:
         entry = storage.get_file(file_id)
@@ -291,7 +395,6 @@ async def train_model(
     if sales_df is None or sales_df.empty:
         raise HTTPException(status_code=400, detail="Sales data is empty")
 
-    # Gather exogenous data the same way the forecast route does
     from .forecast import _gather_exog
     flags = {
         "media_plan": request.get("include_media_plan", False),
@@ -302,7 +405,6 @@ async def train_model(
         "competitor": request.get("include_competitor", False),
         "economic": request.get("include_economic", False),
     }
-    # Build a ForecastRequest-like dict for _gather_exog
     forecast_req = ForecastRequest(
         name=request.get("name", "Training"),
         target_column=request.get("target_column", "value"),
@@ -337,25 +439,45 @@ async def train_model(
     return to_python(result)
 
 
+@router.post("/train")
+async def train_model(
+    request: Dict[str, Any] = Body(...),
+) -> Dict[str, Any]:
+    """Train a model with proper train/test split and persist it.
+
+    The request should include:
+        * `model_type` (string) or `models` (list of strings) — which to train
+        * `file_id` or implicit sales file — the training data
+        * `train_test_split` (default 0.8) — fraction for training
+        * `horizon` — also used as the test-set size (if > 0)
+        * `date_column` (default 'date'), `target_column` (default 'value')
+        * `frequency` (default 'D')
+        * `parameters` (optional) — hyperparameters per model
+        * `name` (optional) — display name for the saved model
+        * `notes` (optional) — free-text notes
+        * `tags` (optional list) — labels
+        * `include_*` (booleans) — which external factors to include
+    """
+    return await _train_model_impl(
+        request=request, storage=storage, processor=processor, service=service
+    )
+
+
 # -----------------------------------------------------------------------------
 # Forecast with a saved model
 # -----------------------------------------------------------------------------
-@router.post("/{model_id}/forecast")
-async def forecast_with_saved_model(
+async def _forecast_with_saved_model_impl(
     model_id: str,
-    request: Dict[str, Any] = Body(...),
+    request: Dict[str, Any],
+    *,
+    storage: FileMetadataStore,
+    service: ForecasterService,
 ) -> Dict[str, Any]:
-    """Use a previously saved model to forecast without retraining.
-
-    The request should include:
-        * `horizon` (int, required) — how many periods ahead
-        * `include_*` (booleans) — which exogenous data to pass in
-    """
+    """Reusable forecast-with-saved-model handler."""
     horizon = int(request.get("horizon", 30))
     if horizon < 1 or horizon > 3650:
         raise HTTPException(status_code=400, detail="horizon must be in [1, 3650]")
 
-    # Gather exogenous data based on the model's expected config
     exog_data: Dict[str, Any] = {}
     type_to_flag = {
         "media_plan": "include_media_plan",
@@ -377,8 +499,24 @@ async def forecast_with_saved_model(
     try:
         result = service.forecast_with_loaded_model(model_id, horizon, exog_data=exog_data or None)
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Model not found")
+        raise HTTPException(404, "Model not found")
     except Exception as e:
         logger.exception("Forecast with saved model failed")
         raise HTTPException(status_code=500, detail=f"Forecast failed: {e}")
     return to_python(result)
+
+
+@router.post("/{model_id}/forecast")
+async def forecast_with_saved_model(
+    model_id: str,
+    request: Dict[str, Any] = Body(...),
+) -> Dict[str, Any]:
+    """Use a previously saved model to forecast without retraining.
+
+    The request should include:
+        * `horizon` (int, required) — how many periods ahead
+        * `include_*` (booleans) — which exogenous data to pass in
+    """
+    return await _forecast_with_saved_model_impl(
+        model_id=model_id, request=request, storage=storage, service=service
+    )

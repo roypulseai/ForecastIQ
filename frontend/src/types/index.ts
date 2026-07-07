@@ -442,3 +442,41 @@ export interface TrainResult {
   saved_model: SavedModelMeta | null;
   created_at: string;
 }
+
+// ============================================================================
+// API Keys
+// ============================================================================
+export type ApiKeyTier = 'free' | 'pro' | 'enterprise';
+
+export interface ApiKeyRecord {
+  key_id: string;
+  name: string;
+  prefix: string;
+  tier: ApiKeyTier;
+  owner: string;
+  scopes: string[];
+  created_at: string;
+  updated_at: string;
+  last_used_at: string | null;
+  expires_at: string | null;
+  revoked: boolean;
+  request_count: number;
+}
+
+export interface ApiKeyListResponse {
+  items: ApiKeyRecord[];
+  total: number;
+}
+
+export interface ApiKeyCreateResponse {
+  record: ApiKeyRecord;
+  plain_key: string;
+  prefix: string;
+  warning: string;
+}
+
+export interface ApiKeyTierInfo {
+  tier: ApiKeyTier;
+  rate_limit_per_minute: number;
+  description: string;
+}

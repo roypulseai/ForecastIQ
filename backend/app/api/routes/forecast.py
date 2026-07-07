@@ -114,7 +114,25 @@ async def create_forecast(
     request: ForecastRequest,
     async_mode: bool = Query(False, alias="async", description="Run asynchronously and return job_id"),
 ) -> Dict[str, Any]:
-    # Find sales file
+    return await _create_forecast_impl(
+        request=request,
+        async_mode=async_mode,
+        storage=storage,
+        processor=processor,
+        service=service,
+    )
+
+
+async def _create_forecast_impl(
+    request: ForecastRequest,
+    *,
+    async_mode: bool,
+    storage: FileMetadataStore,
+    processor: DataProcessor,
+    service: ForecasterService,
+) -> Dict[str, Any]:
+    """Reusable forecast-create handler. Used by both internal /api/v1/forecast
+    and public /v1/forecast routes."""
     sales_entry = storage.find_sales_file()
     if sales_entry is None:
         raise HTTPException(status_code=400, detail="No sales file uploaded")
@@ -122,7 +140,6 @@ async def create_forecast(
     if sales_df is None or sales_df.empty:
         raise HTTPException(status_code=400, detail="Sales data is empty")
 
-    # Normalize request dict — use mode="json" so Enum values become their .value
     try:
         request_dict = request.model_dump(mode="json")
     except Exception as e:
@@ -131,8 +148,6 @@ async def create_forecast(
     exog_data = _gather_exog(request)
 
     if async_mode:
-        # Submit to job manager, return job_id immediately
-        # Make copies of DataFrames for thread isolation
         sales_copy = sales_df.copy()
         exog_copy = {k: v.copy() for k, v in (exog_data or {}).items()}
         jm = get_job_manager()
@@ -153,7 +168,6 @@ async def create_forecast(
             "message": "Forecast submitted. Poll /forecast/jobs/{job_id} for status.",
         }
 
-    # Synchronous path
     try:
         result = service.run(sales_df, request_dict, exog_data=exog_data)
     except ValueError as e:

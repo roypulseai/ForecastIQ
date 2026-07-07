@@ -1,6 +1,11 @@
 import axios, { AxiosError, type AxiosResponse } from 'axios';
 import type {
   AnalysisResponse,
+  ApiKeyCreateResponse,
+  ApiKeyListResponse,
+  ApiKeyRecord,
+  ApiKeyTier,
+  ApiKeyTierInfo,
   FilesListResponse,
   ForecastDetail,
   ForecastListResponse,
@@ -185,6 +190,39 @@ export const apiClient = {
     horizon: number;
   }> {
     const res = await api.post(`/models/${modelId}/forecast`, request);
+    return res.data;
+  },
+
+  // ---- API Key management ----
+  async listApiKeys(): Promise<ApiKeyListResponse> {
+    const res = await api.get<ApiKeyListResponse>('/api-keys');
+    return res.data;
+  },
+
+  async createApiKey(params: {
+    name: string;
+    tier?: ApiKeyTier;
+    scopes?: string[];
+    expires_at?: string;
+  }): Promise<ApiKeyCreateResponse> {
+    const res = await api.post<ApiKeyCreateResponse>('/api-keys', params);
+    return res.data;
+  },
+
+  async updateApiKey(
+    keyId: string,
+    updates: { name?: string; tier?: ApiKeyTier; scopes?: string[]; expires_at?: string },
+  ): Promise<ApiKeyRecord> {
+    const res = await api.patch<ApiKeyRecord>(`/api-keys/${keyId}`, updates);
+    return res.data;
+  },
+
+  async revokeApiKey(keyId: string): Promise<void> {
+    await api.delete(`/api-keys/${keyId}`);
+  },
+
+  async listApiKeyTiers(): Promise<{ tiers: ApiKeyTierInfo[] }> {
+    const res = await api.get<{ tiers: ApiKeyTierInfo[] }>('/api-keys/tiers');
     return res.data;
   },
 };

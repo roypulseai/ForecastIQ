@@ -9,6 +9,7 @@ import { DataExplorePage } from './pages/DataExplore';
 import { ForecastPage } from './pages/Forecast';
 import { ResultsPage } from './pages/Results';
 import { ModelsPage } from './pages/Models';
+import { ApiKeysPage } from './pages/ApiKeys';
 
 function App(): ReactNode {
   return (
@@ -30,6 +31,7 @@ function App(): ReactNode {
             <Route path="/forecast" element={<ForecastPage />} />
             <Route path="/results" element={<ResultsPage />} />
             <Route path="/models" element={<ModelsPage />} />
+            <Route path="/api-keys" element={<ApiKeysPage />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </ErrorBoundary>

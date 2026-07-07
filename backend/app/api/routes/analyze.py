@@ -22,10 +22,12 @@ processor = DataProcessor()
 selector = ModelSelector()
 
 
-@router.post("/analyze")
-async def analyze_data(
-    file_id: str = Query(..., description="ID of the uploaded sales file to analyze"),
+async def _analyze_file(
+    file_id: str,
+    storage: FileMetadataStore,
+    processor: DataProcessor,
 ) -> Dict[str, Any]:
+    """Reusable analyze handler. Used by both /api/v1/analyze and /v1/analyze."""
     entry = storage.get_file(file_id)
     if not entry:
         raise HTTPException(status_code=404, detail=f"File not found: {file_id}")
@@ -50,7 +52,6 @@ async def analyze_data(
 
     characteristics = selector.analyze_data(df, date_col, value_col)
 
-    # Detect external factors
     has_external = bool([
         ft for ft in ("media_plan", "promotions", "holidays", "events",
                       "weather", "competitor", "economic")
@@ -74,6 +75,12 @@ async def analyze_data(
         "model_recommendations": [ModelRecommendation(**r) for r in recommendations],
     }
     response = to_python(AnalysisResponse(**payload).model_dump())
-    # Add memory footprint for the UI
     response["memory_mb"] = DataProcessor.memory_mb(df)
     return response
+
+
+@router.post("/analyze")
+async def analyze_data(
+    file_id: str = Query(..., description="ID of the uploaded sales file to analyze"),
+) -> Dict[str, Any]:
+    return await _analyze_file(file_id, storage, processor)

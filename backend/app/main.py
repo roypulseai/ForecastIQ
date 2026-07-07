@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .api import api_router
+from .api.public import build_public_router
 from .core.config import settings
 
 logging.basicConfig(
@@ -22,12 +23,44 @@ logger = logging.getLogger(__name__)
 def create_app() -> FastAPI:
     settings.ensure_dirs()
     app = FastAPI(
-        title=settings.PROJECT_NAME,
+        title=f"{settings.PROJECT_NAME} API",
         version=settings.VERSION,
-        description="Advanced time series forecasting API with multiple ML models, "
-                    "external factor integration, and ensemble support.",
+        description=(
+            f"# {settings.PROJECT_NAME}\n\n"
+            "Advanced time series forecasting API with multiple ML models, "
+            "external factor integration, ensemble support, and a built-in "
+            "model registry for the data-science train/save/load workflow.\n\n"
+            "## Two surfaces\n\n"
+            "* **Internal UI** (`/api/v1/*`): used by the React frontend. "
+            "No API key required when the browser is the client.\n"
+            "* **Public API** (`/v1/*`): versioned, API-key authenticated, "
+            "rate-limited. Use this from notebooks, scripts, or other tools.\n\n"
+            "## Authentication (public API)\n\n"
+            "Pass an API key in one of these headers:\n\n"
+            "```\nAuthorization: Bearer fiq_live_xxxxxx_secretsecret...\n"
+            "X-API-Key: fiq_live_xxxxxx_secretsecret...\n```\n\n"
+            "Generate a key in the UI at **Settings → API keys** or via "
+            "`POST /api/v1/api-keys`.\n\n"
+            "## Rate limits\n\n"
+            "Per-key, per-minute, fixed window. See `GET /api/v1/api-keys/tiers`.\n\n"
+            "## Pagination\n\n"
+            "List endpoints accept `limit` (1-200, default 50) and `offset` (≥0).\n"
+            "The response includes `total`, `limit`, `offset`.\n\n"
+            "## Async forecasts\n\n"
+            "Long forecasts support async execution. POST `/v1/forecast?async=true` "
+            "returns a `job_id`; poll `GET /v1/jobs/{job_id}` for progress, "
+            "or `GET /v1/jobs/{job_id}/result` to block until completion.\n"
+        ),
         docs_url="/docs",
         redoc_url="/redoc",
+        openapi_tags=[
+            {"name": "upload", "description": "File upload, list, delete, and row fetch."},
+            {"name": "analyze", "description": "Sales-data analysis and model recommendations."},
+            {"name": "forecast", "description": "Train new models and produce a forecast."},
+            {"name": "models", "description": "Trained model registry: train, save, upload, download, forecast with."},
+            {"name": "api-keys", "description": "Manage API keys for the public /v1 API."},
+            {"name": "Public API", "description": "Versioned, API-key-authenticated surface at /v1/*."},
+        ],
     )
 
     # CORS — explicit origins only (wildcard incompatible with credentials)
@@ -50,6 +83,17 @@ def create_app() -> FastAPI:
         logger.warning("Could not mount /outputs: %s", e)
 
     app.include_router(api_router, prefix=settings.API_V1_STR)
+
+    # Public, versioned, API-key-authenticated API at /v1/*
+    public_router = build_public_router()
+    app.include_router(
+        public_router,
+        prefix="/v1",
+        responses={
+            401: {"description": "Missing or invalid API key"},
+            429: {"description": "Rate limit exceeded"},
+        },
+    )
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(_: Request, exc: RequestValidationError):

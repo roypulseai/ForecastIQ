@@ -22,6 +22,7 @@ import MenuIcon from '@mui/icons-material/Menu';
 import CloseIcon from '@mui/icons-material/Close';
 import ShowChartIcon from '@mui/icons-material/ShowChart';
 import StorageIcon from '@mui/icons-material/Storage';
+import VpnKeyIcon from '@mui/icons-material/VpnKey';
 import { alpha } from '@mui/material/styles';
 
 const NAV_ITEMS = [
@@ -31,6 +32,7 @@ const NAV_ITEMS = [
   { to: '/forecast', label: 'Forecast', icon: TimelineIcon },
   { to: '/results', label: 'Results', icon: AssessmentIcon },
   { to: '/models', label: 'Models', icon: StorageIcon },
+  { to: '/api-keys', label: 'API', icon: VpnKeyIcon },
 ] as const;
 
 export function AppNavbar(): ReactNode {
