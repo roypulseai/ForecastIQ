@@ -129,6 +129,11 @@ async def upload_file(file_type: str, file: UploadFile = File(...)) -> Dict[str,
 @router.get("/upload/files")
 async def list_files(file_type: Optional[str] = None) -> Dict[str, Any]:
     items = storage.list_files(file_type=file_type)
+    # Ensure each item has a `type` field (mapped from `file_type`)
+    # for consistency with the upload response.
+    for item in items:
+        if "type" not in item and "file_type" in item:
+            item["type"] = item["file_type"]
     return to_python({"items": items, "total": len(items)})
 
 
@@ -137,6 +142,8 @@ async def get_file(file_id: str) -> Dict[str, Any]:
     entry = storage.get_file(file_id)
     if not entry:
         raise HTTPException(status_code=404, detail="File not found")
+    if "type" not in entry and "file_type" in entry:
+        entry["type"] = entry["file_type"]
     return to_python(entry)
 
 
