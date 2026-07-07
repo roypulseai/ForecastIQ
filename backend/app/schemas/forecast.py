@@ -120,6 +120,12 @@ class ForecastRequest(BaseModel):
     include_weather: bool = False
     include_competitor: bool = False
     include_economic: bool = False
+    # Auto-detect regional events (holidays library + moveable feasts + sports)
+    auto_detect_events: bool = False
+    # ISO country code for auto-detect (e.g. "IN", "US", "GB")
+    auto_event_country: Optional[str] = None
+    # Optional region values within the country to focus on
+    auto_event_regions: List[str] = Field(default_factory=list)
     aggregation: Optional[AggregationConfig] = None
     country: Optional[str] = None
     notes: Optional[str] = None

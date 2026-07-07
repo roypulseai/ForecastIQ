@@ -256,6 +256,61 @@ export interface ModelParameters {
   stl?: { period: number; robust: boolean };
 }
 
+export interface CountryOption {
+  code: string;
+  name: string;
+  flag?: string;
+}
+
+export const COMMON_COUNTRIES: CountryOption[] = [
+  { code: 'US', name: 'United States', flag: '\u{1F1FA}\u{1F1F8}' },
+  { code: 'GB', name: 'United Kingdom', flag: '\u{1F1EC}\u{1F1E7}' },
+  { code: 'IN', name: 'India', flag: '\u{1F1EE}\u{1F1F3}' },
+  { code: 'CA', name: 'Canada', flag: '\u{1F1E8}\u{1F1E6}' },
+  { code: 'AU', name: 'Australia', flag: '\u{1F1E6}\u{1F1FA}' },
+  { code: 'DE', name: 'Germany', flag: '\u{1F1E9}\u{1F1EA}' },
+  { code: 'FR', name: 'France', flag: '\u{1F1EB}\u{1F1F7}' },
+  { code: 'IT', name: 'Italy', flag: '\u{1F1EE}\u{1F1F9}' },
+  { code: 'ES', name: 'Spain', flag: '\u{1F1EA}\u{1F1F8}' },
+  { code: 'BR', name: 'Brazil', flag: '\u{1F1E7}\u{1F1F7}' },
+  { code: 'MX', name: 'Mexico', flag: '\u{1F1F2}\u{1F1FD}' },
+  { code: 'JP', name: 'Japan', flag: '\u{1F1EF}\u{1F1F5}' },
+  { code: 'CN', name: 'China', flag: '\u{1F1E8}\u{1F1F3}' },
+  { code: 'KR', name: 'South Korea', flag: '\u{1F1F0}\u{1F1F7}' },
+  { code: 'RU', name: 'Russia', flag: '\u{1F1F7}\u{1F1FA}' },
+  { code: 'ZA', name: 'South Africa', flag: '\u{1F1FF}\u{1F1E6}' },
+  { code: 'AE', name: 'UAE', flag: '\u{1F1E6}\u{1F1EA}' },
+  { code: 'SG', name: 'Singapore', flag: '\u{1F1F8}\u{1F1EC}' },
+  { code: 'MY', name: 'Malaysia', flag: '\u{1F1F2}\u{1F1FE}' },
+  { code: 'ID', name: 'Indonesia', flag: '\u{1F1EE}\u{1F1E9}' },
+  { code: 'PH', name: 'Philippines', flag: '\u{1F1F5}\u{1F1ED}' },
+  { code: 'TH', name: 'Thailand', flag: '\u{1F1F9}\u{1F1ED}' },
+  { code: 'VN', name: 'Vietnam', flag: '\u{1F1FB}\u{1F1F3}' },
+  { code: 'NL', name: 'Netherlands', flag: '\u{1F1F3}\u{1F1F1}' },
+  { code: 'SE', name: 'Sweden', flag: '\u{1F1F8}\u{1F1EA}' },
+  { code: 'NO', name: 'Norway', flag: '\u{1F1F3}\u{1F1F4}' },
+  { code: 'DK', name: 'Denmark', flag: '\u{1F1E9}\u{1F1F0}' },
+  { code: 'FI', name: 'Finland', flag: '\u{1F1EB}\u{1F1EE}' },
+  { code: 'CH', name: 'Switzerland', flag: '\u{1F1E8}\u{1F1ED}' },
+  { code: 'BE', name: 'Belgium', flag: '\u{1F1E7}\u{1F1EA}' },
+  { code: 'AT', name: 'Austria', flag: '\u{1F1E6}\u{1F1F9}' },
+  { code: 'PT', name: 'Portugal', flag: '\u{1F1F5}\u{1F1F9}' },
+  { code: 'PL', name: 'Poland', flag: '\u{1F1F5}\u{1F1F1}' },
+  { code: 'TR', name: 'Turkey', flag: '\u{1F1F9}\u{1F1F7}' },
+  { code: 'SA', name: 'Saudi Arabia', flag: '\u{1F1F8}\u{1F1E6}' },
+  { code: 'AR', name: 'Argentina', flag: '\u{1F1E6}\u{1F1F7}' },
+  { code: 'CL', name: 'Chile', flag: '\u{1F1E8}\u{1F1F1}' },
+  { code: 'CO', name: 'Colombia', flag: '\u{1F1E8}\u{1F1F4}' },
+  { code: 'PE', name: 'Peru', flag: '\u{1F1F5}\u{1F1EA}' },
+  { code: 'EG', name: 'Egypt', flag: '\u{1F1EA}\u{1F1EC}' },
+  { code: 'NG', name: 'Nigeria', flag: '\u{1F1F3}\u{1F1EC}' },
+  { code: 'KE', name: 'Kenya', flag: '\u{1F1F0}\u{1F1EA}' },
+  { code: 'NZ', name: 'New Zealand', flag: '\u{1F1F3}\u{1F1FF}' },
+  { code: 'HK', name: 'Hong Kong', flag: '\u{1F1ED}\u{1F1F0}' },
+  { code: 'TW', name: 'Taiwan', flag: '\u{1F1F9}\u{1F1FC}' },
+  { code: 'IL', name: 'Israel', flag: '\u{1F1EE}\u{1F1F1}' },
+];
+
 export interface AggregationConfig {
   time_rollup: TimeGranularity;
   product_level: ProductLevel;
@@ -280,6 +335,12 @@ export interface ForecastRequest {
   include_weather: boolean;
   include_competitor: boolean;
   include_economic: boolean;
+  // Auto-detect regional events using holidays library + moveable feast algorithms
+  auto_detect_events: boolean;
+  // ISO country code for auto-detect (e.g. "IN", "US", "GB", "CN")
+  auto_event_country?: string | null;
+  // Optional region values within the country to focus on
+  auto_event_regions?: string[];
   aggregation?: AggregationConfig;
   country?: string;
   notes?: string;

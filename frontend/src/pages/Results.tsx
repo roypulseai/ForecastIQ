@@ -64,16 +64,16 @@ export function ResultsPage(): ReactNode {
   }, [filesQuery.data, uploadedFiles]);
   const fileDataQuery = useFileData(salesFile?.file_id, 5000);
 
-  // Compute historical actuals for the chart. The forecast detail includes
-  // request.target_column / request.date_column, so we know what to pull.
+  // Compute historical actuals for the chart.
+  // The DataProcessor normalizes all column names to 'date' and 'value',
+  // so we use those standardized names — NOT the original names from the
+  // request (which may have been renamed / dropped).
   const actuals = useMemo(() => {
     if (!fileDataQuery.data || !resultQuery.data) return [] as Array<{ date: string; value: number }>;
-    const dc = resultQuery.data.request.date_column || 'date';
-    const vc = resultQuery.data.request.target_column || 'value';
     const out: Array<{ date: string; value: number }> = [];
     for (const r of fileDataQuery.data.rows) {
-      const rawDate = r[dc];
-      const rawVal = r[vc];
+      const rawDate = r['date'];
+      const rawVal = r['value'];
       if (rawDate == null || rawVal == null) continue;
       const d = String(rawDate).slice(0, 10);
       const v = Number(rawVal);

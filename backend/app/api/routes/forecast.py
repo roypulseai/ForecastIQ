@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
+import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import ValidationError
 
@@ -29,7 +30,8 @@ from ...schemas.forecast import (
     ForecastSummary,
     ModelRanking,
 )
-from ...services.data_processor import DataProcessor
+from ...services.auto_events import AutoEventDetector
+from ...services.data_processor import DataProcessor, _infer_column_types
 from ...services.forecaster import ForecasterService
 
 logger = logging.getLogger(__name__)
@@ -40,9 +42,20 @@ processor = DataProcessor()
 service = ForecasterService()
 
 
-def _gather_exog(request: ForecastRequest) -> Dict[str, Any]:
+def _gather_exog(
+    request: ForecastRequest,
+    sales_df: Optional[pd.DataFrame] = None,
+    date_col: str = "date",
+    value_col: str = "value",
+) -> Dict[str, Any]:
     """Pull all requested external data from storage into a dict keyed by
-    internal name. Returns a DataFrame dict ready for the models."""
+    internal name. Returns a DataFrame dict ready for the models.
+
+    When `auto_detect_events=True`, generates a synthetic events DataFrame
+    using the AutoEventDetector and adds it under the 'holidays' key so it
+    flows into the same exogenous pipeline (for SARIMAX, LightGBM, XGBoost,
+    and Prophet).
+    """
     out: Dict[str, Any] = {}
     type_to_key = {
         "media_plan": "media_plan",
@@ -71,6 +84,56 @@ def _gather_exog(request: ForecastRequest) -> Dict[str, Any]:
         df = storage.get_dataframe(files[0]["file_id"])
         if df is not None and not df.empty:
             out[key] = df
+
+    # Auto-detect events: generate synthetic events from holidays + feasts
+    if request.auto_detect_events and sales_df is not None and not sales_df.empty:
+        country = request.auto_event_country or request.country or "US"
+        region_col = None
+        # Detect region column from column types (passed through validation)
+        if request.auto_event_regions:
+            pass  # User specified explicit regions; we still compute per-region impact
+
+        try:
+            # Find region column from sales_df column types
+            col_types = _infer_column_types(sales_df)
+            for col, ctype in col_types.items():
+                if ctype == "region":
+                    region_col = col
+                    break
+
+            detector = AutoEventDetector(
+                country=country,
+                sales_df=sales_df,
+                date_col=date_col,
+                value_col=value_col,
+                region_col=region_col,
+            )
+            events_df = detector.run(
+                start_date=pd.to_datetime(sales_df[date_col]).min().date(),
+                end_date=pd.to_datetime(sales_df[date_col]).max().date(),
+            )
+
+            if events_df is not None and not events_df.empty:
+                # Merge auto-detected events into existing holidays if present,
+                # otherwise create a new entry
+                events_df = events_df.rename(columns={"holiday_name": "name",
+                                                       "holiday_type": "type"})
+                if "holidays" in out and out["holidays"] is not None:
+                    existing = out["holidays"]
+                    combined = pd.concat([existing, events_df], ignore_index=True)
+                    combined = combined.drop_duplicates(subset=["date"]).sort_values("date")
+                    out["holidays"] = combined
+                else:
+                    out["holidays"] = events_df
+                logger.info(
+                    "Auto-detected %d event dates for %s (region_col=%s)",
+                    len(events_df), country, region_col,
+                )
+            else:
+                logger.info("No auto-detected events for %s", country)
+        except Exception as e:
+            logger.warning("Auto-event detection failed (continuing): %s", e)
+
     return out
 
 
@@ -146,12 +209,29 @@ async def _create_forecast_impl(
     if sales_df is None or sales_df.empty:
         raise HTTPException(status_code=400, detail="Sales data is empty")
 
+    # Clamp backtest_overlap to 20% of data date range
+    try:
+        dates = pd.to_datetime(sales_df["date"])
+        data_range_days = (dates.max() - dates.min()).days
+    except Exception:
+        data_range_days = 0
+    max_backtest = max(0, int(data_range_days * 0.2))
+    if request.backtest_overlap > max_backtest:
+        request.backtest_overlap = max_backtest
+
     try:
         request_dict = request.model_dump(mode="json")
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid request: {e}")
 
-    exog_data = _gather_exog(request)
+    date_col = request.date_column
+    value_col = request.target_column
+    exog_data = _gather_exog(
+        request,
+        sales_df=sales_df,
+        date_col=date_col,
+        value_col=value_col,
+    )
 
     if async_mode:
         sales_copy = sales_df.copy()

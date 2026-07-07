@@ -87,6 +87,9 @@ const initialRequest = (dateColumn: string, valueColumn: string): ForecastReques
   include_weather: false,
   include_competitor: false,
   include_economic: false,
+  auto_detect_events: false,
+  auto_event_country: 'US',
+  auto_event_regions: [],
   aggregation: DEFAULT_AGGREGATION,
   train_test_split: 1.0,
   backtest_overlap: 0,
@@ -102,6 +105,9 @@ interface ExternalState {
   weather: boolean;
   competitor: boolean;
   economic: boolean;
+  auto_detect_events: boolean;
+  auto_event_country: string | null;
+  auto_event_regions: string[];
 }
 
 const initialExternal: ExternalState = {
@@ -112,6 +118,9 @@ const initialExternal: ExternalState = {
   weather: false,
   competitor: false,
   economic: false,
+  auto_detect_events: false,
+  auto_event_country: 'US',
+  auto_event_regions: [],
 };
 
 export function ForecastPage(): ReactNode {
@@ -255,6 +264,15 @@ export function ForecastPage(): ReactNode {
 
   const recommendations = analysisData.model_recommendations.map((r) => r.model);
 
+  // Backtest overlap capped at 20% of the data date range
+  const maxBacktestOverlap = useMemo(() => {
+    const chars = analysisData?.data_characteristics;
+    if (!chars?.min_date || !chars?.max_date) return 365;
+    const rangeMs = new Date(chars.max_date).getTime() - new Date(chars.min_date).getTime();
+    if (rangeMs <= 0) return 0;
+    return Math.max(0, Math.floor(rangeMs / (1000 * 86400) * 0.2));
+  }, [analysisData]);
+
   const update = <K extends keyof ForecastRequest>(key: K, value: ForecastRequest[K]) =>
     setRequest((r) => ({ ...r, [key]: value }));
 
@@ -282,6 +300,9 @@ export function ForecastPage(): ReactNode {
       include_weather: external.weather,
       include_competitor: external.competitor,
       include_economic: external.economic,
+      auto_detect_events: external.auto_detect_events,
+      auto_event_country: external.auto_event_country,
+      auto_event_regions: external.auto_event_regions,
       ensemble_models: useEnsemble && request.ensemble_models?.length ? request.ensemble_models : undefined,
       aggregation: useAggregation ? request.aggregation : undefined,
       parameters: Object.keys(request.parameters ?? {}).length > 0 ? request.parameters : undefined,
@@ -609,20 +630,27 @@ export function ForecastPage(): ReactNode {
                     </Tooltip>
                   </Typography>
                   <Slider
-                    value={request.backtest_overlap ?? 0}
+                    value={Math.min(request.backtest_overlap ?? 0, maxBacktestOverlap)}
                     min={0}
-                    max={365}
+                    max={maxBacktestOverlap}
                     step={1}
-                    marks={[
-                      { value: 0, label: '0' },
-                      { value: 30, label: '30d' },
-                      { value: 90, label: '90d' },
-                      { value: 365, label: '365d' },
-                    ]}
+                    marks={
+                      maxBacktestOverlap > 0
+                        ? [
+                            { value: 0, label: '0' },
+                            ...(maxBacktestOverlap >= 30 ? [{ value: Math.min(30, maxBacktestOverlap), label: '30d' }] : []),
+                            ...(maxBacktestOverlap >= 90 ? [{ value: Math.min(90, maxBacktestOverlap), label: '90d' }] : []),
+                            { value: maxBacktestOverlap, label: `${maxBacktestOverlap}d` },
+                          ]
+                        : [{ value: 0, label: '0' }]
+                    }
                     onChange={(_, v) => update('backtest_overlap', v as number)}
                     valueLabelDisplay="auto"
                     valueLabelFormat={(v) => `${v}d`}
                   />
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                    Maximum {maxBacktestOverlap}d (20% of data span)
+                  </Typography>
                 </Grid>
                 <Grid item xs={12}>
                   <FormControlLabel
