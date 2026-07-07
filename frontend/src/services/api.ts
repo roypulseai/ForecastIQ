@@ -6,8 +6,13 @@ import type {
   ForecastListResponse,
   ForecastRequest,
   ForecastResponse,
+  ForecastValue,
   HealthResponse,
   JobStatus,
+  SavedModelMeta,
+  SavedModelsListResponse,
+  TrainRequest,
+  TrainResult,
   UploadedFile,
 } from '../types';
 
@@ -116,6 +121,70 @@ export const apiClient = {
 
   async health(): Promise<HealthResponse> {
     const res = await api.get<HealthResponse>('/health');
+    return res.data;
+  },
+
+  // ---- Saved model registry ----
+  async listModels(params?: {
+    model_type?: string;
+    search?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<SavedModelsListResponse> {
+    const res = await api.get<SavedModelsListResponse>('/models', { params });
+    return res.data;
+  },
+
+  async getModel(modelId: string): Promise<SavedModelMeta> {
+    const res = await api.get<SavedModelMeta>(`/models/${modelId}`);
+    return res.data;
+  },
+
+  async deleteModel(modelId: string): Promise<void> {
+    await api.delete(`/models/${modelId}`);
+  },
+
+  async updateModel(
+    modelId: string,
+    updates: { name?: string; notes?: string; tags?: string[] },
+  ): Promise<SavedModelMeta> {
+    const res = await api.patch<SavedModelMeta>(`/models/${modelId}`, updates);
+    return res.data;
+  },
+
+  async uploadModel(
+    file: File,
+    meta?: { name?: string; notes?: string; tags?: string[] },
+  ): Promise<SavedModelMeta> {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (meta?.name) formData.append('name', meta.name);
+    if (meta?.notes) formData.append('notes', meta.notes);
+    if (meta?.tags) formData.append('tags', meta.tags.join(','));
+    const res = await api.post<SavedModelMeta>('/models/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return res.data;
+  },
+
+  async trainAndSave(request: TrainRequest): Promise<TrainResult> {
+    const res = await api.post<TrainResult>('/models/train', request);
+    return res.data;
+  },
+
+  async forecastWithSavedModel(
+    modelId: string,
+    request: { horizon: number; include_media_plan?: boolean; include_promotions?: boolean; include_holidays?: boolean; include_events?: boolean; include_weather?: boolean; include_competitor?: boolean; include_economic?: boolean },
+  ): Promise<{
+    model_id: string;
+    model_name: string;
+    model_meta: SavedModelMeta;
+    forecast_values: ForecastValue[];
+    baseline_values: ForecastValue[] | null;
+    components: Record<string, unknown>;
+    horizon: number;
+  }> {
+    const res = await api.post(`/models/${modelId}/forecast`, request);
     return res.data;
   },
 };

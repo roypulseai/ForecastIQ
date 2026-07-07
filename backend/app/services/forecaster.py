@@ -4,6 +4,7 @@ This is the single entry point used by the API to run a forecast. It:
   * Iterates over the requested models, fitting each in isolation
   * Falls back gracefully if a single model fails
   * Computes cross-validated MAE / RMSE / MAPE for model selection
+  * Optionally splits train/test for held-out evaluation
   * Builds an optional weighted ensemble
   * Computes baseline forecasts and uplift
   * Returns a JSON-safe dict that the storage layer can persist
@@ -32,6 +33,14 @@ from ..core.utils import to_python
 from .data_processor import DataProcessor
 from .model_selector import ModelSelector
 from .models.base import BaseForecaster
+from .models.registry import (
+    ModelMetrics,
+    ModelRegistry,
+    TrainingConfig,
+    get_model_registry,
+    time_series_split,
+    evaluate_on_test,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -426,6 +435,220 @@ class ForecasterService:
         if progress_cb:
             progress_cb(1.0, "Done")
         return to_python(result)
+
+    # ----------------------------------------------------------------- train / save
+    def train_and_save(
+        self,
+        sales_df: pd.DataFrame,
+        request: Dict[str, Any],
+        exog_data: Optional[Dict[str, pd.DataFrame]] = None,
+        model_name: Optional[str] = None,
+        notes: str = "",
+        tags: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Train one or more models on a train split, evaluate on a held-out
+        test split, and persist the best one to the model registry.
+
+        `request` should specify:
+            * `model_type` or `models` (list) — which model(s) to train
+            * `train_test_split` (default 0.8) — fraction for training
+            * `horizon` — also used as the test-set size (if > 0)
+            * `date_column`, `target_column` — column names
+            * `frequency` — date frequency ('D', 'W', 'M')
+            * `parameters` (optional) — hyperparameters per model
+
+        Returns a JSON-safe dict with: train/test split info, evaluation
+        metrics per model, the saved model_id, and the registry metadata.
+        """
+        date_col = request.get("date_column", "date")
+        value_col = request.get("target_column", "value")
+        frequency = request.get("frequency", "D")
+        horizon = int(request.get("horizon", 30))
+        train_ratio = float(request.get("train_test_split", 0.8))
+        params = request.get("parameters") or {}
+
+        # Models to train: either explicit list or single model_type
+        if "models" in request and request["models"]:
+            models_to_train = list(request["models"])
+        elif "model_type" in request and request["model_type"]:
+            models_to_train = [request["model_type"]]
+        else:
+            models_to_train = ["prophet"]
+
+        # Split the data
+        split = time_series_split(
+            sales_df, date_col, value_col,
+            train_ratio=train_ratio,
+            horizon=horizon if horizon > 0 else 0,
+        )
+        train_df = split["train"]
+        test_df = split["test"]
+
+        train_start = (
+            pd.Timestamp(train_df[date_col].iloc[0]).strftime("%Y-%m-%d")
+            if not train_df.empty else None
+        )
+        train_end = (
+            pd.Timestamp(train_df[date_col].iloc[-1]).strftime("%Y-%m-%d")
+            if not train_df.empty else None
+        )
+        test_start = (
+            pd.Timestamp(test_df[date_col].iloc[0]).strftime("%Y-%m-%d")
+            if not test_df.empty else None
+        )
+        test_end = (
+            pd.Timestamp(test_df[date_col].iloc[-1]).strftime("%Y-%m-%d")
+            if not test_df.empty else None
+        )
+
+        # Train each model, evaluate on test set, then save the best one
+        results: List[Dict[str, Any]] = []
+        best: Optional[Tuple[BaseForecaster, ModelMetrics, str]] = None  # (model, metrics, name)
+
+        for mtype in models_to_train:
+            try:
+                model = self.selector.get_model(mtype, params)
+                # Fit on TRAIN only (data-science best practice)
+                model.fit(train_df, date_col, value_col, exog_data=exog_data or {})
+
+                # Predict on the test set to evaluate
+                test_horizon = len(test_df)
+                test_predictions = model.forecast(
+                    test_horizon, exog_data=exog_data
+                )
+
+                # Compute evaluation metrics on the test set
+                eval_metrics = evaluate_on_test(
+                    test_predictions, test_df, date_col, value_col
+                )
+                # Augment with training-time metrics
+                try:
+                    train_metrics = model.get_metrics() or {}
+                    for k, v in train_metrics.items():
+                        if v is not None and k not in eval_metrics.__dict__:
+                            setattr(eval_metrics, k, float(v))
+                except Exception:
+                    pass
+                eval_metrics.train_rows = len(train_df)
+                eval_metrics.test_rows = len(test_df)
+
+                # CV metrics (separate from test-set evaluation)
+                try:
+                    cv = self.selector.cross_validate(
+                        train_df, date_col, value_col, mtype, params,
+                        horizon=min(7, test_horizon),
+                    )
+                    eval_metrics.cv_mae = cv.get("mae")
+                    eval_metrics.cv_rmse = cv.get("rmse")
+                    eval_metrics.cv_mape = cv.get("mape")
+                except Exception:
+                    pass
+
+                results.append({
+                    "model_type": mtype,
+                    "model_name": model.name,
+                    "metrics": eval_metrics.__dict__,
+                    "error": None,
+                })
+
+                # Track the best (lowest MAE) for persistence
+                if eval_metrics.mae is not None:
+                    if best is None or eval_metrics.mae < best[1].mae:
+                        best = (model, eval_metrics, mtype)
+            except Exception as e:
+                logger.exception("Training %s failed", mtype)
+                results.append({
+                    "model_type": mtype,
+                    "model_name": mtype,
+                    "metrics": {},
+                    "error": str(e),
+                })
+
+        # Persist the best model
+        saved_meta: Optional[Dict[str, Any]] = None
+        if best is not None:
+            best_model, best_metrics, best_type = best
+            registry = get_model_registry()
+            exog_used = sorted((exog_data or {}).keys())
+            display_name = model_name or f"{best_model.name} - {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}"
+            training_cfg = TrainingConfig(
+                date_column=date_col,
+                value_column=value_col,
+                frequency=frequency,
+                train_test_split=train_ratio,
+                horizon_used=horizon,
+                extra_columns=[c for c in train_df.columns if c not in (date_col, value_col)],
+                hyperparameters=params.get(best_type, {}),
+                exogenous_used=exog_used,
+            )
+            meta = registry.save(
+                name=display_name,
+                model=best_model,
+                metrics=best_metrics,
+                training=training_cfg,
+                train_start=train_start,
+                train_end=train_end,
+                test_start=test_start,
+                test_end=test_end,
+                tags=tags or [],
+                notes=notes,
+            )
+            saved_meta = meta.to_dict()
+
+        return to_python({
+            "split": {
+                "train_rows": int(len(train_df)),
+                "test_rows": int(len(test_df)),
+                "train_start": train_start,
+                "train_end": train_end,
+                "test_start": test_start,
+                "test_end": test_end,
+                "train_ratio": train_ratio,
+            },
+            "results": results,
+            "saved_model": saved_meta,
+            "created_at": datetime.utcnow().isoformat() + "Z",
+        })
+
+    # ----------------------------------------------------------------- load + forecast
+    def forecast_with_loaded_model(
+        self,
+        model_id: str,
+        horizon: int,
+        exog_data: Optional[Dict[str, pd.DataFrame]] = None,
+    ) -> Dict[str, Any]:
+        """Load a saved model and use it to forecast without retraining.
+
+        This is the key workflow for the data scientist: train once, save,
+        then load and predict many times on new data.
+        """
+        registry = get_model_registry()
+        loaded = registry.load(model_id)
+        model = loaded.model
+        meta = loaded.meta
+
+        # Forecast
+        forecast = model.forecast(horizon, exog_data=exog_data)
+        try:
+            baseline = model.get_baseline(horizon, exog_data=exog_data)
+            attach_uplift(forecast, baseline)
+        except Exception:
+            baseline = []
+        # Components
+        try:
+            components = _safe_dict(model.get_components())
+        except Exception:
+            components = {}
+
+        return to_python({
+            "model_id": model_id,
+            "model_name": model.name if hasattr(model, "name") else meta.model_type,
+            "model_meta": meta.to_dict(),
+            "forecast_values": forecast,
+            "baseline_values": baseline,
+            "components": components,
+            "horizon": horizon,
+        })
 
     # ----------------------------------------------------------------- helpers
     @staticmethod

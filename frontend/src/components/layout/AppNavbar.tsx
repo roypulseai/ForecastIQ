@@ -21,6 +21,7 @@ import AssessmentIcon from '@mui/icons-material/Assessment';
 import MenuIcon from '@mui/icons-material/Menu';
 import CloseIcon from '@mui/icons-material/Close';
 import ShowChartIcon from '@mui/icons-material/ShowChart';
+import StorageIcon from '@mui/icons-material/Storage';
 import { alpha } from '@mui/material/styles';
 
 const NAV_ITEMS = [
@@ -29,6 +30,7 @@ const NAV_ITEMS = [
   { to: '/explore', label: 'Explore', icon: InsightsIcon },
   { to: '/forecast', label: 'Forecast', icon: TimelineIcon },
   { to: '/results', label: 'Results', icon: AssessmentIcon },
+  { to: '/models', label: 'Models', icon: StorageIcon },
 ] as const;
 
 export function AppNavbar(): ReactNode {

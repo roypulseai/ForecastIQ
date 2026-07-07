@@ -9,10 +9,13 @@ import {
   Chip,
   CircularProgress,
   Divider,
+  FormControl,
   FormControlLabel,
   Grid,
+  InputLabel,
   LinearProgress,
   MenuItem,
+  Select,
   Stack,
   Switch,
   TextField,
@@ -28,6 +31,7 @@ import { AggregationPanel } from '../components/forecast/AggregationPanel';
 import { ForecastSummaryCard } from '../components/forecast/ForecastSummary';
 import { useFiles } from '../hooks/useFiles';
 import { useCreateForecast, useJobStatus } from '../hooks/useForecast';
+import { useSavedModels, useForecastWithSavedModel } from '../hooks/useModels';
 import { useStore } from '../store/appStore';
 import { getErrorMessage } from '../services/api';
 import {
@@ -105,9 +109,17 @@ export function ForecastPage(): ReactNode {
   const setCurrentForecastId = useStore((s) => s.setCurrentForecastId);
   const filesQuery = useFiles();
   const createMut = useCreateForecast();
+  const savedModelsQuery = useSavedModels();
+  const useSavedMut = useForecastWithSavedModel();
   const [jobId, setJobId] = useState<string | null>(null);
   const jobQuery = useJobStatus(jobId);
   const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState<'train' | 'saved'>('train');
+  const [selectedSavedId, setSelectedSavedId] = useState<string>('');
+  const [savedForecastResult, setSavedForecastResult] = useState<{
+    model_name: string;
+    forecast_values: Array<{ date: string; forecast: number; lower_ci: number; upper_ci: number; baseline?: number | null; uplift?: number | null }>;
+  } | null>(null);
 
   // When the job completes, fetch the result and navigate
   useEffect(() => {
@@ -230,6 +242,7 @@ export function ForecastPage(): ReactNode {
       title="Configure forecast"
       subtitle="Choose models, set parameters, and add external factors."
       actions={
+        mode === 'train' ? (
         <Button
           variant="contained"
           size="large"
@@ -239,6 +252,7 @@ export function ForecastPage(): ReactNode {
         >
           {createMut.isPending ? 'Submitting…' : jobId ? 'Forecasting…' : 'Run forecast'}
         </Button>
+        ) : null
       }
     >
       {jobId && jobQuery.data && (
@@ -272,6 +286,125 @@ export function ForecastPage(): ReactNode {
         </Alert>
       )}
 
+      <Card sx={{ mb: 3 }}>
+        <CardContent>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }} justifyContent="space-between">
+            <Box>
+              <Typography variant="h6" sx={{ fontWeight: 600 }}>Forecast mode</Typography>
+              <Typography variant="body2" color="text.secondary">
+                {mode === 'train'
+                  ? 'Train new models on the current data, then forecast.'
+                  : 'Load a previously saved model and forecast — no retraining.'}
+              </Typography>
+            </Box>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={mode === 'saved'}
+                  onChange={(_, c) => setMode(c ? 'saved' : 'train')}
+                />
+              }
+              label={mode === 'saved' ? 'Use saved model' : 'Train new'}
+            />
+          </Stack>
+          {mode === 'saved' && (
+            <Box sx={{ mt: 2 }}>
+              {savedModelsQuery.isLoading ? (
+                <CircularProgress size={20} />
+              ) : (savedModelsQuery.data?.items?.length ?? 0) === 0 ? (
+                <Alert severity="info">
+                  No saved models yet. Go to <b>Saved models</b> to train and save one first.
+                </Alert>
+              ) : (
+                <Grid container spacing={2} alignItems="center">
+                  <Grid item xs={12} md={6}>
+                    <FormControl fullWidth size="small">
+                      <InputLabel>Saved model</InputLabel>
+                      <Select
+                        value={selectedSavedId}
+                        label="Saved model"
+                        onChange={(e) => {
+                          setSelectedSavedId(e.target.value);
+                          setSavedForecastResult(null);
+                        }}
+                      >
+                        {(savedModelsQuery.data?.items ?? []).map((m) => (
+                          <MenuItem key={m.model_id} value={m.model_id}>
+                            {m.name} · {MODEL_LABELS[m.model_type] ?? m.model_type} · test MAE{' '}
+                            {m.metrics.mae != null ? m.metrics.mae.toFixed(2) : '—'}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid item xs={12} md={4}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      type="number"
+                      label="Horizon (days)"
+                      value={request.horizon}
+                      onChange={(e) => update('horizon', Math.max(1, Math.min(3650, Number(e.target.value) || 30)))}
+                      inputProps={{ min: 1, max: 3650 }}
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={2}>
+                    <Button
+                      fullWidth
+                      variant="contained"
+                      disabled={!selectedSavedId || useSavedMut.isPending}
+                      onClick={async () => {
+                        setError(null);
+                        try {
+                          const res = await useSavedMut.mutateAsync({
+                            modelId: selectedSavedId,
+                            request: { horizon: request.horizon },
+                          });
+                          setSavedForecastResult({
+                            model_name: res.model_name,
+                            forecast_values: res.forecast_values,
+                          });
+                        } catch (e) {
+                          setError(getErrorMessage(e));
+                        }
+                      }}
+                    >
+                      {useSavedMut.isPending ? 'Forecasting…' : 'Forecast'}
+                    </Button>
+                  </Grid>
+                </Grid>
+              )}
+              {savedForecastResult && (
+                <Box sx={{ mt: 2, p: 2, borderRadius: 1.5, bgcolor: 'background.default' }}>
+                  <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                    Forecast with <b>{savedForecastResult.model_name}</b> — {savedForecastResult.forecast_values.length} points
+                  </Typography>
+                  <Box sx={{ maxHeight: 240, overflow: 'auto' }}>
+                    {savedForecastResult.forecast_values.slice(0, 10).map((v, i) => (
+                      <Box key={i} sx={{ display: 'flex', justifyContent: 'space-between', py: 0.25 }}>
+                        <Typography variant="caption" color="text.secondary">{v.date}</Typography>
+                        <Typography variant="caption" sx={{ fontWeight: 600 }}>
+                          {v.forecast.toFixed(2)}{' '}
+                          <span style={{ color: '#888' }}>
+                            ({v.lower_ci.toFixed(1)}–{v.upper_ci.toFixed(1)})
+                          </span>
+                        </Typography>
+                      </Box>
+                    ))}
+                    {savedForecastResult.forecast_values.length > 10 && (
+                      <Typography variant="caption" color="text.disabled" sx={{ display: 'block', mt: 0.5 }}>
+                        …and {savedForecastResult.forecast_values.length - 10} more
+                      </Typography>
+                    )}
+                  </Box>
+                </Box>
+              )}
+            </Box>
+          )}
+        </CardContent>
+      </Card>
+
+      {mode === 'train' && (
       <Grid container spacing={3}>
         <Grid item xs={12} lg={8}>
           <Card sx={{ mb: 3 }}>
@@ -554,6 +687,7 @@ export function ForecastPage(): ReactNode {
           </Box>
         </Grid>
       </Grid>
+      )}
 
       {filesQuery.isError && (
         <Alert severity="warning" sx={{ mt: 3 }}>

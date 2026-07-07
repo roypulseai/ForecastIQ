@@ -346,3 +346,99 @@ export interface DownsampleInfo {
   reason: string | null;
   aggregation_level: string | null;
 }
+
+// ============================================================================
+// Model registry
+// ============================================================================
+export interface ModelMetricsSaved {
+  mae: number | null;
+  rmse: number | null;
+  mape: number | null;
+  r2?: number | null;
+  train_rows?: number;
+  test_rows?: number;
+  cv_mae?: number | null;
+  cv_rmse?: number | null;
+  cv_mape?: number | null;
+}
+
+export interface TrainingConfig {
+  date_column: string;
+  value_column: string;
+  frequency: string;
+  train_test_split: number;
+  horizon_used: number;
+  extra_columns: string[];
+  hyperparameters: Record<string, unknown>;
+  exogenous_used: string[];
+}
+
+export interface SavedModelMeta {
+  model_id: string;
+  name: string;
+  model_type: string;
+  framework: 'pickle' | 'joblib' | 'prophet' | 'statsmodels';
+  created_at: string;
+  updated_at: string;
+  file_size: number;
+  sha256: string;
+  metrics: ModelMetricsSaved;
+  training: TrainingConfig;
+  train_start: string | null;
+  train_end: string | null;
+  test_start: string | null;
+  test_end: string | null;
+  source_file_id: string | null;
+  source_forecast_id: string | null;
+  tags: string[];
+  notes: string;
+}
+
+export interface SavedModelsListResponse {
+  items: SavedModelMeta[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface TrainRequest {
+  model_type?: string;
+  models?: string[];
+  file_id?: string;
+  train_test_split?: number;
+  horizon?: number;
+  date_column?: string;
+  target_column?: string;
+  frequency?: Frequency;
+  parameters?: ModelParameters;
+  name?: string;
+  notes?: string;
+  tags?: string[];
+  include_media_plan?: boolean;
+  include_promotions?: boolean;
+  include_holidays?: boolean;
+  include_events?: boolean;
+  include_weather?: boolean;
+  include_competitor?: boolean;
+  include_economic?: boolean;
+}
+
+export interface TrainResult {
+  split: {
+    train_rows: number;
+    test_rows: number;
+    train_start: string | null;
+    train_end: string | null;
+    test_start: string | null;
+    test_end: string | null;
+    train_ratio: number;
+  };
+  results: Array<{
+    model_type: string;
+    model_name: string;
+    metrics: ModelMetricsSaved;
+    error: string | null;
+  }>;
+  saved_model: SavedModelMeta | null;
+  created_at: string;
+}
