@@ -7,6 +7,7 @@ import type {
   ForecastRequest,
   ForecastResponse,
   HealthResponse,
+  JobStatus,
   UploadedFile,
 } from '../types';
 
