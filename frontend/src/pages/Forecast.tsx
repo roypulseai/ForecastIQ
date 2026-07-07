@@ -37,7 +37,7 @@ import { useFiles } from '../hooks/useFiles';
 import { useCreateForecast, useJobStatus } from '../hooks/useForecast';
 import { useSavedModels, useForecastWithSavedModel } from '../hooks/useModels';
 import { useStore } from '../store/appStore';
-import { getErrorMessage } from '../services/api';
+import { apiClient, getErrorMessage } from '../services/api';
 import {
   FILE_TYPE_LABELS,
   MODEL_LABELS,
@@ -129,22 +129,45 @@ export function ForecastPage(): ReactNode {
     forecast_values: Array<{ date: string; forecast: number; lower_ci: number; upper_ci: number; baseline?: number | null; uplift?: number | null }>;
   } | null>(null);
 
-  // When the job completes, fetch the result and navigate
+  // When the job completes, fetch the full result to get forecast_id
+  const [completedJobId, setCompletedJobId] = useState<string | null>(null);
   useEffect(() => {
     if (!jobQuery.data) return;
     if (jobQuery.data.status === 'completed') {
-      const result = jobQuery.data as { result?: { forecast_id?: string } };
-      const forecastId = result.result?.forecast_id;
-      if (forecastId) {
-        setCurrentForecastId(forecastId);
-        setJobId(null);
-        navigate('/results');
-      }
+      setCompletedJobId(jobId);
     } else if (jobQuery.data.status === 'failed') {
       setError(jobQuery.data.error || 'Forecast failed');
       setJobId(null);
     }
-  }, [jobQuery.data, navigate, setCurrentForecastId]);
+  }, [jobQuery.data, jobId]);
+
+  useEffect(() => {
+    if (!completedJobId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await apiClient.getJobResult(completedJobId);
+        if (cancelled) return;
+        const forecastId = result.result?.forecast_id;
+        if (forecastId) {
+          setCurrentForecastId(forecastId);
+          setJobId(null);
+          setCompletedJobId(null);
+          navigate('/results');
+        } else {
+          setError('Forecast completed but no result ID returned');
+          setJobId(null);
+          setCompletedJobId(null);
+        }
+      } catch (e) {
+        if (cancelled) return;
+        setError(getErrorMessage(e));
+        setJobId(null);
+        setCompletedJobId(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [completedJobId, navigate, setCurrentForecastId]);
 
   const dateColumn = analysisData?.validation.date_column ?? 'date';
   const valueColumn = analysisData?.validation.value_column ?? 'value';
@@ -518,8 +541,8 @@ export function ForecastPage(): ReactNode {
               <Grid container spacing={3}>
                 <Grid item xs={12} sm={6}>
                   <Typography variant="body2" color="text.secondary" gutterBottom>
-                    Train/test split
-                    <Tooltip title="Fraction of data used for training. The rest is held out for evaluation. 1.0 = no split.">
+                    Train/test split <Chip label="ML models only" size="small" color="info" variant="outlined" sx={{ ml: 0.5, height: 18, fontSize: 10 }} />
+                    <Tooltip title="Fraction of data used for training. The rest is held out for evaluation of ML models (XGBoost, LightGBM). Time-series models always train on 100% of data.">
                       <InfoOutlinedIcon sx={{ fontSize: 14, ml: 0.5, verticalAlign: 'text-top', color: 'text.disabled' }} />
                     </Tooltip>
                   </Typography>

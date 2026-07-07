@@ -257,14 +257,15 @@ class ForecasterService:
         save_model_tags = request.get("save_model_tags") or []
         save_model_notes = request.get("save_model_notes", "")
 
-        # ---- Pre-step: optional train/test split for honest evaluation ----
-        # When train_test_split < 1.0, hold out the last (1 - ratio) rows as
-        # the test set. The forecast (next `horizon` rows) is then produced
-        # by training on the train portion, evaluating on the test portion,
-        # then refitting on train+test for the final forward forecast.
+        # ---- Pre-step: optional train/test split for ML models ----
+        # Train/test split only applies to ML models (xgboost, lightgbm).
+        # Time-series models (ARIMA, SARIMAX, Prophet, ETS, WMA, Theta, STL)
+        # always train on 100% of the data.
+        ml_models = {"xgboost", "lightgbm"}
+        has_ml = any(m in ml_models for m in models)
         test_df: Optional[pd.DataFrame] = None
         train_df: Optional[pd.DataFrame] = None
-        if 0.5 <= train_test_split < 1.0 and len(sales_df) >= 30:
+        if has_ml and 0.5 <= train_test_split < 1.0 and len(sales_df) >= 30:
             split = time_series_split(
                 sales_df, date_col, value_col,
                 train_ratio=train_test_split,
@@ -273,7 +274,7 @@ class ForecasterService:
             train_df = split["train"]
             test_df = split["test"]
             logger.info(
-                "Train/test split: %d train / %d test (ratio=%.2f)",
+                "Train/test split: %d train / %d test (ratio=%.2f) — for ML models",
                 len(train_df), len(test_df), train_test_split,
             )
 
@@ -303,8 +304,15 @@ class ForecasterService:
             progress_cb(0.05, "Data prepared")
 
         # ---- 1) Cross-validate each requested model in parallel ----
-        # CV uses the training portion only (or all data if no split)
-        cv_input_df = train_df if train_df is not None else sales_df
+        # CV uses the training portion only for ML models (to avoid leakage),
+        # and full data for time-series models.
+        has_split = train_df is not None
+
+        def _cv_input(m: str) -> pd.DataFrame:
+            if has_split and m in ml_models:
+                return train_df  # type: ignore[return-value]
+            return sales_df
+
         cv_results: Dict[str, Dict[str, float]] = {}
         cv_workers = min(len(models), MAX_PARALLEL_WORKERS)
         if cv_workers > 1:
@@ -312,7 +320,7 @@ class ForecasterService:
                 fut_to_model = {
                     ex.submit(
                         self.selector.cross_validate,
-                        cv_input_df, date_col, value_col, m, params,
+                        _cv_input(m), date_col, value_col, m, params,
                         min(7, horizon),
                     ): m
                     for m in models
@@ -328,7 +336,7 @@ class ForecasterService:
             for m in models:
                 try:
                     cv_results[m] = self.selector.cross_validate(
-                        cv_input_df, date_col, value_col, m, params, horizon=min(7, horizon)
+                        _cv_input(m), date_col, value_col, m, params, horizon=min(7, horizon)
                     )
                 except Exception as e:
                     logger.warning("CV error for %s: %s", m, e)
@@ -339,18 +347,24 @@ class ForecasterService:
 
         # ---- 2) Fit + forecast each model in parallel ----
         per_model: Dict[str, Dict[str, Any]] = {}
-        # When a train/test split is in effect, fit on the train portion
-        # and evaluate on the test portion. Then produce the forward forecast
-        # by refitting on train+test (so the model is trained on all available data).
-        fit_df = train_df if train_df is not None else sales_df
+        # When a train/test split is in effect, ML models (xgboost, lightgbm)
+        # use the training portion for fitting. Time-series models always
+        # train on 100% of the data.
+        has_split = train_df is not None
         fit_workers = min(len(models), MAX_PARALLEL_WORKERS)
         completed = 0
+
+        def _fit_input(m: str) -> pd.DataFrame:
+            if has_split and m in ml_models:
+                return train_df  # type: ignore[return-value]
+            return sales_df
+
         if fit_workers > 1:
             with ThreadPoolExecutor(max_workers=fit_workers) as ex:
                 fut_to_model = {
                     ex.submit(
                         _fit_and_forecast_one,
-                        m, params, fit_df, date_col, value_col,
+                        m, params, _fit_input(m), date_col, value_col,
                         horizon, exog_data,
                     ): m
                     for m in models
@@ -369,7 +383,7 @@ class ForecasterService:
         else:
             for m in models:
                 result = _fit_and_forecast_one(
-                    m, params, fit_df, date_col, value_col, horizon, exog_data
+                    m, params, _fit_input(m), date_col, value_col, horizon, exog_data
                 )
                 per_model[m] = _assemble_model_result(m, result, cv_results)
                 completed += 1
@@ -377,9 +391,13 @@ class ForecasterService:
                     progress_cb(0.20 + 0.55 * (completed / n_models), f"Trained {completed}/{n_models} models")
 
         # ---- 2b) If train/test split: evaluate on test set + refit on all data ----
+        # Test metrics are computed only for ML models (which were fit on train
+        # portion). Time-series models train on full data so no test evaluation.
         test_metrics_per_model: Dict[str, Dict[str, float]] = {}
         if test_df is not None and not test_df.empty:
             for m in models:
+                if m not in ml_models:
+                    continue
                 pm = per_model.get(m)
                 if not pm or pm.get("error"):
                     continue
