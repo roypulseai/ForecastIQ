@@ -2,6 +2,7 @@ import { useMemo, type ReactNode } from 'react';
 import { Box, Card, CardContent, MenuItem, Stack, Switch, FormControlLabel, TextField, Typography } from '@mui/material';
 import {
   Area,
+  Brush,
   CartesianGrid,
   ComposedChart,
   Legend,
@@ -89,7 +90,7 @@ export function ForecastChart({
 
   const isEnsemble = selectedModel === '__ensemble__';
 
-  // Build the merged series: actuals first, then forecast points.
+  // Build the merged series: actuals first, forecast points, then baseline.
   // We merge on date so a single ComposedChart can show them together.
   const data: ChartPoint[] = useMemo(() => {
     const byDate = new Map<string, ChartPoint>();
@@ -113,29 +114,32 @@ export function ForecastChart({
         byDate.set(p.date, p);
       }
     }
-    return Array.from(byDate.values()).sort((a, b) => (a.date < b.date ? -1 : 1));
-  }, [actuals, showActuals, isEnsemble, detail, selectedModel]);
-
-  const baselineData: ChartPoint[] | null = useMemo(() => {
-    if (!showBaseline) return null;
-    let values: ForecastValue[] | null = null;
-    if (isEnsemble && detail.ensemble?.baseline_values) values = detail.ensemble.baseline_values;
-    else {
-      const found = Object.values(detail.results).find(
-        (r) => r.model_name === selectedModel,
-      );
-      if (found?.baseline_values) values = found.baseline_values;
+    // Merge baseline into the same data array (avoids Recharts issues with
+    // separate `data` props on child elements).
+    if (showBaseline) {
+      const baselineValues =
+        (isEnsemble && detail.ensemble?.baseline_values) ||
+        Object.values(detail.results).find((r) => r.model_name === selectedModel)?.baseline_values;
+      if (baselineValues) {
+        for (const v of baselineValues) {
+          const existing = byDate.get(v.date);
+          if (existing) {
+            byDate.set(v.date, { ...existing, baseline: v.forecast });
+          } else {
+            byDate.set(v.date, {
+              date: v.date,
+              forecast: null,
+              lower: null,
+              upper: null,
+              baseline: v.forecast,
+              actual: null,
+            });
+          }
+        }
+      }
     }
-    if (!values) return null;
-    return values.map((v) => ({
-      date: v.date,
-      forecast: null,
-      lower: null,
-      upper: null,
-      baseline: v.forecast,
-      actual: null,
-    }));
-  }, [showBaseline, isEnsemble, detail, selectedModel]);
+    return Array.from(byDate.values()).sort((a, b) => (a.date < b.date ? -1 : 1));
+  }, [actuals, showActuals, showBaseline, isEnsemble, detail, selectedModel]);
 
   // Reference line at the boundary between actuals and forecast
   const boundary = actuals.length > 0 ? actuals[actuals.length - 1].date : null;
@@ -277,11 +281,10 @@ export function ForecastChart({
                 name="Forecast"
                 connectNulls
               />
-              {baselineData && (
+              {showBaseline && (
                 <Line
                   type="monotone"
                   dataKey="baseline"
-                  data={baselineData}
                   stroke={theme.palette.text.secondary}
                   strokeWidth={1.5}
                   strokeDasharray="4 4"
@@ -290,16 +293,20 @@ export function ForecastChart({
                   connectNulls
                 />
               )}
+              <Brush
+                dataKey="date"
+                height={30}
+                stroke={theme.palette.text.secondary}
+                fill={theme.palette.background.paper}
+                travellerWidth={10}
+                gap={1}
+                tickFormatter={(d: string) => formatShortDate(d)}
+              />
             </ComposedChart>
           </ResponsiveContainer>
         </Box>
-        {showBaseline && baselineData === null && (
-          <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-            Note: baseline not available for this model.
-          </Typography>
-        )}
         <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-          Black line: historical actuals · Blue line: forecast · Shaded area: 95% confidence interval.
+          Black line: historical actuals · Blue line: forecast · Dashed grey line: baseline (no uplift) · Shaded area: 95% confidence interval.
         </Typography>
       </CardContent>
     </Card>
