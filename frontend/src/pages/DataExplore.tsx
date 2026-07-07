@@ -12,11 +12,13 @@ import {
   MenuItem,
   Stack,
   TextField,
+  Tooltip,
   Typography,
 } from '@mui/material';
 import InsightsIcon from '@mui/icons-material/Insights';
 import ShowChartIcon from '@mui/icons-material/ShowChart';
 import TimelineIcon from '@mui/icons-material/Timeline';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { PageContainer } from '../components/layout/PageContainer';
 import { DataSummary } from '../components/explore/DataSummary';
 import { TimeSeriesChart } from '../components/explore/TimeSeriesChart';
@@ -24,9 +26,10 @@ import { DistributionChart } from '../components/explore/DistributionChart';
 import { DecompositionChart } from '../components/explore/DecompositionChart';
 import { useStore } from '../store/appStore';
 import { useAnalyze } from '../hooks/useAnalysis';
-import { useFiles } from '../hooks/useFiles';
+import { useFileData, useFiles } from '../hooks/useFiles';
 import { getErrorMessage } from '../services/api';
-import { formatDate, formatNumber } from '../utils/format';
+import { formatNumber } from '../utils/format';
+import { MODEL_DESCRIPTIONS, MODEL_LABELS } from '../types';
 
 const PRESETS = [
   { value: 7, label: '7 days (weekly)' },
@@ -39,67 +42,81 @@ const PRESETS = [
 export function DataExplorePage(): ReactNode {
   const navigate = useNavigate();
   const analysisData = useStore((s) => s.analysisData);
-  const salesFileId = useStore((s) => s.salesFileId);
+  const analysisFileId = useStore((s) => s.analysisFileId);
   const uploadedFiles = useStore((s) => s.uploadedFiles);
+  const setAnalysisData = useStore((s) => s.setAnalysisData);
   const filesQuery = useFiles();
   const analyzeMut = useAnalyze();
   const [error, setError] = useState<string | null>(null);
   const [decompPeriod, setDecompPeriod] = useState<number>(7);
   const [bins, setBins] = useState<number>(25);
 
-  useEffect(() => {
-    if (filesQuery.isError) {
-      setError(getErrorMessage(filesQuery.error));
-    }
-  }, [filesQuery.isError, filesQuery.error]);
-
   const salesFile = useMemo(
     () => uploadedFiles.find((f) => f.type === 'sales') ?? null,
     [uploadedFiles],
   );
+  const fileIdToUse = salesFile?.file_id;
+  const fileDataQuery = useFileData(fileIdToUse);
 
-  const hasAnalysis = Boolean(analysisData);
+  // If we have a file but no analysis, kick one off automatically.
+  useEffect(() => {
+    if (fileIdToUse && !analysisData) {
+      analyzeMut.mutate(fileIdToUse, {
+        onError: (e) => setError(getErrorMessage(e)),
+      });
+    }
+    // If the file changed (new upload) and the cached analysis is for a
+    // different file, clear it so we re-analyze.
+    if (fileIdToUse && analysisFileId && analysisFileId !== fileIdToUse) {
+      setAnalysisData(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fileIdToUse]);
 
-  const dates = useMemo(() => {
-    if (!analysisData) return [];
-    const { min_date, max_date } = analysisData.data_characteristics;
-    if (!min_date || !max_date) return [];
-    return generateDailySeries(min_date, max_date);
-  }, [analysisData]);
-
-  const values = useMemo(() => {
-    if (!analysisData) return [];
-    const { mean, std, trend, seasonality, length, outliers_pct } =
-      analysisData.data_characteristics;
-    if (!length) return [];
-    return synthSeries({
-      length,
-      mean,
-      std,
-      trend,
-      seasonality,
-      outliersPct: outliers_pct,
-      dates,
-    });
-  }, [analysisData, dates]);
+  // Build real series from the file rows
+  const { dates, values } = useMemo(() => {
+    if (!analysisData || !fileDataQuery.data) {
+      return { dates: [] as string[], values: [] as number[] };
+    }
+    const dc = analysisData.validation.date_column || 'date';
+    const vc = analysisData.validation.value_column || 'value';
+    const rows = fileDataQuery.data.rows;
+    const ds: string[] = [];
+    const vs: number[] = [];
+    for (const r of rows) {
+      const rawDate = r[dc];
+      const rawVal = r[vc];
+      if (rawDate == null || rawVal == null) continue;
+      const d = String(rawDate).slice(0, 10);
+      const v = Number(rawVal);
+      if (!Number.isFinite(v)) continue;
+      ds.push(d);
+      vs.push(v);
+    }
+    // Sort by date
+    const pairs = ds.map((d, i) => [d, vs[i]] as const).sort((a, b) => (a[0] < b[0] ? -1 : 1));
+    return {
+      dates: pairs.map((p) => p[0]),
+      values: pairs.map((p) => p[1]),
+    };
+  }, [analysisData, fileDataQuery.data]);
 
   const handleAnalyze = async () => {
-    const target = salesFileId ?? salesFile?.file_id;
-    if (!target) return;
+    if (!fileIdToUse) return;
     setError(null);
     try {
-      await analyzeMut.mutateAsync(target);
+      await analyzeMut.mutateAsync(fileIdToUse);
     } catch (e) {
       setError(getErrorMessage(e));
     }
   };
 
-  if (filesQuery.isLoading) {
+  if (filesQuery.isLoading || (fileIdToUse && fileDataQuery.isLoading)) {
     return (
       <PageContainer title="Explore data">
         <Stack alignItems="center" sx={{ py: 8 }}>
           <CircularProgress />
-          <Typography sx={{ mt: 2 }}>Loading files…</Typography>
+          <Typography sx={{ mt: 2 }}>Loading…</Typography>
         </Stack>
       </PageContainer>
     );
@@ -124,27 +141,30 @@ export function DataExplorePage(): ReactNode {
     );
   }
 
-  if (!hasAnalysis) {
+  // While auto-analyze is running, show progress
+  if (!analysisData) {
     return (
       <PageContainer title="Explore data">
         <Card sx={{ p: 4, textAlign: 'center' }}>
           <ShowChartIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
           <Typography variant="h5" gutterBottom>
-            Analysis required
+            {analyzeMut.isPending ? 'Analyzing your data…' : 'Analysis required'}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-            Run an analysis on your sales file to view interactive charts.
+            {analyzeMut.isPending
+              ? 'Computing characteristics and model recommendations.'
+              : 'Run an analysis on your sales file to view interactive charts.'}
           </Typography>
-          <Button
-            variant="contained"
-            onClick={handleAnalyze}
-            disabled={analyzeMut.isPending}
-            startIcon={
-              analyzeMut.isPending ? <CircularProgress size={16} color="inherit" /> : <InsightsIcon />
-            }
-          >
-            {analyzeMut.isPending ? 'Analyzing…' : 'Analyze now'}
-          </Button>
+          {analyzeMut.isPending && <CircularProgress />}
+          {!analyzeMut.isPending && (
+            <Button
+              variant="contained"
+              onClick={handleAnalyze}
+              disabled={analyzeMut.isPending}
+            >
+              Analyze now
+            </Button>
+          )}
           {error && (
             <Alert severity="error" sx={{ mt: 2 }}>
               {error}
@@ -155,14 +175,14 @@ export function DataExplorePage(): ReactNode {
     );
   }
 
-  const data = analysisData!;
+  const data = analysisData;
+  const totalRowsLoaded = dates.length;
+  const totalRowsAvailable = fileDataQuery.data?.total_rows ?? data.validation.row_count;
 
   const dateRange: [string, string] | null =
     data.data_characteristics.min_date && data.data_characteristics.max_date
       ? [data.data_characteristics.min_date, data.data_characteristics.max_date]
       : null;
-
-  const recommendations = data.model_recommendations;
 
   return (
     <PageContainer
@@ -178,7 +198,7 @@ export function DataExplorePage(): ReactNode {
               analyzeMut.isPending ? <CircularProgress size={16} color="inherit" /> : <InsightsIcon />
             }
           >
-            Re-analyze
+            {analyzeMut.isPending ? 'Analyzing…' : 'Re-analyze'}
           </Button>
           <Button variant="contained" onClick={() => navigate('/forecast')}>
             Configure forecast
@@ -195,7 +215,7 @@ export function DataExplorePage(): ReactNode {
       <Card sx={{ mb: 3 }}>
         <CardContent>
           <Grid container spacing={2} alignItems="center">
-            <Grid item xs={12} md={6}>
+            <Grid item xs={12} md={7}>
               <Stack direction="row" spacing={1.5} alignItems="center">
                 <Box
                   sx={{
@@ -215,19 +235,19 @@ export function DataExplorePage(): ReactNode {
                   <Typography variant="h5">{salesFile.filename}</Typography>
                   <Typography variant="body2" color="text.secondary">
                     {data.validation.date_column} / {data.validation.value_column} ·{' '}
-                    {formatNumber(data.data_characteristics.length)} observations
+                    {formatNumber(totalRowsLoaded)} of {formatNumber(totalRowsAvailable)} observations loaded
                   </Typography>
                 </Box>
               </Stack>
             </Grid>
-            <Grid item xs={12} md={6}>
-              <Stack direction="row" spacing={1.5} justifyContent={{ xs: 'flex-start', md: 'flex-end' }}>
+            <Grid item xs={12} md={5}>
+              <Stack direction="row" spacing={1.5} justifyContent={{ xs: 'flex-start', md: 'flex-end' }} flexWrap="wrap">
                 <Chip
                   label={data.validation.valid ? 'Valid' : 'Has warnings'}
                   color={data.validation.valid ? 'success' : 'warning'}
                   size="small"
                 />
-                {data.validation.warnings.slice(0, 1).map((w, i) => (
+                {data.validation.warnings.slice(0, 2).map((w, i) => (
                   <Chip key={i} label={w} size="small" variant="outlined" color="warning" />
                 ))}
               </Stack>
@@ -242,13 +262,16 @@ export function DataExplorePage(): ReactNode {
           dateRange={dateRange}
           dateColumn={data.validation.date_column}
           valueColumn={data.validation.value_column}
-          totalRows={data.validation.row_count || data.data_characteristics.length}
+          totalRows={totalRowsLoaded}
         />
       </Box>
 
       <Grid container spacing={3} sx={{ mb: 3 }}>
         <Grid item xs={12} lg={8}>
-          <TimeSeriesChart data={values.map((v, i) => ({ date: dates[i] ?? '', value: v }))} title="Sales over time" />
+          <TimeSeriesChart
+            data={values.map((v, i) => ({ date: dates[i] ?? '', value: v }))}
+            title="Sales over time"
+          />
         </Grid>
         <Grid item xs={12} lg={4}>
           <Card sx={{ height: '100%' }}>
@@ -313,100 +336,58 @@ export function DataExplorePage(): ReactNode {
         </CardContent>
       </Card>
 
-      {recommendations.length > 0 && (
-        <Card>
-          <CardContent>
-            <Typography variant="h5" sx={{ mb: 2 }}>
-              Recommended models
-            </Typography>
-            <Grid container spacing={2}>
-              {recommendations.map((r) => (
-                <Grid key={r.model} item xs={12} sm={6} md={4}>
-                  <Box
-                    sx={{
-                      p: 2,
-                      borderRadius: 1.5,
-                      border: '1px solid',
-                      borderColor: 'divider',
-                      height: '100%',
-                    }}
-                  >
-                    <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 0.5 }}>
-                      <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-                        {r.model.toUpperCase()}
-                      </Typography>
-                      <Chip
-                        label={`Score ${(r.score * 100).toFixed(0)}%`}
-                        color="primary"
-                        size="small"
-                      />
-                    </Stack>
-                    <Typography variant="body2" color="text.secondary">
-                      {r.reason}
+      <Card sx={{ mb: 3 }}>
+        <CardContent>
+          <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2 }}>
+            <Typography variant="h5">Recommended models</Typography>
+            <Tooltip title="These recommendations are derived from the detected data characteristics: trend, seasonality, stationarity, and coefficient of variation.">
+              <InfoOutlinedIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
+            </Tooltip>
+          </Stack>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Based on {formatNumber(data.data_characteristics.length)} observations ·{' '}
+            trend: <b>{data.data_characteristics.trend}</b> ·{' '}
+            seasonality: <b>{data.data_characteristics.seasonality}</b> ·{' '}
+            CV: <b>{data.data_characteristics.cv.toFixed(2)}</b>
+          </Typography>
+          <Grid container spacing={2}>
+            {data.model_recommendations.map((r) => (
+              <Grid key={r.model} item xs={12} sm={6} md={4}>
+                <Box
+                  sx={{
+                    p: 2,
+                    borderRadius: 1.5,
+                    border: '1px solid',
+                    borderColor: r.model === data.model_recommendations[0]?.model ? 'primary.main' : 'divider',
+                    borderWidth: r.model === data.model_recommendations[0]?.model ? 2 : 1,
+                    height: '100%',
+                    bgcolor: r.model === data.model_recommendations[0]?.model ? 'primary.lighter' : 'transparent',
+                  }}
+                >
+                  <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 0.5 }}>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                      {MODEL_LABELS[r.model] ?? r.model.toUpperCase()}
                     </Typography>
-                  </Box>
-                </Grid>
-              ))}
-            </Grid>
-          </CardContent>
-        </Card>
-      )}
-
-      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 3 }}>
-        Charts are derived from analysis metadata (mean, std, trend, seasonality, frequency). For exact
-        values, re-run the analysis. Generated {formatDate(new Date().toISOString(), true)}.
-      </Typography>
+                    <Chip
+                      label={`Score ${(r.score * 100).toFixed(0)}%`}
+                      color="primary"
+                      size="small"
+                    />
+                  </Stack>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                    {r.reason}
+                  </Typography>
+                  {MODEL_DESCRIPTIONS[r.model] && (
+                    <Typography variant="caption" color="text.disabled">
+                      {MODEL_DESCRIPTIONS[r.model]}
+                    </Typography>
+                  )}
+                </Box>
+              </Grid>
+            ))}
+          </Grid>
+        </CardContent>
+      </Card>
     </PageContainer>
   );
-}
-
-function generateDailySeries(start: string, end: string): string[] {
-  const result: string[] = [];
-  const s = new Date(start);
-  const e = new Date(end);
-  if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return result;
-  const cur = new Date(s);
-  while (cur <= e) {
-    result.push(cur.toISOString().slice(0, 10));
-    cur.setDate(cur.getDate() + 1);
-  }
-  return result;
-}
-
-interface SynthArgs {
-  length: number;
-  mean: number;
-  std: number;
-  trend: 'increasing' | 'decreasing' | 'flat' | string;
-  seasonality: 'daily' | 'weekly' | 'monthly' | 'yearly' | 'none' | string;
-  outliersPct: number;
-  dates: string[];
-}
-
-function synthSeries({ length, mean, std, trend, seasonality, outliersPct, dates }: SynthArgs): number[] {
-  const n = Math.max(1, length);
-  const series: number[] = new Array(n);
-  const trendSlope = trend === 'increasing' ? 0.05 : trend === 'decreasing' ? -0.05 : 0;
-  const seasonalStrength = seasonality === 'none' ? 0 : 0.2;
-  const period = seasonality === 'weekly' ? 7 : seasonality === 'monthly' ? 30 : seasonality === 'yearly' ? 365 : 7;
-  for (let i = 0; i < n; i += 1) {
-    const trendComponent = trendSlope * i;
-    const seasonalComponent =
-      seasonalStrength * mean * Math.sin((2 * Math.PI * i) / period);
-    const noise = (pseudoRandom(i) - 0.5) * 2 * std * 0.6;
-    let v = mean + trendComponent + seasonalComponent + noise;
-    if (outliersPct > 0 && pseudoRandom(i + 999) < outliersPct) {
-      v += (pseudoRandom(i + 1234) > 0.5 ? 1 : -1) * std * 3;
-    }
-    series[i] = Math.max(0, v);
-  }
-  if (dates.length && dates.length !== n) {
-    return series.slice(0, dates.length);
-  }
-  return series;
-}
-
-function pseudoRandom(seed: number): number {
-  const x = Math.sin(seed * 12.9898) * 43758.5453;
-  return x - Math.floor(x);
 }

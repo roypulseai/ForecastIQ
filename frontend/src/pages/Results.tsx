@@ -32,6 +32,7 @@ import { ExportButton } from '../components/results/ExportButton';
 import { MetricsCards } from '../components/results/MetricsCards';
 import { useDeleteForecast, useForecastList } from '../hooks/useForecast';
 import { useForecastResult } from '../hooks/useForecastResults';
+import { useFileData, useFiles } from '../hooks/useFiles';
 import { useStore } from '../store/appStore';
 import { getErrorMessage } from '../services/api';
 import { formatDate } from '../utils/format';
@@ -43,12 +44,41 @@ export function ResultsPage(): ReactNode {
   const setCurrentForecastId = useStore((s) => s.setCurrentForecastId);
   const forecasts = useStore((s) => s.forecasts);
   const listQuery = useForecastList();
+  const filesQuery = useFiles();
   const resultQuery = useForecastResult(currentForecastId);
   const deleteMut = useDeleteForecast();
   const [tab, setTab] = useState(0);
   const [selectedModel, setSelectedModel] = useState<string>('__ensemble__');
   const [showBaseline, setShowBaseline] = useState<boolean>(true);
+  const [showActuals, setShowActuals] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Find the sales file used by the current forecast
+  const salesFile = useMemo(() => {
+    if (!filesQuery.data) return null;
+    return filesQuery.data.find((f) => f.type === 'sales') ?? null;
+  }, [filesQuery.data]);
+  const fileDataQuery = useFileData(salesFile?.file_id, 5000);
+
+  // Compute historical actuals for the chart. The forecast detail includes
+  // request.target_column / request.date_column, so we know what to pull.
+  const actuals = useMemo(() => {
+    if (!fileDataQuery.data || !resultQuery.data) return [] as Array<{ date: string; value: number }>;
+    const dc = resultQuery.data.request.date_column || 'date';
+    const vc = resultQuery.data.request.target_column || 'value';
+    const out: Array<{ date: string; value: number }> = [];
+    for (const r of fileDataQuery.data.rows) {
+      const rawDate = r[dc];
+      const rawVal = r[vc];
+      if (rawDate == null || rawVal == null) continue;
+      const d = String(rawDate).slice(0, 10);
+      const v = Number(rawVal);
+      if (!Number.isFinite(v)) continue;
+      out.push({ date: d, value: v });
+    }
+    out.sort((a, b) => (a.date < b.date ? -1 : 1));
+    return out;
+  }, [fileDataQuery.data, resultQuery.data]);
 
   useEffect(() => {
     if (listQuery.isError) setError(getErrorMessage(listQuery.error));
@@ -260,6 +290,9 @@ export function ResultsPage(): ReactNode {
                     onModelChange={setSelectedModel}
                     showBaseline={showBaseline}
                     onShowBaselineChange={setShowBaseline}
+                    actuals={actuals}
+                    showActuals={showActuals}
+                    onShowActualsChange={setShowActuals}
                   />
                 </Stack>
               )}

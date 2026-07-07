@@ -1,19 +1,25 @@
 import { useMemo, type ReactNode } from 'react';
-import { Box, Card, CardContent, MenuItem, Stack, TextField, Typography } from '@mui/material';
+import { Box, Card, CardContent, MenuItem, Stack, Switch, FormControlLabel, TextField, Typography } from '@mui/material';
 import {
   Area,
   CartesianGrid,
   ComposedChart,
   Legend,
   Line,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts';
-import { alpha, useTheme } from '@mui/material/styles';
+import { useTheme } from '@mui/material/styles';
 import type { ForecastDetail, ForecastValue, ModelResult } from '../../types';
 import { formatNumber, formatShortDate } from '../../utils/format';
+
+export interface ActualPoint {
+  date: string;
+  value: number;
+}
 
 interface ForecastChartProps {
   detail: ForecastDetail;
@@ -21,14 +27,18 @@ interface ForecastChartProps {
   onModelChange: (model: string) => void;
   showBaseline: boolean;
   onShowBaselineChange: (show: boolean) => void;
+  actuals?: ActualPoint[];
+  showActuals?: boolean;
+  onShowActualsChange?: (show: boolean) => void;
 }
 
 interface ChartPoint {
   date: string;
-  forecast: number;
-  lower: number;
-  upper: number;
+  forecast: number | null;
+  lower: number | null;
+  upper: number | null;
   baseline: number | null;
+  actual: number | null;
 }
 
 function valuesToPoints(values: ForecastValue[]): ChartPoint[] {
@@ -38,6 +48,18 @@ function valuesToPoints(values: ForecastValue[]): ChartPoint[] {
     lower: v.lower_ci,
     upper: v.upper_ci,
     baseline: v.baseline ?? null,
+    actual: null,
+  }));
+}
+
+function actualsToPoints(actuals: ActualPoint[]): ChartPoint[] {
+  return actuals.map((a) => ({
+    date: a.date,
+    forecast: null,
+    lower: null,
+    upper: null,
+    baseline: null,
+    actual: a.value,
   }));
 }
 
@@ -58,32 +80,64 @@ export function ForecastChart({
   selectedModel,
   onModelChange,
   showBaseline,
+  actuals = [],
+  showActuals = true,
+  onShowActualsChange,
 }: ForecastChartProps): ReactNode {
   const theme = useTheme();
 
   const isEnsemble = selectedModel === '__ensemble__';
-  const data: ChartPoint[] = useMemo(() => {
-    if (isEnsemble && detail.ensemble) {
-      return valuesToPoints(detail.ensemble.forecast_values);
-    }
-    const found = Object.values(detail.results).find(
-      (r) => r.model_name === selectedModel,
-    );
-    if (!found) return [];
-    return valuesToPoints(found.forecast_values);
-  }, [detail, isEnsemble, selectedModel]);
 
-  const baselineData = useMemo(() => {
-    if (!showBaseline) return null;
-    if (isEnsemble && detail.ensemble?.baseline_values) {
-      return valuesToPoints(detail.ensemble.baseline_values);
+  // Build the merged series: actuals first, then forecast points.
+  // We merge on date so a single ComposedChart can show them together.
+  const data: ChartPoint[] = useMemo(() => {
+    const byDate = new Map<string, ChartPoint>();
+    if (showActuals) {
+      for (const p of actualsToPoints(actuals)) {
+        byDate.set(p.date, p);
+      }
     }
-    const found = Object.values(detail.results).find(
-      (r) => r.model_name === selectedModel,
-    );
-    if (found?.baseline_values) return valuesToPoints(found.baseline_values);
-    return null;
-  }, [detail, isEnsemble, selectedModel, showBaseline]);
+    const forecastValues = (() => {
+      if (isEnsemble && detail.ensemble) return detail.ensemble.forecast_values;
+      const found = Object.values(detail.results).find(
+        (r) => r.model_name === selectedModel,
+      );
+      return found?.forecast_values ?? [];
+    })();
+    for (const p of valuesToPoints(forecastValues)) {
+      const existing = byDate.get(p.date);
+      if (existing) {
+        byDate.set(p.date, { ...existing, ...p, actual: existing.actual });
+      } else {
+        byDate.set(p.date, p);
+      }
+    }
+    return Array.from(byDate.values()).sort((a, b) => (a.date < b.date ? -1 : 1));
+  }, [actuals, showActuals, isEnsemble, detail, selectedModel]);
+
+  const baselineData: ChartPoint[] | null = useMemo(() => {
+    if (!showBaseline) return null;
+    let values: ForecastValue[] | null = null;
+    if (isEnsemble && detail.ensemble?.baseline_values) values = detail.ensemble.baseline_values;
+    else {
+      const found = Object.values(detail.results).find(
+        (r) => r.model_name === selectedModel,
+      );
+      if (found?.baseline_values) values = found.baseline_values;
+    }
+    if (!values) return null;
+    return values.map((v) => ({
+      date: v.date,
+      forecast: null,
+      lower: null,
+      upper: null,
+      baseline: v.forecast,
+      actual: null,
+    }));
+  }, [showBaseline, isEnsemble, detail, selectedModel]);
+
+  // Reference line at the boundary between actuals and forecast
+  const boundary = actuals.length > 0 ? actuals[actuals.length - 1].date : null;
 
   const options = modelOptions(detail);
 
@@ -103,7 +157,17 @@ export function ForecastChart({
               {detail.name} · horizon {detail.request.horizon} · frequency {detail.request.frequency}
             </Typography>
           </Box>
-          <Stack direction="row" spacing={1.5} alignItems="center">
+          <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap">
+            <FormControlLabel
+              control={
+                <Switch
+                  size="small"
+                  checked={showActuals}
+                  onChange={(_, c) => onShowActualsChange?.(c)}
+                />
+              }
+              label="Actuals"
+            />
             <TextField
               select
               size="small"
@@ -150,9 +214,20 @@ export function ForecastChart({
                   fontSize: 12,
                 }}
                 labelFormatter={(label: string) => formatShortDate(label)}
-                formatter={(value: number, name: string) => [formatNumber(value, 2), name]}
+                formatter={(value, name) => {
+                  const v = typeof value === 'number' ? value : Number(value);
+                  return Number.isFinite(v) ? [formatNumber(v, 2), name] : ['—', name];
+                }}
               />
               <Legend />
+              {boundary && (
+                <ReferenceLine
+                  x={boundary}
+                  stroke={theme.palette.text.disabled}
+                  strokeDasharray="3 3"
+                  label={{ value: 'Forecast start', position: 'top', fontSize: 10, fill: theme.palette.text.secondary }}
+                />
+              )}
               <Area
                 type="monotone"
                 dataKey="upper"
@@ -160,6 +235,7 @@ export function ForecastChart({
                 fill="url(#ciFill)"
                 name="Upper CI"
                 legendType="none"
+                connectNulls
               />
               <Area
                 type="monotone"
@@ -168,7 +244,19 @@ export function ForecastChart({
                 fill={theme.palette.background.paper}
                 name="Lower CI"
                 legendType="none"
+                connectNulls
               />
+              {showActuals && (
+                <Line
+                  type="monotone"
+                  dataKey="actual"
+                  stroke={theme.palette.text.primary}
+                  strokeWidth={2}
+                  dot={false}
+                  name="Actuals"
+                  connectNulls
+                />
+              )}
               <Line
                 type="monotone"
                 dataKey="forecast"
@@ -176,11 +264,13 @@ export function ForecastChart({
                 strokeWidth={2.5}
                 dot={false}
                 name="Forecast"
+                connectNulls
               />
               {baselineData && (
                 <Line
                   type="monotone"
                   dataKey="baseline"
+                  data={baselineData}
                   stroke={theme.palette.text.secondary}
                   strokeWidth={1.5}
                   strokeDasharray="4 4"
@@ -192,14 +282,13 @@ export function ForecastChart({
             </ComposedChart>
           </ResponsiveContainer>
         </Box>
-        {showBaseline && !baselineData && (
+        {showBaseline && baselineData === null && (
           <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
             Note: baseline not available for this model.
           </Typography>
         )}
         <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-          Shaded area: 95% confidence interval · {alpha(theme.palette.primary.main, 0.18)} →{' '}
-          {alpha(theme.palette.primary.main, 0.04)}
+          Black line: historical actuals · Blue line: forecast · Shaded area: 95% confidence interval.
         </Typography>
       </CardContent>
     </Card>

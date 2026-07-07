@@ -32,6 +32,7 @@ import { useStore } from '../store/appStore';
 import { getErrorMessage } from '../services/api';
 import {
   FILE_TYPE_LABELS,
+  MODEL_LABELS,
   type AggregationConfig,
   type FileType,
   type Frequency,
@@ -127,10 +128,22 @@ export function ForecastPage(): ReactNode {
 
   const dateColumn = analysisData?.validation.date_column ?? 'date';
   const valueColumn = analysisData?.validation.value_column ?? 'value';
+  const salesFile = uploadedFiles.find((f) => f.type === 'sales');
+  // Pull real columns from the file metadata. If the file's `columns` is empty
+  // (older uploads), try the analysis validation's column names.
   const columns = useMemo(() => {
-    const sales = uploadedFiles.find((f) => f.type === 'sales');
-    return sales?.columns ?? [];
-  }, [uploadedFiles]);
+    const fromFile = salesFile?.columns ?? [];
+    if (fromFile.length > 0) return fromFile;
+    // Fall back to deriving columns from the analysis — at minimum we have
+    // date_column and value_column.
+    const fallback: string[] = [];
+    if (analysisData?.validation.date_column) fallback.push(analysisData.validation.date_column);
+    if (analysisData?.validation.value_column) fallback.push(analysisData.validation.value_column);
+    if (analysisData?.validation.extra_columns?.length) {
+      fallback.push(...analysisData.validation.extra_columns);
+    }
+    return fallback;
+  }, [salesFile, analysisData]);
 
   const [request, setRequest] = useState<ForecastRequest>(() => initialRequest(dateColumn, valueColumn));
   const [external, setExternal] = useState<ExternalState>(initialExternal);
@@ -308,9 +321,17 @@ export function ForecastPage(): ReactNode {
                     label="Date column"
                     value={request.date_column}
                     onChange={(e) => update('date_column', e.target.value)}
-                    disabled={!columns.length}
-                    helperText={columns.length ? `${columns.length} columns available` : 'no columns detected'}
+                    helperText={
+                      columns.length
+                        ? `${columns.length} columns available · picked from analysis`
+                        : 'no columns detected — re-upload your file'
+                    }
                   >
+                    {columns.length === 0 && (
+                      <MenuItem value={request.date_column} disabled>
+                        {request.date_column}
+                      </MenuItem>
+                    )}
                     {columns.map((c) => (
                       <MenuItem key={c} value={c}>
                         {c}
@@ -325,9 +346,17 @@ export function ForecastPage(): ReactNode {
                     label="Target column"
                     value={request.target_column}
                     onChange={(e) => update('target_column', e.target.value)}
-                    disabled={!columns.length}
-                    helperText={columns.length ? `${columns.length} columns available` : 'no columns detected'}
+                    helperText={
+                      columns.length
+                        ? `${columns.length} columns available · picked from analysis`
+                        : 'no columns detected — re-upload your file'
+                    }
                   >
+                    {columns.length === 0 && (
+                      <MenuItem value={request.target_column} disabled>
+                        {request.target_column}
+                      </MenuItem>
+                    )}
                     {columns.map((c) => (
                       <MenuItem key={c} value={c}>
                         {c}
@@ -371,6 +400,30 @@ export function ForecastPage(): ReactNode {
                 onChange={(m) => update('models', m)}
                 recommended={recommendations}
               />
+              {analysisData.model_recommendations.length > 0 && (
+                <Box
+                  sx={{
+                    mt: 2,
+                    p: 2,
+                    borderRadius: 1.5,
+                    border: '1px dashed',
+                    borderColor: 'divider',
+                    bgcolor: 'background.default',
+                  }}
+                >
+                  <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary' }}>
+                    Why these models?
+                  </Typography>
+                  <Stack spacing={0.5} sx={{ mt: 0.5 }}>
+                    {analysisData.model_recommendations.map((rec) => (
+                      <Typography key={rec.model} variant="caption" color="text.secondary">
+                        • <b>{MODEL_LABELS[rec.model] ?? rec.model.toUpperCase()}</b> —{' '}
+                        {rec.reason} (score {(rec.score * 100).toFixed(0)}%)
+                      </Typography>
+                    ))}
+                  </Stack>
+                </Box>
+              )}
               {useEnsemble && (
                 <Box sx={{ mt: 3 }}>
                   <Divider sx={{ mb: 2 }} />

@@ -5,9 +5,9 @@ import os
 import shutil
 import tempfile
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 
 from ...core.config import settings
 from ...core.storage import FileMetadataStore
@@ -130,6 +130,41 @@ async def get_file(file_id: str) -> Dict[str, Any]:
     if not entry:
         raise HTTPException(status_code=404, detail="File not found")
     return to_python(entry)
+
+
+@router.get("/upload/files/{file_id}/data")
+async def get_file_data(
+    file_id: str,
+    limit: int = Query(5000, ge=1, le=50000, description="Max rows to return"),
+    offset: int = Query(0, ge=0, description="Rows to skip"),
+) -> Dict[str, Any]:
+    """Return the actual rows of a file for visualization / exploration.
+
+    Defaults to 5000 rows max to keep responses fast. Use offset/limit
+    pagination for larger files.
+    """
+    entry = storage.get_file(file_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="File not found")
+    df = storage.get_dataframe(file_id)
+    if df is None or df.empty:
+        raise HTTPException(status_code=404, detail="File data is empty or missing")
+    total = len(df)
+    # Apply pagination
+    page = df.iloc[offset:offset + limit]
+    # Records: list of {col: value} dicts with numpy -> python conversion
+    records: List[Dict[str, Any]] = []
+    for _, row in page.iterrows():
+        records.append({c: to_python(row[c]) for c in page.columns})
+    return to_python({
+        "file_id": file_id,
+        "columns": [str(c) for c in df.columns],
+        "rows": records,
+        "total_rows": int(total),
+        "returned_rows": int(len(records)),
+        "offset": int(offset),
+        "limit": int(limit),
+    })
 
 
 @router.delete("/upload/files/{file_id}")

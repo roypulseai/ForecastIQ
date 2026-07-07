@@ -4,6 +4,8 @@ import { useStore } from '../store/appStore';
 import type { FileType, UploadedFile } from '../types';
 
 export const filesQueryKey = ['files'] as const;
+export const fileDataQueryKey = (fileId: string | null | undefined) =>
+  ['fileData', fileId] as const;
 
 export function useFiles() {
   const setFiles = useStore((s) => s.setUploadedFiles);
@@ -15,6 +17,22 @@ export function useFiles() {
       return res.items;
     },
     staleTime: 30_000,
+  });
+}
+
+/**
+ * Fetch the actual rows of a file. Defaults to 5000 rows (max). For
+ * longer histories, pass `limit` and use `offset` for pagination.
+ */
+export function useFileData(fileId: string | null | undefined, limit = 5000) {
+  return useQuery({
+    queryKey: fileId ? fileDataQueryKey(fileId) : ['fileData', 'none'],
+    queryFn: async () => {
+      if (!fileId) return null;
+      return apiClient.getFileData(fileId, limit);
+    },
+    enabled: !!fileId,
+    staleTime: 60_000,
   });
 }
 

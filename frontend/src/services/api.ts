@@ -53,6 +53,25 @@ export const apiClient = {
     return res.data;
   },
 
+  async getFileData(
+    fileId: string,
+    limit = 5000,
+    offset = 0,
+  ): Promise<{
+    file_id: string;
+    columns: string[];
+    rows: Array<Record<string, unknown>>;
+    total_rows: number;
+    returned_rows: number;
+    offset: number;
+    limit: number;
+  }> {
+    const res = await api.get(`/upload/files/${fileId}/data`, {
+      params: { limit, offset },
+    });
+    return res.data;
+  },
+
   async analyze(fileId: string): Promise<AnalysisResponse> {
     const res = await api.post<AnalysisResponse>('/analyze', null, {
       params: { file_id: fileId },
