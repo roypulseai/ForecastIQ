@@ -70,7 +70,7 @@ export function formatShortDate(value: string | Date | null | undefined): string
   if (!value) return '—';
   const d = typeof value === 'string' ? new Date(value) : value;
   if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
+  return d.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: '2-digit' });
 }
 
 export function formatMetric(metric: string, value: number | null | undefined): string {

@@ -56,7 +56,7 @@ export function DataExplorePage(): ReactNode {
     [uploadedFiles],
   );
   const fileIdToUse = salesFile?.file_id;
-  const fileDataQuery = useFileData(fileIdToUse);
+  const fileDataQuery = useFileData(fileIdToUse, 50000);
 
   // If we have a file but no analysis, kick one off automatically.
   useEffect(() => {
