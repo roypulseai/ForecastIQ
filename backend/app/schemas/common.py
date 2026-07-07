@@ -97,6 +97,7 @@ class ValidationResult(BaseModel):
     row_count: int = 0
     frequency: Optional[str] = None
     extra_columns: List[str] = Field(default_factory=list)
+    column_types: Dict[str, str] = Field(default_factory=dict)
 
 
 class DataCharacteristics(BaseModel):

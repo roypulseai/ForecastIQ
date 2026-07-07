@@ -188,6 +188,36 @@ export function ForecastPage(): ReactNode {
     return fallback;
   }, [salesFile, analysisData]);
 
+  // Column type detection — frontend gets the same types the backend inferred
+  const columnTypes = analysisData?.validation.column_types ?? {};
+  const typeColor = (t: string) => {
+    switch (t) {
+      case 'date': return 'primary';
+      case 'numeric': return 'success';
+      case 'region': return 'warning';
+      case 'boolean': return 'info';
+      default: return 'default';
+    }
+  };
+  const sortedForDate = useMemo(
+    () => [...columns].sort((a, b) => {
+      const ta = columnTypes[a]; const tb = columnTypes[b];
+      if (ta === 'date' && tb !== 'date') return -1;
+      if (ta !== 'date' && tb === 'date') return 1;
+      return a.localeCompare(b);
+    }),
+    [columns, columnTypes],
+  );
+  const sortedForTarget = useMemo(
+    () => [...columns].sort((a, b) => {
+      const ta = columnTypes[a]; const tb = columnTypes[b];
+      if (ta === 'numeric' && tb !== 'numeric') return -1;
+      if (ta !== 'numeric' && tb === 'numeric') return 1;
+      return a.localeCompare(b);
+    }),
+    [columns, columnTypes],
+  );
+
   const [request, setRequest] = useState<ForecastRequest>(() => initialRequest(dateColumn, valueColumn));
   const [external, setExternal] = useState<ExternalState>(initialExternal);
   const [useEnsemble, setUseEnsemble] = useState<boolean>(false);
@@ -491,7 +521,7 @@ export function ForecastPage(): ReactNode {
                     onChange={(e) => update('date_column', e.target.value)}
                     helperText={
                       columns.length
-                        ? `${columns.length} columns available · picked from analysis`
+                        ? `${columns.length} columns · date columns shown first`
                         : 'no columns detected — re-upload your file'
                     }
                   >
@@ -500,9 +530,12 @@ export function ForecastPage(): ReactNode {
                         {request.date_column}
                       </MenuItem>
                     )}
-                    {columns.map((c) => (
+                    {sortedForDate.map((c) => (
                       <MenuItem key={c} value={c}>
-                        {c}
+                        <Stack direction="row" alignItems="center" spacing={1}>
+                          <Typography variant="body2">{c}</Typography>
+                          <Chip label={columnTypes[c] || '?'} size="small" color={typeColor(columnTypes[c] || '')} variant="outlined" sx={{ height: 18, fontSize: 10 }} />
+                        </Stack>
                       </MenuItem>
                     ))}
                   </TextField>
@@ -516,7 +549,7 @@ export function ForecastPage(): ReactNode {
                     onChange={(e) => update('target_column', e.target.value)}
                     helperText={
                       columns.length
-                        ? `${columns.length} columns available · picked from analysis`
+                        ? `${columns.length} columns · numeric columns shown first`
                         : 'no columns detected — re-upload your file'
                     }
                   >
@@ -525,9 +558,12 @@ export function ForecastPage(): ReactNode {
                         {request.target_column}
                       </MenuItem>
                     )}
-                    {columns.map((c) => (
+                    {sortedForTarget.map((c) => (
                       <MenuItem key={c} value={c}>
-                        {c}
+                        <Stack direction="row" alignItems="center" spacing={1}>
+                          <Typography variant="body2">{c}</Typography>
+                          <Chip label={columnTypes[c] || '?'} size="small" color={typeColor(columnTypes[c] || '')} variant="outlined" sx={{ height: 18, fontSize: 10 }} />
+                        </Stack>
                       </MenuItem>
                     ))}
                   </TextField>

@@ -70,6 +70,7 @@ async def _analyze_file(
             row_count=validation["row_count"],
             frequency=validation.get("frequency"),
             extra_columns=validation.get("extra_columns", []),
+            column_types=validation.get("column_types", {}),
         ),
         "data_characteristics": DataCharacteristics(**characteristics),
         "model_recommendations": [ModelRecommendation(**r) for r in recommendations],

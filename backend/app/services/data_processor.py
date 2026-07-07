@@ -165,6 +165,57 @@ def _coerce_numeric(s: pd.Series) -> pd.Series:
 
 
 # --------------------------------------------------------------------------- #
+# Column type inference
+# --------------------------------------------------------------------------- #
+
+REGION_ALIASES = {
+    "region", "state", "city", "country", "store", "location", "area",
+    "zone", "branch", "warehouse", "site", "territory", "district",
+    "province", "county", "office", "department", "division",
+}
+
+ID_ALIASES = {
+    "id", "sku", "upc", "code", "key", "product", "item", "article",
+    "part", "catalog", "identifier", "account", "order", "invoice",
+}
+
+
+def _infer_column_types(df: pd.DataFrame) -> Dict[str, str]:
+    """Classify each column as date/numeric/region/categorical/id/text/boolean."""
+    types: Dict[str, str] = {}
+    date_col = _find_date_column(df, DATE_ALIASES)
+    for c in df.columns:
+        if date_col and c == date_col:
+            types[c] = "date"
+        elif pd.api.types.is_bool_dtype(df[c]):
+            types[c] = "boolean"
+        elif pd.api.types.is_numeric_dtype(df[c]):
+            types[c] = "numeric"
+        elif pd.api.types.is_datetime64_any_dtype(df[c]):
+            types[c] = "date"
+        else:
+            # string / object columns
+            try:
+                nunique = df[c].nunique()
+                total = len(df)
+                normalized = _normalize_col(c)
+            except Exception:
+                types[c] = "text"
+                continue
+
+            # Check ID/region aliases first
+            if any(a in normalized for a in ID_ALIASES):
+                types[c] = "id"
+            elif any(a in normalized for a in REGION_ALIASES):
+                types[c] = "region"
+            elif nunique < max(2, total * 0.2):
+                types[c] = "categorical"
+            else:
+                types[c] = "text"
+    return types
+
+
+# --------------------------------------------------------------------------- #
 # Main processor
 # --------------------------------------------------------------------------- #
 
@@ -619,6 +670,7 @@ class DataProcessor:
             "row_count": int(len(df)),
             "frequency": frequency,
             "extra_columns": extra_cols,
+            "column_types": _infer_column_types(df),
         }
 
     # ----------------------------------------------------- time features

@@ -68,6 +68,7 @@ export interface ValidationResult {
   row_count: number;
   frequency: string | null;
   extra_columns: string[];
+  column_types: Record<string, string>;
 }
 
 export interface DataCharacteristics {
