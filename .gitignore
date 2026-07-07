@@ -16,8 +16,12 @@ node_modules/
 *.log
 uploads/
 outputs/
+data/
 .env
 .vscode/
 .idea/
 *.swp
 *.swo
+*.pid
+backend.log
+frontend.log
