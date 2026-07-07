@@ -61,6 +61,31 @@ class ModelType(str, Enum):
     ENSEMBLE = "ensemble"
 
 
+class BusinessType(str, Enum):
+    """Industry / business domain — influences model selection and defaults."""
+    RETAIL = "retail"
+    ECOMMERCE = "ecommerce"
+    SAAS = "saas"
+    MANUFACTURING = "manufacturing"
+    SUPPLY_CHAIN = "supply_chain"
+    FINANCE = "finance"
+    HEALTHCARE = "healthcare"
+    ENERGY = "energy"
+    HOSPITALITY = "hospitality"
+    MEDIA = "media"
+    OTHER = "other"
+
+
+class BusinessStage(str, Enum):
+    """Growth stage — affects trend handling and uncertainty modelling."""
+    HYPER_GROWTH = "hyper_growth"
+    GROWTH = "growth"
+    MATURE = "mature"
+    DECLINING = "declining"
+    SEASONAL = "seasonal"
+    VOLATILE = "volatile"
+
+
 class FileType(str, Enum):
     SALES = "sales"
     MEDIA_PLAN = "media_plan"
@@ -100,6 +125,37 @@ class ValidationResult(BaseModel):
     column_types: Dict[str, str] = Field(default_factory=dict)
 
 
+class Insight(BaseModel):
+    type: str  # "info" | "warning" | "success"
+    text: str
+
+
+class OrderRecommendation(BaseModel):
+    p: int = 1
+    d: int = 0
+    q: int = 1
+
+
+class SeasonalOrderRecommendation(BaseModel):
+    p: int = 1
+    d: int = 0
+    q: int = 1
+    s: int = 7
+
+
+class PDQRecommendation(BaseModel):
+    order: OrderRecommendation
+    seasonal_order: Optional[SeasonalOrderRecommendation] = None
+    reason: str = ""
+
+
+class LagAnalysisResult(BaseModel):
+    lag: int = 0
+    correlation: Optional[float] = None
+    strength: str = ""  # "strong" | "moderate" | "weak"
+    message: str = ""
+
+
 class DataCharacteristics(BaseModel):
     length: int
     mean: float
@@ -112,6 +168,8 @@ class DataCharacteristics(BaseModel):
     missing_pct: float
     min_date: Optional[str] = None
     max_date: Optional[str] = None
+    pdq_recommendation: Optional[PDQRecommendation] = None
+    insights: List[Insight] = Field(default_factory=list)
 
 
 class ModelRecommendation(BaseModel):

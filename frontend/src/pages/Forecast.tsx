@@ -39,9 +39,13 @@ import { useSavedModels, useForecastWithSavedModel } from '../hooks/useModels';
 import { useStore } from '../store/appStore';
 import { apiClient, getErrorMessage } from '../services/api';
 import {
+  BUSINESS_STAGE_LABELS,
+  BUSINESS_TYPE_LABELS,
   FILE_TYPE_LABELS,
   MODEL_LABELS,
   type AggregationConfig,
+  type BusinessStage,
+  type BusinessType,
   type FileType,
   type Frequency,
   type ForecastRequest,
@@ -743,6 +747,46 @@ export function ForecastPage(): ReactNode {
                 Enable to feed additional signals to models that support exogenous regressors (SARIMAX, LightGBM, XGBoost).
               </Typography>
               <ExternalFactors files={uploadedFiles} values={external} onChange={setExternal} />
+            </CardContent>
+          </Card>
+
+          {/* Business context card */}
+          <Card sx={{ mb: 3 }}>
+            <CardContent>
+              <Typography variant="h5" sx={{ mb: 1 }}>3b. Business context</Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Helps the system recommend the right models and defaults for your industry and growth stage.
+              </Typography>
+              <Grid container spacing={2}>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    select
+                    label="Industry / Business type"
+                    value={request.business_type ?? ''}
+                    onChange={(e) => update('business_type', (e.target.value || null) as BusinessType | null)}
+                  >
+                    <MenuItem value=""><em>Auto (not specified)</em></MenuItem>
+                    {Object.entries(BUSINESS_TYPE_LABELS).map(([k, v]) => (
+                      <MenuItem key={k} value={k}>{v}</MenuItem>
+                    ))}
+                  </TextField>
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    select
+                    label="Growth stage"
+                    value={request.business_stage ?? ''}
+                    onChange={(e) => update('business_stage', (e.target.value || null) as BusinessStage | null)}
+                  >
+                    <MenuItem value=""><em>Auto (not specified)</em></MenuItem>
+                    {Object.entries(BUSINESS_STAGE_LABELS).map(([k, v]) => (
+                      <MenuItem key={k} value={k}>{v}</MenuItem>
+                    ))}
+                  </TextField>
+                </Grid>
+              </Grid>
             </CardContent>
           </Card>
 

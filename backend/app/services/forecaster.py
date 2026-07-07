@@ -576,7 +576,10 @@ class ForecasterService:
             rankings = _build_rankings_from_test(test_metrics_per_model, cv_results)
         best_model: Optional[str] = rankings[0]["model"] if rankings else None
         summary = _build_summary(per_model, ensemble_result, horizon)
-        external = _build_external_analysis(exog_data, per_model)
+        external = _build_external_analysis(
+            exog_data, per_model,
+            sales_df=sales_df, date_col=date_col, value_col=value_col,
+        )
 
         # Backtest overlap: trim forecast to drop the last `backtest_overlap`
         # rows so the forecast vs actuals comparison is clean in the chart.
@@ -1027,12 +1030,33 @@ def _build_summary(
 def _build_external_analysis(
     exog_data: Optional[Dict[str, pd.DataFrame]],
     per_model: Dict[str, Dict[str, Any]],
+    sales_df: Optional[pd.DataFrame] = None,
+    date_col: str = "date",
+    value_col: str = "value",
 ) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
+    lag_analysis: Dict[str, Dict[str, Any]] = {}
     if not exog_data:
         return out
+
+    if sales_df is None or len(sales_df) < 20:
+        _lag_default = {"lag": 0, "correlation": None, "strength": "", "message": "Not enough data"}
+    else:
+        _lag_default = None
+
+    def _lag_for(exog_name: str, exog: pd.DataFrame) -> Dict[str, Any]:
+        if _lag_default:
+            return _lag_default
+        try:
+            return ModelSelector().compute_lag_analysis(
+                sales_df, date_col, value_col, exog, exog_name  # type: ignore[arg-type]
+            )
+        except Exception:
+            return {"lag": 0, "correlation": None, "strength": "", "message": "Analysis failed"}
+
     if "media_plan" in exog_data and exog_data["media_plan"] is not None:
         mp = exog_data["media_plan"]
+        lag_analysis["media_plan"] = _lag_for("media_plan", mp)
         if "media_spend" in mp.columns:
             out["media_plan_impact"] = {
                 "total_spend": float(pd.to_numeric(mp["media_spend"], errors="coerce").sum()),
@@ -1040,6 +1064,7 @@ def _build_external_analysis(
             }
     if "promotions" in exog_data and exog_data["promotions"] is not None:
         p = exog_data["promotions"]
+        lag_analysis["promotions"] = _lag_for("promotions", p)
         if "discount" in p.columns:
             out["promotion_impact"] = {
                 "total_discount": float(pd.to_numeric(p["discount"], errors="coerce").sum()),
@@ -1047,6 +1072,7 @@ def _build_external_analysis(
             }
     if "holidays" in exog_data and exog_data["holidays"] is not None:
         h = exog_data["holidays"]
+        lag_analysis["holidays"] = _lag_for("holidays", h)
         if "holiday_impact" in h.columns:
             out["holiday_impact"] = {
                 "total_impact": float(pd.to_numeric(h["holiday_impact"], errors="coerce").sum()),
@@ -1054,20 +1080,24 @@ def _build_external_analysis(
             }
     if "events" in exog_data and exog_data["events"] is not None:
         e = exog_data["events"]
-        out["event_impact"] = {
-            "rows": int(len(e)),
-        }
+        lag_analysis["events"] = _lag_for("events", e)
+        out["event_impact"] = {"rows": int(len(e))}
     if "weather" in exog_data and exog_data["weather"] is not None:
         w = exog_data["weather"]
+        lag_analysis["weather"] = _lag_for("weather", w)
         out["weather_impact"] = {"rows": int(len(w))}
     if "competitor" in exog_data and exog_data["competitor"] is not None:
         c = exog_data["competitor"]
+        lag_analysis["competitor"] = _lag_for("competitor", c)
         out["price_elasticity"] = None  # not enough info to estimate
         out["competitor_impact"] = {"rows": int(len(c))}
     if "economic" in exog_data and exog_data["economic"] is not None:
         econ = exog_data["economic"]
+        lag_analysis["economic"] = _lag_for("economic", econ)
         out["economic_impact"] = {
             "rows": int(len(econ)),
             "columns": [c for c in econ.columns if c != "date"],
         }
+    if lag_analysis:
+        out["lag_analysis"] = lag_analysis
     return out

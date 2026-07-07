@@ -8,8 +8,11 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from .common import (
+    BusinessStage,
+    BusinessType,
     DataStatus,
     ForecastFrequency,
+    LagAnalysisResult,
     ModelType,
     ProductLevel,
     RegionLevel,
@@ -129,6 +132,9 @@ class ForecastRequest(BaseModel):
     # How many of the last actuals to overlay with the forecast in the
     # results chart, for visual backtesting. 0 = no overlap (forecast only).
     backtest_overlap: int = Field(default=0, ge=0, le=365)
+    # Business context — influences model selection and default parameters.
+    business_type: Optional[BusinessType] = None
+    business_stage: Optional[BusinessStage] = None
     # Save the best model to the registry after a successful run.
     save_model: bool = False
     save_model_name: Optional[str] = None
@@ -179,6 +185,7 @@ class ExternalFactorAnalysis(BaseModel):
     event_impact: Optional[Dict[str, Any]] = None
     weather_impact: Optional[Dict[str, Any]] = None
     price_elasticity: Optional[float] = None
+    lag_analysis: Dict[str, LagAnalysisResult] = Field(default_factory=dict)
 
 
 class ForecastSummary(BaseModel):

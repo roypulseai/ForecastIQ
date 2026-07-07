@@ -83,6 +83,8 @@ export interface DataCharacteristics {
   missing_pct: number;
   min_date: string | null;
   max_date: string | null;
+  pdq_recommendation?: PDQRecommendation | null;
+  insights?: Insight[];
 }
 
 export interface ModelRecommendation {
@@ -146,6 +148,60 @@ export const MODEL_DESCRIPTIONS: Record<string, string> = {
   stl: 'STL decomposition + ARIMA on deseasonalized series.',
   ensemble: 'Weighted average of the best-performing models.',
 };
+
+export type BusinessType =
+  | 'retail' | 'ecommerce' | 'saas' | 'manufacturing' | 'supply_chain'
+  | 'finance' | 'healthcare' | 'energy' | 'hospitality' | 'media' | 'other';
+
+export type BusinessStage =
+  | 'hyper_growth' | 'growth' | 'mature' | 'declining' | 'seasonal' | 'volatile';
+
+export const BUSINESS_TYPE_LABELS: Record<string, string> = {
+  retail: 'Retail',
+  ecommerce: 'E-commerce',
+  saas: 'SaaS / Subscription',
+  manufacturing: 'Manufacturing',
+  supply_chain: 'Supply Chain',
+  finance: 'Finance',
+  healthcare: 'Healthcare',
+  energy: 'Energy',
+  hospitality: 'Hospitality',
+  media: 'Media / Advertising',
+  other: 'Other',
+};
+
+export const BUSINESS_STAGE_LABELS: Record<string, string> = {
+  hyper_growth: 'Hyper-growth (50%+ YoY)',
+  growth: 'Growth (10-50% YoY)',
+  mature: 'Mature / Stable',
+  declining: 'Declining',
+  seasonal: 'Highly seasonal',
+  volatile: 'Volatile / Unpredictable',
+};
+
+export interface Insight {
+  type: 'info' | 'warning' | 'success';
+  text: string;
+}
+
+export interface OrderRecommendation {
+  p: number;
+  d: number;
+  q: number;
+}
+
+export interface SeasonalOrderRecommendation {
+  p: number;
+  d: number;
+  q: number;
+  s: number;
+}
+
+export interface PDQRecommendation {
+  order: OrderRecommendation;
+  seasonal_order?: SeasonalOrderRecommendation | null;
+  reason: string;
+}
 
 export type Frequency = 'D' | 'W' | 'F' | 'M' | 'Q' | 'Y';
 export type TimeGranularity = 'D' | 'W' | 'M' | 'Q' | 'Y';
@@ -227,6 +283,9 @@ export interface ForecastRequest {
   aggregation?: AggregationConfig;
   country?: string;
   notes?: string;
+  // Business context — influences model selection and default parameters
+  business_type?: BusinessType | null;
+  business_stage?: BusinessStage | null;
   // Train/test split for proper evaluation (0..1). Default 1.0 = no split.
   // When < 1.0, the last (1-ratio) rows are held out and the test metrics
   // are computed before forecasting the next horizon.
@@ -277,6 +336,13 @@ export interface EnsembleResult {
   individual_results: ModelResult[];
 }
 
+export interface LagAnalysisResult {
+  lag: number;
+  correlation?: number | null;
+  strength: string;
+  message: string;
+}
+
 export interface ExternalFactorAnalysis {
   media_plan_impact?: Record<string, unknown> | null;
   promotion_impact?: Record<string, unknown> | null;
@@ -284,6 +350,7 @@ export interface ExternalFactorAnalysis {
   event_impact?: Record<string, unknown> | null;
   weather_impact?: Record<string, unknown> | null;
   price_elasticity?: number | null;
+  lag_analysis?: Record<string, LagAnalysisResult>;
 }
 
 export interface ForecastSummary {

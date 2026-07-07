@@ -37,7 +37,7 @@ import { useFileData, useFiles } from '../hooks/useFiles';
 import { useStore } from '../store/appStore';
 import { getErrorMessage } from '../services/api';
 import { formatDate } from '../utils/format';
-import type { ForecastListItem, ModelResult } from '../types';
+import type { AnalysisResponse, ExternalFactorAnalysis, ForecastListItem, LagAnalysisResult, ModelResult } from '../types';
 
 export function ResultsPage(): ReactNode {
   const navigate = useNavigate();
@@ -54,6 +54,7 @@ export function ResultsPage(): ReactNode {
   const [showBaseline, setShowBaseline] = useState<boolean>(true);
   const [showActuals, setShowActuals] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const analysisData = useStore((s) => s.analysisData);
 
   // Find the sales file used by the current forecast
   const salesFile = useMemo(() => {
@@ -272,6 +273,7 @@ export function ResultsPage(): ReactNode {
               <Tab label="Model comparison" />
               <Tab label="Detailed data" />
               <Tab label="Metrics" />
+              <Tab label="Insights" />
             </Tabs>
             <CardContent>
               {tab === 0 && (
@@ -330,6 +332,12 @@ export function ResultsPage(): ReactNode {
                   ))}
                 </Grid>
               )}
+              {tab === 4 && (
+                <InsightsDetail
+                  analysisData={analysisData}
+                  externalAnalysis={resultQuery.data.external_factor_analysis}
+                />
+              )}
             </CardContent>
           </Card>
         </>
@@ -341,6 +349,98 @@ export function ResultsPage(): ReactNode {
 function firstModelKey(results: Record<string, ModelResult>): string {
   const first = Object.values(results)[0];
   return first ? first.model_name : '';
+}
+
+function InsightsDetail({
+  analysisData,
+  externalAnalysis,
+}: {
+  analysisData: AnalysisResponse | null;
+  externalAnalysis?: ExternalFactorAnalysis | null;
+}): ReactNode {
+  const insights = analysisData?.data_characteristics?.insights;
+  const pdq = analysisData?.data_characteristics?.pdq_recommendation;
+  const lagAnalysis = externalAnalysis?.lag_analysis;
+
+  return (
+    <Stack spacing={2.5}>
+      {/* Data pattern insights */}
+      {insights && insights.length > 0 && (
+        <Box>
+          <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+            Data pattern insights
+          </Typography>
+          <Stack spacing={1}>
+            {insights.map((ins, i) => (
+              <Alert key={i} severity={ins.type === 'warning' ? 'warning' : ins.type === 'success' ? 'success' : 'info'} sx={{ py: 0.5 }}>
+                {ins.text}
+              </Alert>
+            ))}
+          </Stack>
+        </Box>
+      )}
+
+      {/* PDQ recommendation */}
+      {pdq && (
+        <Box>
+          <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+            Recommended ARIMA parameters
+          </Typography>
+          <Card variant="outlined" sx={{ p: 1.5 }}>
+            <Stack spacing={0.5}>
+              <Typography variant="body2">
+                Order (p,d,q): <Chip label={`p=${pdq.order.p}`} size="small" sx={{ mx: 0.25 }} />
+                <Chip label={`d=${pdq.order.d}`} size="small" color={pdq.order.d > 0 ? 'warning' : 'default'} sx={{ mx: 0.25 }} />
+                <Chip label={`q=${pdq.order.q}`} size="small" sx={{ mx: 0.25 }} />
+              </Typography>
+              {pdq.seasonal_order && (
+                <Typography variant="body2">
+                  Seasonal (P,D,Q,S):{' '}
+                  <Chip label={`P=${pdq.seasonal_order.p}`} size="small" sx={{ mx: 0.25 }} />
+                  <Chip label={`D=${pdq.seasonal_order.d}`} size="small" sx={{ mx: 0.25 }} />
+                  <Chip label={`Q=${pdq.seasonal_order.q}`} size="small" sx={{ mx: 0.25 }} />
+                  <Chip label={`S=${pdq.seasonal_order.s}`} size="small" color="primary" sx={{ mx: 0.25 }} />
+                </Typography>
+              )}
+              {pdq.reason && (
+                <Typography variant="caption" color="text.secondary">
+                  {pdq.reason}
+                </Typography>
+              )}
+            </Stack>
+          </Card>
+        </Box>
+      )}
+
+      {/* Lag analysis for external factors */}
+      {lagAnalysis && Object.keys(lagAnalysis).length > 0 && (
+        <Box>
+          <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+            External factor lag analysis
+          </Typography>
+          <Stack spacing={1}>
+            {Object.entries(lagAnalysis).map(([key, lag]: [string, LagAnalysisResult]) => (
+              <Alert key={key} severity={lag.correlation && lag.correlation > 0.3 ? 'info' : 'warning'} sx={{ py: 0.5 }}>
+                <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                  <Chip label={key} size="small" color="primary" variant="outlined" />
+                  <Typography variant="body2">
+                    Lag: <strong>{lag.lag}</strong> period{lag.lag !== 1 ? 's' : ''} · Correlation: {lag.correlation?.toFixed(3) ?? 'N/A'}
+                    {lag.strength && <Chip label={lag.strength} size="small" color={lag.strength === 'strong' ? 'success' : lag.strength === 'moderate' ? 'info' : 'default'} variant="outlined" sx={{ ml: 0.5, height: 18, fontSize: 10 }} />}
+                  </Typography>
+                </Stack>
+              </Alert>
+            ))}
+          </Stack>
+        </Box>
+      )}
+
+      {!insights && !pdq && !lagAnalysis && (
+        <Typography variant="body2" color="text.secondary">
+          No insights available. Run a data analysis first.
+        </Typography>
+      )}
+    </Stack>
+  );
 }
 
 function ForecastRow({
