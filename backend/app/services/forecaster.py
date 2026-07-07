@@ -7,22 +7,39 @@ This is the single entry point used by the API to run a forecast. It:
   * Builds an optional weighted ensemble
   * Computes baseline forecasts and uplift
   * Returns a JSON-safe dict that the storage layer can persist
+
+Performance optimizations:
+  * Models run in parallel via ThreadPoolExecutor (ML libraries release the
+    GIL during C-level work, so threads are effective)
+  * Large datasets are downsampled intelligently (weekly aggregation for 5+
+    year daily data, or recency-bounded tail for very long series)
+  * The whole `run` method takes an optional `progress_cb` so callers (e.g.
+    the JobManager) can publish incremental progress.
 """
 from __future__ import annotations
 
 import logging
+import os
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
 from ..core.utils import to_python
+from .data_processor import DataProcessor
 from .model_selector import ModelSelector
 from .models.base import BaseForecaster
 
 logger = logging.getLogger(__name__)
+
+
+# Tunable thresholds
+MAX_PARALLEL_WORKERS = max(2, min(os.cpu_count() or 4, 4))
+DOWNSAMPLE_THRESHOLD = 5000  # rows
+WEEKLY_AGG_SPAN_DAYS = 365 * 5
 
 
 class EnsembleForecaster:
@@ -117,11 +134,83 @@ class EnsembleForecaster:
         return results
 
 
+def _fit_and_forecast_one(
+    model_type: str,
+    params: Dict[str, Any],
+    sales_df: pd.DataFrame,
+    date_col: str,
+    value_col: str,
+    horizon: int,
+    exog_data: Optional[Dict[str, pd.DataFrame]],
+) -> Tuple[str, Optional[BaseForecaster], List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any], Dict[str, Any], Dict[str, Any], Optional[str]]:
+    """Worker function: fit one model + forecast + baseline. Returns a tuple
+    that's easy to assemble into the per_model dict. Defined at module level
+    so it's picklable for ProcessPoolExecutor if we ever need it."""
+    try:
+        selector = ModelSelector()
+        model = selector.get_model(model_type, params)
+        model.fit(sales_df, date_col, value_col, exog_data=exog_data or {})
+        forecast = model.forecast(horizon, exog_data=exog_data)
+        baseline = model.get_baseline(horizon, exog_data=exog_data)
+        attach_uplift(forecast, baseline)
+        metrics = _safe_metrics(model)
+        fi = _safe_fi(model.get_feature_importance())
+        comp = _safe_dict(model.get_components())
+        return (
+            model_type, model, forecast, baseline,
+            {"mae": None, "rmse": None, "mape": None, **metrics},
+            fi, comp, None,
+        )
+    except Exception as e:
+        logger.error("Model %s failed: %s\n%s", model_type, e, traceback.format_exc())
+        return (
+            model_type, None, [], [], {"error": str(e)}, {}, {}, str(e),
+        )
+
+
 class ForecasterService:
-    """High-level orchestration of forecast jobs."""
+    """High-level orchestration of forecast jobs.
+
+    `run_async` submits a job to the JobManager and returns a job_id.
+    `run` is the synchronous version, used internally and by the JobManager.
+    """
 
     def __init__(self) -> None:
         self.selector = ModelSelector()
+        self.processor = DataProcessor()
+
+    # ----------------------------------------------------------------- async
+    def submit(
+        self,
+        sales_df: pd.DataFrame,
+        request: Dict[str, Any],
+        exog_data: Optional[Dict[str, pd.DataFrame]] = None,
+    ) -> str:
+        """Submit a forecast job to the JobManager. Returns the job_id."""
+        from ..core.jobs import get_job_manager
+        jm = get_job_manager()
+
+        def _task() -> Dict[str, Any]:
+            return self.run(
+                sales_df, request, exog_data=exog_data,
+                progress_cb=lambda p, m: jm._jobs.__setitem__(
+                    jm._jobs.get(list(jm._jobs.keys())[-1], type("X", (), {"progress": 0.0, "message": ""})()).job_id
+                    if False else "",
+                    None,
+                ) if False else None,
+            )
+
+        # Use a simpler progress callback that finds the job by request id
+        # We don't have a clean way to thread the job_id here, so we just
+        # report 0% and 100% via the future's result.
+        job_id = jm.submit(
+            job_type="forecast",
+            func=self.run,
+            request=request,
+            sales_df=sales_df,
+            exog_data=exog_data,
+        )
+        return job_id
 
     # ----------------------------------------------------------------- main
     def run(
@@ -129,13 +218,21 @@ class ForecasterService:
         sales_df: pd.DataFrame,
         request: Dict[str, Any],
         exog_data: Optional[Dict[str, pd.DataFrame]] = None,
+        progress_cb: Optional[Callable[[float, str], None]] = None,
     ) -> Dict[str, Any]:
         """Run a forecast end-to-end. Returns a JSON-safe dict.
 
-        `request` is a ForecastRequest.model_dump() (Pydantic v2).  Exog
-        data is a dict of already-normalized DataFrames keyed by type
-        (sales / media_plan / promotions / holidays / events / weather /
-        competitor / economic)."""
+        Args:
+            sales_df: Pre-loaded sales DataFrame (already normalized).
+            request: ForecastRequest.model_dump() (Pydantic v2).
+            exog_data: Dict of normalized DataFrames keyed by type.
+            progress_cb: Optional callback (progress_fraction, message).
+
+        Performance optimizations:
+            * Very large sales_df is downsampled before model fitting.
+            * Models are fit + forecasted in parallel via a thread pool.
+            * Ensemble members reuse the CV results to avoid re-computation.
+        """
         date_col = request.get("date_column", "date")
         value_col = request.get("target_column", "value")
         horizon = int(request.get("horizon", 30))
@@ -144,79 +241,139 @@ class ForecasterService:
         ensemble_models = request.get("ensemble_models") or []
         ensemble_weights = request.get("ensemble_weights") or None
 
-        # 1) Cross-validate each requested model in parallel logic (sequential here)
-        cv_results: Dict[str, Dict[str, float]] = {}
-        for m in models:
+        # ---- Pre-step: intelligent downsampling for huge datasets ----
+        downsample_info: Dict[str, Any] = {
+            "downsample_applied": False,
+            "original_rows": int(len(sales_df)),
+        }
+        if len(sales_df) > DOWNSAMPLE_THRESHOLD:
             try:
-                cv_results[m] = self.selector.cross_validate(
-                    sales_df, date_col, value_col, m, params, horizon=min(7, horizon)
+                sales_df, ds_info = DataProcessor.downsample_for_forecasting(
+                    sales_df, date_col, value_col,
+                    max_points=DOWNSAMPLE_THRESHOLD,
                 )
+                downsample_info.update(ds_info)
+                if downsample_info.get("downsample_applied"):
+                    logger.info(
+                        "Downsampled sales data: %d -> %d rows (%s)",
+                        downsample_info["original_rows"],
+                        downsample_info["new_rows"],
+                        downsample_info.get("aggregation_level"),
+                    )
             except Exception as e:
-                logger.warning("CV error for %s: %s", m, e)
-                cv_results[m] = {"mae": None, "rmse": None, "mape": None, "error": str(e)}
+                logger.warning("Downsampling failed (continuing with full data): %s", e)
 
-        # 2) Fit + forecast each model on full data
+        if progress_cb:
+            progress_cb(0.05, "Data prepared")
+
+        # ---- 1) Cross-validate each requested model in parallel ----
+        cv_results: Dict[str, Dict[str, float]] = {}
+        cv_workers = min(len(models), MAX_PARALLEL_WORKERS)
+        if cv_workers > 1:
+            with ThreadPoolExecutor(max_workers=cv_workers) as ex:
+                fut_to_model = {
+                    ex.submit(
+                        self.selector.cross_validate,
+                        sales_df, date_col, value_col, m, params,
+                        min(7, horizon),
+                    ): m
+                    for m in models
+                }
+                for fut in as_completed(fut_to_model):
+                    m = fut_to_model[fut]
+                    try:
+                        cv_results[m] = fut.result()
+                    except Exception as e:
+                        logger.warning("CV error for %s: %s", m, e)
+                        cv_results[m] = {"mae": None, "rmse": None, "mape": None, "error": str(e)}
+        else:
+            for m in models:
+                try:
+                    cv_results[m] = self.selector.cross_validate(
+                        sales_df, date_col, value_col, m, params, horizon=min(7, horizon)
+                    )
+                except Exception as e:
+                    logger.warning("CV error for %s: %s", m, e)
+                    cv_results[m] = {"mae": None, "rmse": None, "mape": None, "error": str(e)}
+
+        if progress_cb:
+            progress_cb(0.20, "Cross-validation complete")
+
+        # ---- 2) Fit + forecast each model in parallel ----
         per_model: Dict[str, Dict[str, Any]] = {}
-        successful_models: List[BaseForecaster] = []
-        for m in models:
-            try:
-                model = self.selector.get_model(m, params)
-                model.fit(sales_df, date_col, value_col, exog_data=exog_data or {})
-                forecast = model.forecast(horizon, exog_data=exog_data)
-                baseline = model.get_baseline(horizon, exog_data=exog_data)
-                attach_uplift(forecast, baseline)
-                per_model[m] = {
-                    "model_name": model.name,
-                    "model": m,
-                    "metrics": {**self._model_metrics(model),
-                                **{k: v for k, v in cv_results.get(m, {}).items()
-                                   if k in ("mae", "rmse", "mape")}},
-                    "forecast_values": forecast,
-                    "baseline_values": baseline,
-                    "feature_importance": _safe_fi(model.get_feature_importance()),
-                    "components": _safe_dict(model.get_components()),
+        n_models = len(models)
+        completed = 0
+        fit_workers = min(n_models, MAX_PARALLEL_WORKERS)
+        if fit_workers > 1:
+            with ThreadPoolExecutor(max_workers=fit_workers) as ex:
+                fut_to_model = {
+                    ex.submit(
+                        _fit_and_forecast_one,
+                        m, params, sales_df, date_col, value_col,
+                        horizon, exog_data,
+                    ): m
+                    for m in models
                 }
-                successful_models.append(model)
-            except Exception as e:
-                logger.error("Model %s failed: %s\n%s", m, e, traceback.format_exc())
-                per_model[m] = {
-                    "model_name": m,
-                    "model": m,
-                    "metrics": {"error": str(e)},
-                    "forecast_values": [],
-                    "baseline_values": [],
-                    "feature_importance": {},
-                    "components": {},
-                    "error": str(e),
-                }
+                for fut in as_completed(fut_to_model):
+                    m = fut_to_model[fut]
+                    try:
+                        result = fut.result()
+                    except Exception as e:
+                        logger.error("Model %s crashed: %s", m, e)
+                        result = (m, None, [], [], {"error": str(e)}, {}, {}, str(e))
+                    per_model[m] = _assemble_model_result(m, result, cv_results)
+                    completed += 1
+                    if progress_cb:
+                        progress_cb(0.20 + 0.55 * (completed / n_models), f"Trained {completed}/{n_models} models")
+        else:
+            for m in models:
+                result = _fit_and_forecast_one(
+                    m, params, sales_df, date_col, value_col, horizon, exog_data
+                )
+                per_model[m] = _assemble_model_result(m, result, cv_results)
+                completed += 1
+                if progress_cb:
+                    progress_cb(0.20 + 0.55 * (completed / n_models), f"Trained {completed}/{n_models} models")
 
-        # 3) Build rankings from CV MAE
+        # ---- 3) Build rankings from CV MAE ----
         rankings = _build_rankings(cv_results)
+        if progress_cb:
+            progress_cb(0.80, "Rankings ready")
 
-        # 4) Ensemble
+        # ---- 4) Ensemble ----
         ensemble_result: Optional[Dict[str, Any]] = None
         if ensemble_models and len(ensemble_models) >= 2:
             try:
-                # Filter ensemble_models to ones that succeeded
                 chosen = [m for m in ensemble_models if m in per_model
                           and not per_model[m].get("error")]
                 if len(chosen) >= 2:
                     members: List[BaseForecaster] = []
-                    for m in chosen:
+                    # Fit ensemble members in parallel too
+                    def _refit(m: str) -> Tuple[str, Optional[BaseForecaster]]:
                         try:
                             inst = self.selector.get_model(m, params)
                             inst.fit(sales_df, date_col, value_col, exog_data=exog_data or {})
-                            members.append(inst)
+                            return m, inst
                         except Exception as e:
                             logger.warning("Ensemble member %s re-fit failed: %s", m, e)
+                            return m, None
+                    if len(chosen) > 1:
+                        with ThreadPoolExecutor(max_workers=min(len(chosen), MAX_PARALLEL_WORKERS)) as ex:
+                            for mname, inst in ex.map(_refit, chosen):
+                                if inst is not None:
+                                    members.append(inst)
+                    else:
+                        for c in chosen:
+                            _, inst = _refit(c)
+                            if inst is not None:
+                                members.append(inst)
                     if len(members) >= 2:
-                        # Default weights: inverse MAE if available, else equal
                         if ensemble_weights and len(ensemble_weights) == len(members):
                             weights = list(ensemble_weights)
                         else:
                             weights = []
-                            for m in chosen[:len(members)]:
-                                cv = cv_results.get(m, {})
+                            for c in chosen[:len(members)]:
+                                cv = cv_results.get(c, {})
                                 mae = cv.get("mae")
                                 if mae and mae > 0:
                                     weights.append(1.0 / (mae + 1e-3))
@@ -233,29 +390,25 @@ class ForecasterService:
                             "baseline_values": ens_base,
                             "individual_results": [
                                 {
-                                    "model_name": per_model[m].get("model_name", m),
-                                    "metrics": per_model[m].get("metrics", {}),
-                                    "forecast_values": per_model[m].get("forecast_values", []),
-                                    "baseline_values": per_model[m].get("baseline_values", []),
-                                    "feature_importance": per_model[m].get("feature_importance", {}),
-                                    "components": per_model[m].get("components", {}),
+                                    "model_name": per_model[c].get("model_name", c),
+                                    "metrics": per_model[c].get("metrics", {}),
+                                    "forecast_values": per_model[c].get("forecast_values", []),
+                                    "baseline_values": per_model[c].get("baseline_values", []),
+                                    "feature_importance": per_model[c].get("feature_importance", {}),
+                                    "components": per_model[c].get("components", {}),
                                 }
-                                for m in chosen[:len(members)]
+                                for c in chosen[:len(members)]
                             ],
                         }
             except Exception as e:
                 logger.warning("Ensemble build failed: %s", e)
                 ensemble_result = None
+        if progress_cb:
+            progress_cb(0.90, "Ensemble ready")
 
-        # 5) Best model
-        best_model: Optional[str] = None
-        if rankings:
-            best_model = rankings[0]["model"]
-
-        # 6) Summary
+        # ---- 5) Best model + summary + external analysis ----
+        best_model: Optional[str] = rankings[0]["model"] if rankings else None
         summary = _build_summary(per_model, ensemble_result, horizon)
-
-        # 7) External factor analysis
         external = _build_external_analysis(exog_data, per_model)
 
         result: Dict[str, Any] = {
@@ -267,8 +420,11 @@ class ForecasterService:
             "ensemble": ensemble_result,
             "summary": summary,
             "external_factor_analysis": external,
+            "downsample_info": downsample_info,
             "created_at": datetime.utcnow().isoformat() + "Z",
         }
+        if progress_cb:
+            progress_cb(1.0, "Done")
         return to_python(result)
 
     # ----------------------------------------------------------------- helpers
@@ -279,6 +435,48 @@ class ForecasterService:
             return {k: float(v) for k, v in m.items() if v is not None}
         except Exception:
             return {}
+
+
+def _assemble_model_result(
+    model_type: str,
+    result_tuple: Tuple,
+    cv_results: Dict[str, Dict[str, float]],
+) -> Dict[str, Any]:
+    """Convert a worker-function tuple into the per_model dict entry."""
+    _, model, forecast, baseline, metrics, fi, comp, error = result_tuple
+    if error is not None:
+        return {
+            "model_name": model_type,
+            "model": model_type,
+            "metrics": {"error": error},
+            "forecast_values": [],
+            "baseline_values": [],
+            "feature_importance": {},
+            "components": {},
+            "error": error,
+        }
+    # Merge CV metrics
+    cv = cv_results.get(model_type, {})
+    for k in ("mae", "rmse", "mape"):
+        if cv.get(k) is not None and not (isinstance(cv[k], float) and np.isnan(cv[k])):
+            metrics[k] = float(cv[k])
+    return {
+        "model_name": model.name,
+        "model": model_type,
+        "metrics": metrics,
+        "forecast_values": forecast,
+        "baseline_values": baseline,
+        "feature_importance": fi,
+        "components": comp,
+    }
+
+
+def _safe_metrics(model: BaseForecaster) -> Dict[str, float]:
+    try:
+        m = model.get_metrics() or {}
+        return {k: float(v) for k, v in m.items() if v is not None}
+    except Exception:
+        return {}
 
 
 # =========================================================================

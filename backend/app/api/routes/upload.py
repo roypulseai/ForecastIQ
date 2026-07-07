@@ -15,13 +15,15 @@ from ...core.utils import to_python
 from ...schemas.common import FILE_TYPE_VALUES, DataStatus, UploadedFileInfo
 from ...services.data_processor import DataProcessor
 
-# Use a prefix that matches the frontend's API service expectations
-router = APIRouter(prefix="/upload")
+# Use a prefix that matches the frontend's API service expectations.
+# Routes are mounted under /api/v1/upload by main.py, so we don't add a
+# prefix here — that would produce /api/v1/upload/upload/... double prefix.
+router = APIRouter()
 storage = FileMetadataStore()
 processor = DataProcessor()
 
 
-@router.post("/{file_type}")
+@router.post("/upload/{file_type}")
 async def upload_file(file_type: str, file: UploadFile = File(...)) -> Dict[str, Any]:
     if file_type not in FILE_TYPE_VALUES:
         raise HTTPException(
@@ -54,7 +56,7 @@ async def upload_file(file_type: str, file: UploadFile = File(...)) -> Dict[str,
         with open(tmp_path, "wb") as f:
             f.write(content)
 
-        # Load + normalize
+        # Load + normalize (load_file uses chunked reading for large CSVs)
         try:
             raw_df = processor.load_file(tmp_path)
         except Exception as e:
@@ -65,6 +67,12 @@ async def upload_file(file_type: str, file: UploadFile = File(...)) -> Dict[str,
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Processing error: {e}")
+        finally:
+            # Drop the raw (possibly huge) DataFrame — only clean_df is kept
+            try:
+                del raw_df
+            except Exception:
+                pass
 
         # Validate sales data
         warnings_list: list = []
@@ -88,6 +96,7 @@ async def upload_file(file_type: str, file: UploadFile = File(...)) -> Dict[str,
         )
         entry["warnings"] = warnings_list
         entry["status"] = DataStatus.READY.value
+        entry["memory_mb"] = round(DataProcessor.memory_mb(clean_df), 2)
 
         return to_python({
             "file_id": entry["file_id"],
@@ -99,6 +108,7 @@ async def upload_file(file_type: str, file: UploadFile = File(...)) -> Dict[str,
             "column_mapping": entry["column_mapping"],
             "warnings": warnings_list,
             "status": entry["status"],
+            "memory_mb": entry["memory_mb"],
         })
     except HTTPException:
         raise
@@ -108,13 +118,13 @@ async def upload_file(file_type: str, file: UploadFile = File(...)) -> Dict[str,
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-@router.get("/files")
+@router.get("/upload/files")
 async def list_files(file_type: Optional[str] = None) -> Dict[str, Any]:
     items = storage.list_files(file_type=file_type)
     return to_python({"items": items, "total": len(items)})
 
 
-@router.get("/files/{file_id}")
+@router.get("/upload/files/{file_id}")
 async def get_file(file_id: str) -> Dict[str, Any]:
     entry = storage.get_file(file_id)
     if not entry:
@@ -122,7 +132,7 @@ async def get_file(file_id: str) -> Dict[str, Any]:
     return to_python(entry)
 
 
-@router.delete("/files/{file_id}")
+@router.delete("/upload/files/{file_id}")
 async def delete_file(file_id: str) -> Dict[str, Any]:
     ok = storage.delete_file(file_id)
     if not ok:

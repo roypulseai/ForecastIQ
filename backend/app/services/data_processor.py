@@ -176,24 +176,70 @@ class DataProcessor:
     # ------------------------------------------------------------ loading
     @staticmethod
     def load_file(file_path: str) -> pd.DataFrame:
+        """Load a CSV/Excel file. Uses chunked reading for large files."""
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File not found: {file_path}")
         ext = os.path.splitext(file_path)[1].lower()
         if ext == ".csv":
-            return pd.read_csv(file_path)
+            return DataProcessor._read_csv_smart(file_path)
         if ext in (".xlsx", ".xls"):
             return pd.read_excel(file_path)
         raise ValueError(f"Unsupported file format: {ext}")
 
     @staticmethod
     def load_bytes(content: bytes, filename: str) -> pd.DataFrame:
+        """Load CSV/Excel from raw bytes."""
         import io
         ext = os.path.splitext(filename)[1].lower()
         if ext == ".csv":
-            return pd.read_csv(io.BytesIO(content))
+            # Peek at size to decide chunked read
+            bio = io.BytesIO(content)
+            size_mb = len(content) / (1024 * 1024)
+            if size_mb > 50:
+                # Read header first, then chunked
+                header_df = pd.read_csv(bio, nrows=0)
+                bio.seek(0)
+                chunks = pd.read_csv(bio, chunksize=50_000)
+                return DataProcessor._combine_chunks(chunks, header_df.columns.tolist())
+            return pd.read_csv(bio)
         if ext in (".xlsx", ".xls"):
             return pd.read_excel(io.BytesIO(content))
         raise ValueError(f"Unsupported file format: {ext}")
+
+    @staticmethod
+    def _read_csv_smart(file_path: str) -> pd.DataFrame:
+        """Read CSV using chunked reading for large files (>50MB or >500k rows)."""
+        size_mb = os.path.getsize(file_path) / (1024 * 1024)
+        if size_mb < 50:
+            try:
+                # Use pyarrow engine if available for speed
+                return pd.read_csv(file_path, engine="pyarrow")
+            except Exception:
+                return pd.read_csv(file_path)
+        # Chunked read for large files
+        chunks = pd.read_csv(file_path, chunksize=50_000)
+        first_chunk = next(chunks)
+        columns = first_chunk.columns.tolist()
+        all_chunks = [first_chunk] + list(chunks)
+        return DataProcessor._combine_chunks(all_chunks, columns)
+
+    @staticmethod
+    def _combine_chunks(chunks, columns: List[str]) -> pd.DataFrame:
+        """Combine DataFrame chunks efficiently using categorical dtypes."""
+        if not chunks:
+            return pd.DataFrame(columns=columns)
+        result = pd.concat(chunks, ignore_index=True)
+        # Downcast numerics to save memory (no precision loss for typical data)
+        for col in result.select_dtypes(include=["float64"]).columns:
+            result[col] = pd.to_numeric(result[col], downcast="float")
+        for col in result.select_dtypes(include=["int64"]).columns:
+            result[col] = pd.to_numeric(result[col], downcast="integer")
+        # Convert object columns with low cardinality to category
+        for col in result.select_dtypes(include=["object"]).columns:
+            nunique = result[col].nunique(dropna=True)
+            if 0 < nunique < max(100, len(result) * 0.5):
+                result[col] = result[col].astype("category")
+        return result
 
     # --------------------------------------------------------- normalization
     def process(self, df: pd.DataFrame, file_type: str) -> Tuple[pd.DataFrame, Dict[str, str]]:
@@ -270,6 +316,9 @@ class DataProcessor:
                for c in df.columns if c != spec.standard_date}
         df = df.groupby(spec.standard_date, as_index=False, sort=True).agg(agg)
         df = df.sort_values(spec.standard_date).reset_index(drop=True)
+
+        # Memory optimization: downcast numerics, convert low-cardinality objects
+        df = self.optimize_dtypes(df)
 
         return df, mapping
 
@@ -602,3 +651,95 @@ class DataProcessor:
         agg = ts.resample(freq).sum()
         out = pd.DataFrame({date_col: agg.index, value_col: agg.values})
         return out.dropna().reset_index(drop=True)
+
+    # ----------------------------------------------------- downsampling
+    @staticmethod
+    def downsample_for_forecasting(
+        df: pd.DataFrame,
+        date_col: str,
+        value_col: str,
+        max_points: int = 5000,
+        prefer_weekly: bool = False,
+    ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Reduce a long time series to <= max_points while preserving shape.
+
+        Strategy:
+            1. If len(df) <= max_points, return as-is.
+            2. If we have 5+ years of daily data, aggregate to weekly (huge
+               memory + speed win for ML models).
+            3. Otherwise, take a representative subset: keep the most-recent
+               `max_points` rows (recency is what matters for forecasting).
+
+        Returns (downsampled_df, info_dict). info_dict explains what was done
+        so the UI can show a notice to the user.
+        """
+        info: Dict[str, Any] = {
+            "original_rows": int(len(df)),
+            "downsample_applied": False,
+            "reason": None,
+            "new_rows": int(len(df)),
+            "aggregation_level": None,
+        }
+        if df.empty or len(df) <= max_points:
+            return df, info
+
+        df = df.copy()
+        df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+        df = df.dropna(subset=[date_col]).sort_values(date_col)
+
+        n = len(df)
+        # Compute date span
+        span_days = (df[date_col].iloc[-1] - df[date_col].iloc[0]).days
+
+        # If very long daily series (>= 5 years) AND we exceed the limit by 5x
+        # aggregate to weekly — much faster for all downstream models.
+        if n > max_points * 5 and span_days >= 365 * 5:
+            weekly = (
+                df.set_index(date_col)[[value_col]]
+                .resample("W")
+                .sum()
+                .reset_index()
+            )
+            weekly.columns = [date_col, value_col]
+            info.update({
+                "downsample_applied": True,
+                "reason": (
+                    f"Series had {n:,} rows spanning {span_days:,} days. "
+                    f"Aggregated to weekly ({len(weekly):,} rows) for performance."
+                ),
+                "new_rows": int(len(weekly)),
+                "aggregation_level": "weekly",
+            })
+            return weekly, info
+
+        # Otherwise, keep the most-recent max_points rows
+        recent = df.tail(max_points).reset_index(drop=True)
+        info.update({
+            "downsample_applied": True,
+            "reason": (
+                f"Series had {n:,} rows; using the most recent {max_points:,} "
+                f"to keep forecasting responsive."
+            ),
+            "new_rows": int(len(recent)),
+            "aggregation_level": "tail",
+        })
+        return recent, info
+
+    @staticmethod
+    def optimize_dtypes(df: pd.DataFrame) -> pd.DataFrame:
+        """Downcast numeric and use categoricals to cut memory ~50%."""
+        if df.empty:
+            return df
+        for col in df.select_dtypes(include=["float64"]).columns:
+            df[col] = pd.to_numeric(df[col], downcast="float")
+        for col in df.select_dtypes(include=["int64"]).columns:
+            df[col] = pd.to_numeric(df[col], downcast="integer")
+        for col in df.select_dtypes(include=["object"]).columns:
+            nunique = df[col].nunique(dropna=True)
+            if 0 < nunique < max(100, len(df) * 0.5):
+                df[col] = df[col].astype("category")
+        return df
+
+    @staticmethod
+    def memory_mb(df: pd.DataFrame) -> float:
+        return float(df.memory_usage(deep=True).sum() / (1024 * 1024))

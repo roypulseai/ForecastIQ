@@ -73,4 +73,7 @@ async def analyze_data(
         "data_characteristics": DataCharacteristics(**characteristics),
         "model_recommendations": [ModelRecommendation(**r) for r in recommendations],
     }
-    return to_python(AnalysisResponse(**payload).model_dump())
+    response = to_python(AnalysisResponse(**payload).model_dump())
+    # Add memory footprint for the UI
+    response["memory_mb"] = DataProcessor.memory_mb(df)
+    return response

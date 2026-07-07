@@ -59,8 +59,24 @@ export const apiClient = {
     return res.data;
   },
 
-  async createForecast(request: ForecastRequest): Promise<ForecastResponse> {
-    const res = await api.post<ForecastResponse>('/forecast', request);
+  async createForecast(request: ForecastRequest, asyncMode = true): Promise<ForecastResponse | { job_id: string; status: string; message: string }> {
+    const res = await api.post<ForecastResponse | { job_id: string; status: string; message: string }>(
+      '/forecast',
+      request,
+      { params: asyncMode ? { async: 'true' } : undefined },
+    );
+    return res.data;
+  },
+
+  async getJobStatus(jobId: string): Promise<JobStatus> {
+    const res = await api.get<JobStatus>(`/forecast/jobs/${jobId}`);
+    return res.data;
+  },
+
+  async getJobResult(jobId: string): Promise<{ job_id: string; status: string; result: ForecastDetail }> {
+    const res = await api.get<{ job_id: string; status: string; result: ForecastDetail }>(
+      `/forecast/jobs/${jobId}/result`,
+    );
     return res.data;
   },
 

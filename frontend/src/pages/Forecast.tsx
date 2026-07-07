@@ -11,6 +11,7 @@ import {
   Divider,
   FormControlLabel,
   Grid,
+  LinearProgress,
   MenuItem,
   Stack,
   Switch,
@@ -26,7 +27,7 @@ import { ExternalFactors } from '../components/forecast/ExternalFactors';
 import { AggregationPanel } from '../components/forecast/AggregationPanel';
 import { ForecastSummaryCard } from '../components/forecast/ForecastSummary';
 import { useFiles } from '../hooks/useFiles';
-import { useCreateForecast } from '../hooks/useForecast';
+import { useCreateForecast, useJobStatus } from '../hooks/useForecast';
 import { useStore } from '../store/appStore';
 import { getErrorMessage } from '../services/api';
 import {
@@ -103,7 +104,26 @@ export function ForecastPage(): ReactNode {
   const setCurrentForecastId = useStore((s) => s.setCurrentForecastId);
   const filesQuery = useFiles();
   const createMut = useCreateForecast();
+  const [jobId, setJobId] = useState<string | null>(null);
+  const jobQuery = useJobStatus(jobId);
   const [error, setError] = useState<string | null>(null);
+
+  // When the job completes, fetch the result and navigate
+  useEffect(() => {
+    if (!jobQuery.data) return;
+    if (jobQuery.data.status === 'completed') {
+      const result = jobQuery.data as { result?: { forecast_id?: string } };
+      const forecastId = result.result?.forecast_id;
+      if (forecastId) {
+        setCurrentForecastId(forecastId);
+        setJobId(null);
+        navigate('/results');
+      }
+    } else if (jobQuery.data.status === 'failed') {
+      setError(jobQuery.data.error || 'Forecast failed');
+      setJobId(null);
+    }
+  }, [jobQuery.data, navigate, setCurrentForecastId]);
 
   const dateColumn = analysisData?.validation.date_column ?? 'date';
   const valueColumn = analysisData?.validation.value_column ?? 'value';
@@ -177,9 +197,16 @@ export function ForecastPage(): ReactNode {
       parameters: Object.keys(request.parameters ?? {}).length > 0 ? request.parameters : undefined,
     };
     try {
+      setError(null);
       const res = await createMut.mutateAsync(payload);
-      setCurrentForecastId(res.forecast_id);
-      navigate('/results');
+      if ('jobId' in res && res.jobId) {
+        // Async path: poll job status (handled by useJobStatus effect above)
+        setJobId(res.jobId);
+      } else if ('forecastId' in res && res.forecastId) {
+        // Sync path (small/fast forecast)
+        setCurrentForecastId(res.forecastId);
+        navigate('/results');
+      }
     } catch (e) {
       setError(getErrorMessage(e));
     }
@@ -193,14 +220,39 @@ export function ForecastPage(): ReactNode {
         <Button
           variant="contained"
           size="large"
-          startIcon={createMut.isPending ? <CircularProgress size={16} color="inherit" /> : <PlayArrowIcon />}
+          startIcon={createMut.isPending || jobId ? <CircularProgress size={16} color="inherit" /> : <PlayArrowIcon />}
           onClick={handleSubmit}
-          disabled={createMut.isPending || !request.models.length}
+          disabled={createMut.isPending || !!jobId || !request.models.length}
         >
-          {createMut.isPending ? 'Running…' : 'Run forecast'}
+          {createMut.isPending ? 'Submitting…' : jobId ? 'Forecasting…' : 'Run forecast'}
         </Button>
       }
     >
+      {jobId && jobQuery.data && (
+        <Card sx={{ mb: 3 }}>
+          <CardContent>
+            <Stack spacing={2}>
+              <Stack direction="row" alignItems="center" justifyContent="space-between">
+                <Typography variant="subtitle1" fontWeight={600}>
+                  {jobQuery.data.status === 'completed' ? 'Forecast complete' : 'Running forecast…'}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {Math.round(jobQuery.data.progress * 100)}%
+                </Typography>
+              </Stack>
+              <LinearProgress
+                variant="determinate"
+                value={Math.round(jobQuery.data.progress * 100)}
+              />
+              {jobQuery.data.message && (
+                <Typography variant="body2" color="text.secondary">
+                  {jobQuery.data.message}
+                </Typography>
+              )}
+            </Stack>
+          </CardContent>
+        </Card>
+      )}
       {error && (
         <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
           {error}

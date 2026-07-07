@@ -323,3 +323,26 @@ export interface HealthResponse {
   timestamp: string;
   components: Record<string, string>;
 }
+
+export type JobStatusValue = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+export interface JobStatus {
+  job_id: string;
+  job_type: string;
+  status: JobStatusValue;
+  progress: number;
+  message: string;
+  error?: string | null;
+  created_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  request?: Record<string, unknown> | null;
+}
+
+export interface DownsampleInfo {
+  downsample_applied: boolean;
+  original_rows: number;
+  new_rows: number;
+  reason: string | null;
+  aggregation_level: string | null;
+}
