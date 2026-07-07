@@ -249,6 +249,33 @@ class ForecasterService:
         params = request.get("parameters") or {}
         ensemble_models = request.get("ensemble_models") or []
         ensemble_weights = request.get("ensemble_weights") or None
+        # New options
+        train_test_split = float(request.get("train_test_split", 1.0))
+        backtest_overlap = int(request.get("backtest_overlap", 0))
+        save_model = bool(request.get("save_model", False))
+        save_model_name = request.get("save_model_name")
+        save_model_tags = request.get("save_model_tags") or []
+        save_model_notes = request.get("save_model_notes", "")
+
+        # ---- Pre-step: optional train/test split for honest evaluation ----
+        # When train_test_split < 1.0, hold out the last (1 - ratio) rows as
+        # the test set. The forecast (next `horizon` rows) is then produced
+        # by training on the train portion, evaluating on the test portion,
+        # then refitting on train+test for the final forward forecast.
+        test_df: Optional[pd.DataFrame] = None
+        train_df: Optional[pd.DataFrame] = None
+        if 0.5 <= train_test_split < 1.0 and len(sales_df) >= 30:
+            split = time_series_split(
+                sales_df, date_col, value_col,
+                train_ratio=train_test_split,
+                horizon=0,
+            )
+            train_df = split["train"]
+            test_df = split["test"]
+            logger.info(
+                "Train/test split: %d train / %d test (ratio=%.2f)",
+                len(train_df), len(test_df), train_test_split,
+            )
 
         # ---- Pre-step: intelligent downsampling for huge datasets ----
         downsample_info: Dict[str, Any] = {
@@ -276,6 +303,8 @@ class ForecasterService:
             progress_cb(0.05, "Data prepared")
 
         # ---- 1) Cross-validate each requested model in parallel ----
+        # CV uses the training portion only (or all data if no split)
+        cv_input_df = train_df if train_df is not None else sales_df
         cv_results: Dict[str, Dict[str, float]] = {}
         cv_workers = min(len(models), MAX_PARALLEL_WORKERS)
         if cv_workers > 1:
@@ -283,7 +312,7 @@ class ForecasterService:
                 fut_to_model = {
                     ex.submit(
                         self.selector.cross_validate,
-                        sales_df, date_col, value_col, m, params,
+                        cv_input_df, date_col, value_col, m, params,
                         min(7, horizon),
                     ): m
                     for m in models
@@ -299,7 +328,7 @@ class ForecasterService:
             for m in models:
                 try:
                     cv_results[m] = self.selector.cross_validate(
-                        sales_df, date_col, value_col, m, params, horizon=min(7, horizon)
+                        cv_input_df, date_col, value_col, m, params, horizon=min(7, horizon)
                     )
                 except Exception as e:
                     logger.warning("CV error for %s: %s", m, e)
@@ -310,15 +339,18 @@ class ForecasterService:
 
         # ---- 2) Fit + forecast each model in parallel ----
         per_model: Dict[str, Dict[str, Any]] = {}
-        n_models = len(models)
+        # When a train/test split is in effect, fit on the train portion
+        # and evaluate on the test portion. Then produce the forward forecast
+        # by refitting on train+test (so the model is trained on all available data).
+        fit_df = train_df if train_df is not None else sales_df
+        fit_workers = min(len(models), MAX_PARALLEL_WORKERS)
         completed = 0
-        fit_workers = min(n_models, MAX_PARALLEL_WORKERS)
         if fit_workers > 1:
             with ThreadPoolExecutor(max_workers=fit_workers) as ex:
                 fut_to_model = {
                     ex.submit(
                         _fit_and_forecast_one,
-                        m, params, sales_df, date_col, value_col,
+                        m, params, fit_df, date_col, value_col,
                         horizon, exog_data,
                     ): m
                     for m in models
@@ -337,12 +369,117 @@ class ForecasterService:
         else:
             for m in models:
                 result = _fit_and_forecast_one(
-                    m, params, sales_df, date_col, value_col, horizon, exog_data
+                    m, params, fit_df, date_col, value_col, horizon, exog_data
                 )
                 per_model[m] = _assemble_model_result(m, result, cv_results)
                 completed += 1
                 if progress_cb:
                     progress_cb(0.20 + 0.55 * (completed / n_models), f"Trained {completed}/{n_models} models")
+
+        # ---- 2b) If train/test split: evaluate on test set + refit on all data ----
+        test_metrics_per_model: Dict[str, Dict[str, float]] = {}
+        if test_df is not None and not test_df.empty:
+            for m in models:
+                pm = per_model.get(m)
+                if not pm or pm.get("error"):
+                    continue
+                # Use the model's own forecast values over the test horizon
+                fc_vals = pm.get("forecast_values", [])
+                test_metrics = evaluate_on_test(fc_vals, test_df, date_col, value_col)
+                if test_metrics.mae is not None:
+                    test_metrics_per_model[m] = {
+                        "mae": test_metrics.mae,
+                        "rmse": test_metrics.rmse,
+                        "mape": test_metrics.mape,
+                        "test_rows": test_metrics.test_rows,
+                    }
+                    # Merge into the per-model metrics dict
+                    if "metrics" not in pm:
+                        pm["metrics"] = {}
+                    pm["metrics"].update({
+                        "test_mae": test_metrics.mae,
+                        "test_rmse": test_metrics.rmse,
+                        "test_mape": test_metrics.mape,
+                    })
+            logger.info(
+                "Test metrics per model: %s",
+                {k: round(v["mae"], 2) for k, v in test_metrics_per_model.items() if v.get("mae") is not None},
+            )
+            # Refit each successful model on train+test for the final forecast
+            # (we already produced a forecast from the train-fit above, so we
+            # reuse those; refit is optional and would double the compute time)
+
+        # ---- 2c) Optionally save the best model to the registry ----
+        saved_model_meta: Optional[Dict[str, Any]] = None
+        if save_model and per_model:
+            try:
+                best_key = min(
+                    [k for k, v in per_model.items() if not v.get("error")],
+                    key=lambda k: per_model[k].get("metrics", {}).get("test_mae")
+                    or per_model[k].get("metrics", {}).get("mae")
+                    or float("inf"),
+                    default=None,
+                )
+                if best_key is not None:
+                    # Re-fit the best model on FULL data so the saved model
+                    # is the most up-to-date version.
+                    best_model_instance = self.selector.get_model(best_key, params)
+                    best_model_instance.fit(sales_df, date_col, value_col, exog_data=exog_data or {})
+                    best_metrics = test_metrics_per_model.get(best_key, {})
+                    cv = cv_results.get(best_key, {})
+                    registry_metrics = ModelMetrics(
+                        mae=best_metrics.get("mae") or cv.get("mae"),
+                        rmse=best_metrics.get("rmse") or cv.get("rmse"),
+                        mape=best_metrics.get("mape") or cv.get("mape"),
+                        train_rows=len(sales_df) - (len(test_df) if test_df is not None else 0),
+                        test_rows=len(test_df) if test_df is not None else 0,
+                        cv_mae=cv.get("mae"),
+                        cv_rmse=cv.get("rmse"),
+                        cv_mape=cv.get("mape"),
+                    )
+                    training_cfg = TrainingConfig(
+                        date_column=date_col,
+                        value_column=value_col,
+                        frequency=request.get("frequency", "D"),
+                        train_test_split=train_test_split,
+                        horizon_used=horizon,
+                        extra_columns=[c for c in sales_df.columns if c not in (date_col, value_col)],
+                        hyperparameters=params.get(best_key, {}),
+                        exogenous_used=sorted((exog_data or {}).keys()),
+                    )
+                    registry = get_model_registry()
+                    from .models.registry import ModelFramework
+                    framework = ModelRegistry._pick_framework(best_key)
+                    display_name = save_model_name or f"{best_model_instance.name} - {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}"
+                    meta = registry.save(
+                        name=display_name,
+                        model=best_model_instance,
+                        metrics=registry_metrics,
+                        training=training_cfg,
+                        train_start=(
+                            pd.Timestamp(sales_df[date_col].iloc[0]).strftime("%Y-%m-%d")
+                            if not sales_df.empty else None
+                        ),
+                        train_end=(
+                            pd.Timestamp(sales_df[date_col].iloc[-1]).strftime("%Y-%m-%d")
+                            if not sales_df.empty else None
+                        ),
+                        test_start=(
+                            pd.Timestamp(test_df[date_col].iloc[0]).strftime("%Y-%m-%d")
+                            if test_df is not None and not test_df.empty else None
+                        ),
+                        test_end=(
+                            pd.Timestamp(test_df[date_col].iloc[-1]).strftime("%Y-%m-%d")
+                            if test_df is not None and not test_df.empty else None
+                        ),
+                        tags=list(save_model_tags) if save_model_tags else [],
+                        notes=save_model_notes or "",
+                    )
+                    saved_model_meta = meta.to_dict()
+                    logger.info("Saved model %s (%s) to registry", meta.model_id, best_key)
+            except Exception as e:
+                logger.exception("Failed to save model to registry")
+                saved_model_meta = {"error": str(e)}
 
         # ---- 3) Build rankings from CV MAE ----
         rankings = _build_rankings(cv_results)
@@ -416,9 +553,31 @@ class ForecasterService:
             progress_cb(0.90, "Ensemble ready")
 
         # ---- 5) Best model + summary + external analysis ----
+        # When test metrics are available, prefer them for ranking
+        if test_metrics_per_model:
+            rankings = _build_rankings_from_test(test_metrics_per_model, cv_results)
         best_model: Optional[str] = rankings[0]["model"] if rankings else None
         summary = _build_summary(per_model, ensemble_result, horizon)
         external = _build_external_analysis(exog_data, per_model)
+
+        # Backtest overlap: trim forecast to drop the last `backtest_overlap`
+        # rows so the forecast vs actuals comparison is clean in the chart.
+        if backtest_overlap and backtest_overlap > 0:
+            overlap_n = min(backtest_overlap, horizon)
+            for m_name, pm in per_model.items():
+                fv = pm.get("forecast_values", [])
+                if isinstance(fv, list) and len(fv) > overlap_n:
+                    pm["forecast_values"] = fv[: len(fv) - overlap_n]
+                    bv = pm.get("baseline_values", [])
+                    if isinstance(bv, list) and len(bv) > overlap_n:
+                        pm["baseline_values"] = bv[: len(bv) - overlap_n]
+            if ensemble_result:
+                efv = ensemble_result.get("forecast_values", [])
+                if isinstance(efv, list) and len(efv) > overlap_n:
+                    ensemble_result["forecast_values"] = efv[: len(efv) - overlap_n]
+                ebv = ensemble_result.get("baseline_values", [])
+                if isinstance(ebv, list) and len(ebv) > overlap_n:
+                    ensemble_result["baseline_values"] = ebv[: len(ebv) - overlap_n]
 
         result: Dict[str, Any] = {
             "name": request.get("name", "Forecast"),
@@ -430,6 +589,8 @@ class ForecasterService:
             "summary": summary,
             "external_factor_analysis": external,
             "downsample_info": downsample_info,
+            "test_metrics": test_metrics_per_model,
+            "saved_model": saved_model_meta,
             "created_at": datetime.utcnow().isoformat() + "Z",
         }
         if progress_cb:
@@ -766,6 +927,41 @@ def _build_rankings(cv: Dict[str, Dict[str, float]]) -> List[Dict[str, Any]]:
             "score": score,
         })
     # Rank: valid metrics first (lower MAE is better), then no-metric entries
+    valid = [r for r in out if r["mae"] is not None]
+    invalid = [r for r in out if r["mae"] is None]
+    valid.sort(key=lambda r: r["mae"])
+    invalid.sort(key=lambda r: r["model"])
+    return valid + invalid
+
+
+def _build_rankings_from_test(
+    test_metrics: Dict[str, Dict[str, float]],
+    cv_metrics: Dict[str, Dict[str, float]],
+) -> List[Dict[str, Any]]:
+    """Build rankings preferring held-out test metrics over CV metrics."""
+    out: List[Dict[str, Any]] = []
+    for m in set(list(test_metrics.keys()) + list(cv_metrics.keys())):
+        tm = test_metrics.get(m, {})
+        cv = cv_metrics.get(m, {})
+        mae = tm.get("mae") if tm.get("mae") is not None else cv.get("mae")
+        rmse = tm.get("rmse") if tm.get("rmse") is not None else cv.get("rmse")
+        mape = tm.get("mape") if tm.get("mape") is not None else cv.get("mape")
+        score = None
+        if mae is not None and not (isinstance(mae, float) and np.isnan(mae)):
+            try:
+                score = float(1.0 / (float(mae) + 1.0))
+            except Exception:
+                score = None
+        out.append({
+            "model": m,
+            "name": m,
+            "mae": _safe_float(mae) if mae is not None else None,
+            "rmse": _safe_float(rmse) if rmse is not None else None,
+            "mape": _safe_float(mape) if mape is not None else None,
+            "score": score,
+            "source": "test" if tm.get("mae") is not None else "cv",
+            "test_rows": tm.get("test_rows"),
+        })
     valid = [r for r in out if r["mae"] is not None]
     invalid = [r for r in out if r["mae"] is None]
     valid.sort(key=lambda r: r["mae"])

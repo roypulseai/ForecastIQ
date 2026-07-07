@@ -120,6 +120,20 @@ class ForecastRequest(BaseModel):
     aggregation: Optional[AggregationConfig] = None
     country: Optional[str] = None
     notes: Optional[str] = None
+    # Train/test split for proper held-out evaluation.
+    # When < 1.0, the last (1 - ratio) rows are held out as the test set.
+    # Models are trained on the train portion; the test set is used to
+    # compute honest MAE/RMSE/MAPE before generating the forecast.
+    # 1.0 (default) = no split, train on all data.
+    train_test_split: float = Field(default=1.0, ge=0.5, le=1.0)
+    # How many of the last actuals to overlay with the forecast in the
+    # results chart, for visual backtesting. 0 = no overlap (forecast only).
+    backtest_overlap: int = Field(default=0, ge=0, le=365)
+    # Save the best model to the registry after a successful run.
+    save_model: bool = False
+    save_model_name: Optional[str] = None
+    save_model_tags: Optional[List[str]] = None
+    save_model_notes: Optional[str] = None
 
 
 class ForecastValue(BaseModel):

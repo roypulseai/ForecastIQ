@@ -226,6 +226,18 @@ export interface ForecastRequest {
   aggregation?: AggregationConfig;
   country?: string;
   notes?: string;
+  // Train/test split for proper evaluation (0..1). Default 1.0 = no split.
+  // When < 1.0, the last (1-ratio) rows are held out and the test metrics
+  // are computed before forecasting the next horizon.
+  train_test_split?: number;
+  // How many of the last actuals to overlay with the forecast (backtesting).
+  // E.g. 30 means the chart shows the last 30 days of actuals alongside the
+  // forecast so you can visually compare. 0 = no overlap.
+  backtest_overlap?: number;
+  // Save the best model to the registry after a successful run.
+  save_model?: boolean;
+  // Optional name for the saved model.
+  save_model_name?: string;
 }
 
 export interface ForecastValue {

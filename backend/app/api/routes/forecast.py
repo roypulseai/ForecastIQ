@@ -106,7 +106,13 @@ def _build_response_from_result(
         model_rankings=rankings,
         summary=summary_obj,
     )
-    return to_python(response.model_dump())
+    out = to_python(response.model_dump())
+    # Augment with extras the schema doesn't capture
+    out["test_metrics"] = result.get("test_metrics") or {}
+    out["saved_model"] = result.get("saved_model")
+    out["downsample_info"] = result.get("downsample_info")
+    out["ensemble"] = result.get("ensemble") is not None
+    return out
 
 
 @router.post("/forecast")
