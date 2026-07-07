@@ -10,10 +10,12 @@ import {
   CircularProgress,
   Divider,
   Grid,
+  IconButton,
   LinearProgress,
   Stack,
   Typography,
 } from '@mui/material';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import DownloadIcon from '@mui/icons-material/Download';
 import InsightsIcon from '@mui/icons-material/Insights';
 import StorageIcon from '@mui/icons-material/Storage';
@@ -350,6 +352,18 @@ export function DataUploadPage(): ReactNode {
                           {f.uploaded_at ? formatDate(f.uploaded_at, true) : 'just now'}
                         </Typography>
                       </Box>
+                      <IconButton
+                        size="small"
+                        color="error"
+                        onClick={() => {
+                          if (window.confirm(`Delete "${f.filename}"?`)) {
+                            handleDelete(f);
+                          }
+                        }}
+                        aria-label={`Delete ${f.filename}`}
+                      >
+                        <DeleteOutlineIcon fontSize="small" />
+                      </IconButton>
                     </Stack>
                   ))}
               </Stack>

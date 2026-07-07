@@ -312,6 +312,11 @@ export interface ForecastDetail {
   ensemble?: EnsembleResult | null;
   external_factor_analysis?: ExternalFactorAnalysis | null;
   summary?: ForecastSummary | null;
+  test_metrics?: Record<string, { mae: number | null; rmse: number | null; mape: number | null; test_rows?: number }>;
+  saved_model?: SavedModelMeta | null;
+  downsample_info?: DownsampleInfo | null;
+  best_model?: string | null;
+  model_rankings?: ModelRanking[];
 }
 
 export interface ForecastListItem {

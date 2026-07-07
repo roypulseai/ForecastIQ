@@ -8,6 +8,7 @@ import {
   CardContent,
   Chip,
   CircularProgress,
+  Collapse,
   Divider,
   FormControl,
   FormControlLabel,
@@ -16,11 +17,14 @@ import {
   LinearProgress,
   MenuItem,
   Select,
+  Slider,
   Stack,
   Switch,
   TextField,
+  Tooltip,
   Typography,
 } from '@mui/material';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import { PageContainer } from '../components/layout/PageContainer';
@@ -80,6 +84,10 @@ const initialRequest = (dateColumn: string, valueColumn: string): ForecastReques
   include_competitor: false,
   include_economic: false,
   aggregation: DEFAULT_AGGREGATION,
+  train_test_split: 1.0,
+  backtest_overlap: 0,
+  save_model: false,
+  save_model_name: '',
 });
 
 interface ExternalState {
@@ -220,6 +228,10 @@ export function ForecastPage(): ReactNode {
       ensemble_models: useEnsemble && request.ensemble_models?.length ? request.ensemble_models : undefined,
       aggregation: useAggregation ? request.aggregation : undefined,
       parameters: Object.keys(request.parameters ?? {}).length > 0 ? request.parameters : undefined,
+      train_test_split: request.train_test_split ?? 1.0,
+      backtest_overlap: request.backtest_overlap ?? 0,
+      save_model: request.save_model ?? false,
+      save_model_name: request.save_model_name || undefined,
     };
     try {
       setError(null);
@@ -496,6 +508,82 @@ export function ForecastPage(): ReactNode {
                       </MenuItem>
                     ))}
                   </TextField>
+                </Grid>
+              </Grid>
+
+              <Divider sx={{ my: 3 }} />
+              <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>
+                Evaluation & persistence
+              </Typography>
+              <Grid container spacing={3}>
+                <Grid item xs={12} sm={6}>
+                  <Typography variant="body2" color="text.secondary" gutterBottom>
+                    Train/test split
+                    <Tooltip title="Fraction of data used for training. The rest is held out for evaluation. 1.0 = no split.">
+                      <InfoOutlinedIcon sx={{ fontSize: 14, ml: 0.5, verticalAlign: 'text-top', color: 'text.disabled' }} />
+                    </Tooltip>
+                  </Typography>
+                  <Slider
+                    value={request.train_test_split ?? 1.0}
+                    min={0.5}
+                    max={1.0}
+                    step={0.05}
+                    marks={[
+                      { value: 0.5, label: '50%' },
+                      { value: 0.8, label: '80%' },
+                      { value: 1.0, label: '100%' },
+                    ]}
+                    onChange={(_, v) => update('train_test_split', v as number)}
+                    valueLabelDisplay="auto"
+                    valueLabelFormat={(v) => `${(v * 100).toFixed(0)}%`}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <Typography variant="body2" color="text.secondary" gutterBottom>
+                    Backtest overlap (days)
+                    <Tooltip title="Number of recent actual days to overlay on the forecast chart for visual comparison. 0 = no overlap.">
+                      <InfoOutlinedIcon sx={{ fontSize: 14, ml: 0.5, verticalAlign: 'text-top', color: 'text.disabled' }} />
+                    </Tooltip>
+                  </Typography>
+                  <Slider
+                    value={request.backtest_overlap ?? 0}
+                    min={0}
+                    max={365}
+                    step={1}
+                    marks={[
+                      { value: 0, label: '0' },
+                      { value: 30, label: '30d' },
+                      { value: 90, label: '90d' },
+                      { value: 365, label: '365d' },
+                    ]}
+                    onChange={(_, v) => update('backtest_overlap', v as number)}
+                    valueLabelDisplay="auto"
+                    valueLabelFormat={(v) => `${v}d`}
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={request.save_model ?? false}
+                        onChange={(_, c) => update('save_model', c)}
+                      />
+                    }
+                    label="Save best model to registry after run"
+                  />
+                  <Collapse in={request.save_model ?? false}>
+                    <Box sx={{ mt: 1.5, pl: 4 }}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Model name (optional)"
+                        placeholder="Leave blank for auto-name"
+                        value={request.save_model_name ?? ''}
+                        onChange={(e) => update('save_model_name', e.target.value)}
+                        inputProps={{ maxLength: 120 }}
+                      />
+                    </Box>
+                  </Collapse>
                 </Grid>
               </Grid>
             </CardContent>

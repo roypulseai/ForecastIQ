@@ -32,7 +32,9 @@ export function useFileData(fileId: string | null | undefined, limit = 5000) {
       return apiClient.getFileData(fileId, limit);
     },
     enabled: !!fileId,
-    staleTime: 60_000,
+    staleTime: 30_000,
+    retry: 2,
+    retryDelay: 1000,
   });
 }
 

@@ -6,6 +6,7 @@ import {
   ComposedChart,
   Legend,
   Line,
+  ReferenceArea,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -226,6 +227,16 @@ export function ForecastChart({
                   stroke={theme.palette.text.disabled}
                   strokeDasharray="3 3"
                   label={{ value: 'Forecast start', position: 'top', fontSize: 10, fill: theme.palette.text.secondary }}
+                />
+              )}
+              {boundary && detail.request.backtest_overlap && detail.request.backtest_overlap > 0 && actuals.length > 0 && (
+                <ReferenceArea
+                  x1={actuals.slice(-detail.request.backtest_overlap)[0]?.date ?? boundary}
+                  x2={boundary}
+                  fill={theme.palette.warning.light}
+                  fillOpacity={0.08}
+                  stroke="none"
+                  label={{ value: 'Backtest zone', position: 'insideTopLeft', fontSize: 10, fill: theme.palette.warning.main }}
                 />
               )}
               <Area

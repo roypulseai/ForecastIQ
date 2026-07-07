@@ -60,7 +60,7 @@ export function DataExplorePage(): ReactNode {
 
   // If we have a file but no analysis, kick one off automatically.
   useEffect(() => {
-    if (fileIdToUse && !analysisData) {
+    if (fileIdToUse && !analysisData && !analyzeMut.isPending) {
       analyzeMut.mutate(fileIdToUse, {
         onError: (e) => setError(getErrorMessage(e)),
       });
@@ -71,16 +71,22 @@ export function DataExplorePage(): ReactNode {
       setAnalysisData(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fileIdToUse]);
+  }, [fileIdToUse, analysisData]);
 
   // Build real series from the file rows
-  const { dates, values } = useMemo(() => {
-    if (!analysisData || !fileDataQuery.data) {
-      return { dates: [] as string[], values: [] as number[] };
+  const { dates, values, errorMsg } = useMemo(() => {
+    if (!analysisData) {
+      return { dates: [] as string[], values: [] as number[], errorMsg: null as string | null };
+    }
+    if (!fileDataQuery.data) {
+      return { dates: [] as string[], values: [] as number[], errorMsg: fileDataQuery.error ? getErrorMessage(fileDataQuery.error) : null };
     }
     const dc = analysisData.validation.date_column || 'date';
     const vc = analysisData.validation.value_column || 'value';
     const rows = fileDataQuery.data.rows;
+    if (!rows || rows.length === 0) {
+      return { dates: [] as string[], values: [] as number[], errorMsg: `No rows returned for file` };
+    }
     const ds: string[] = [];
     const vs: number[] = [];
     for (const r of rows) {
@@ -98,8 +104,9 @@ export function DataExplorePage(): ReactNode {
     return {
       dates: pairs.map((p) => p[0]),
       values: pairs.map((p) => p[1]),
+      errorMsg: null,
     };
-  }, [analysisData, fileDataQuery.data]);
+  }, [analysisData, fileDataQuery.data, fileDataQuery.error]);
 
   const handleAnalyze = async () => {
     if (!fileIdToUse) return;
@@ -111,12 +118,12 @@ export function DataExplorePage(): ReactNode {
     }
   };
 
-  if (filesQuery.isLoading || (fileIdToUse && fileDataQuery.isLoading)) {
+  if (filesQuery.isLoading || (fileIdToUse && (fileDataQuery.isLoading || fileDataQuery.isFetching))) {
     return (
       <PageContainer title="Explore data">
         <Stack alignItems="center" sx={{ py: 8 }}>
           <CircularProgress />
-          <Typography sx={{ mt: 2 }}>Loading…</Typography>
+          <Typography sx={{ mt: 2 }}>Loading data…</Typography>
         </Stack>
       </PageContainer>
     );
@@ -209,6 +216,11 @@ export function DataExplorePage(): ReactNode {
       {error && (
         <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
           {error}
+        </Alert>
+      )}
+      {errorMsg && (
+        <Alert severity="warning" sx={{ mb: 3 }}>
+          {errorMsg}
         </Alert>
       )}
 

@@ -8,6 +8,7 @@ import {
   CardContent,
   Chip,
   CircularProgress,
+  Divider,
   FormControlLabel,
   Grid,
   IconButton,
@@ -43,6 +44,7 @@ export function ResultsPage(): ReactNode {
   const currentForecastId = useStore((s) => s.currentForecastId);
   const setCurrentForecastId = useStore((s) => s.setCurrentForecastId);
   const forecasts = useStore((s) => s.forecasts);
+  const uploadedFiles = useStore((s) => s.uploadedFiles);
   const listQuery = useForecastList();
   const filesQuery = useFiles();
   const resultQuery = useForecastResult(currentForecastId);
@@ -55,9 +57,10 @@ export function ResultsPage(): ReactNode {
 
   // Find the sales file used by the current forecast
   const salesFile = useMemo(() => {
-    if (!filesQuery.data) return null;
-    return filesQuery.data.find((f) => f.type === 'sales') ?? null;
-  }, [filesQuery.data]);
+    const fromQuery = filesQuery.data?.find((f) => f.type === 'sales') ?? null;
+    if (fromQuery) return fromQuery;
+    return uploadedFiles.find((f) => f.type === 'sales') ?? null;
+  }, [filesQuery.data, uploadedFiles]);
   const fileDataQuery = useFileData(salesFile?.file_id, 5000);
 
   // Compute historical actuals for the chart. The forecast detail includes
@@ -319,7 +322,10 @@ export function ResultsPage(): ReactNode {
                 <Grid container spacing={2}>
                   {Object.values(resultQuery.data.results).map((r) => (
                     <Grid key={r.model_name} item xs={12} sm={6} md={4}>
-                      <ModelMetricsCard result={r} />
+                      <ModelMetricsCard
+                        result={r}
+                        testMetrics={resultQuery.data?.test_metrics?.[r.model_name] ?? null}
+                      />
                     </Grid>
                   ))}
                 </Grid>
@@ -377,7 +383,7 @@ function ForecastRow({
   );
 }
 
-function ModelMetricsCard({ result }: { result: ModelResult }): ReactNode {
+function ModelMetricsCard({ result, testMetrics }: { result: ModelResult; testMetrics?: { mae: number | null; rmse: number | null; mape: number | null } | null }): ReactNode {
   const m = result.metrics;
   return (
     <Card>
@@ -386,10 +392,24 @@ function ModelMetricsCard({ result }: { result: ModelResult }): ReactNode {
           {result.model_name.toUpperCase()}
         </Typography>
         <Stack spacing={1} sx={{ mt: 1 }}>
+          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+            Cross-validation metrics
+          </Typography>
           <MetricRow label="MAE" value={m.mae} />
           <MetricRow label="RMSE" value={m.rmse} />
           <MetricRow label="MAPE" value={m.mape} fmt="pct" />
           <MetricRow label="R²" value={m.r2} />
+          {testMetrics && testMetrics.mae != null && (
+            <>
+              <Divider sx={{ my: 0.5 }} />
+              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+                Held-out test metrics
+              </Typography>
+              <MetricRow label="Test MAE" value={testMetrics.mae} />
+              <MetricRow label="Test RMSE" value={testMetrics.rmse} />
+              <MetricRow label="Test MAPE" value={testMetrics.mape} fmt="pct" />
+            </>
+          )}
           {result.error && (
             <Alert severity="warning">
               {result.error}
