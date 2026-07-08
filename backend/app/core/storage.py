@@ -47,6 +47,7 @@ class FileMetadataStore:
         self._lock = threading.RLock()
         self._files_index = self.data_dir / self.FILES_INDEX
         self._forecasts_index = self.data_dir / self.FORECASTS_INDEX
+        self._df_cache: Dict[str, pd.DataFrame] = {}
         if not self._files_index.exists():
             self._write_json(self._files_index, {})
 
@@ -133,6 +134,8 @@ class FileMetadataStore:
         return index.get(file_id)
 
     def get_dataframe(self, file_id: str) -> Optional[pd.DataFrame]:
+        if file_id in self._df_cache:
+            return self._df_cache[file_id]
         entry = self.get_file(file_id)
         if not entry:
             return None
@@ -141,8 +144,11 @@ class FileMetadataStore:
             return None
         try:
             if path.suffix == ".parquet":
-                return pd.read_parquet(path)
-            return pd.read_csv(path)
+                df = pd.read_parquet(path)
+            else:
+                df = pd.read_csv(path)
+            self._df_cache[file_id] = df
+            return df
         except Exception:
             return None
 
@@ -153,6 +159,7 @@ class FileMetadataStore:
             if entry is None:
                 return False
             self._write_json(self._files_index, index)
+            self._df_cache.pop(file_id, None)
         # Remove from disk (best effort)
         for p in (entry.get("dataset_path"), entry.get("raw_path")):
             if p:

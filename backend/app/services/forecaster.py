@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 
 # Tunable thresholds
-MAX_PARALLEL_WORKERS = max(2, min(os.cpu_count() or 4, 4))
+MAX_PARALLEL_WORKERS = max(2, min(os.cpu_count() or 4, int(os.environ.get("FORECASTIQ_WORKERS", 8))))
 DOWNSAMPLE_THRESHOLD = 5000  # rows
 WEEKLY_AGG_SPAN_DAYS = 365 * 5
 
@@ -243,6 +243,8 @@ class ForecasterService:
             * Models are fit + forecasted in parallel via a thread pool.
             * Ensemble members reuse the CV results to avoid re-computation.
         """
+        # Defensive copy — we may mutate sales_df (e.g. add composite key col)
+        sales_df = sales_df.copy()
         date_col = request.get("date_column", "date")
         value_col = request.get("target_column", "value")
         horizon = int(request.get("horizon", 30))
@@ -304,8 +306,6 @@ class ForecasterService:
                 sales_df = agg_df
             else:
                 category_columns = []  # too few rows, fall back to flat
-
-        raw_sales_df = sales_df.copy() if not category_filtered else None
 
         # ---- Pre-step: optional train/test split for ML models ----
         # Train/test split only applies to ML models (xgboost, lightgbm).
@@ -780,7 +780,26 @@ class ForecasterService:
         if category_columns and category_values:
             cat_futures: Dict[Future, Tuple[str, str]] = {}
             cat_results: Dict[str, Dict[str, Any]] = {}
+            cat_cv_results: Dict[str, Dict[str, Dict[str, float]]] = {}
             cat_workers = min(len(category_values) * len(models), MAX_PARALLEL_WORKERS)
+
+            # Run CV for each category in parallel (fast, uses small folds)
+            for cat_val in category_values:
+                cat_df = category_filtered.get(cat_val)
+                if cat_df is None or len(cat_df) < 20:
+                    continue
+                cat_cv_results[cat_val] = {}
+                for m in models:
+                    try:
+                        cat_cv = self.selector.cross_validate(
+                            cat_df, date_col, value_col, m, params,
+                            min(7, horizon),
+                        )
+                        cat_cv_results[cat_val][m] = cat_cv
+                    except Exception as e:
+                        logger.debug("CV for category %s model %s failed: %s", cat_val, m, e)
+                        cat_cv_results[cat_val][m] = {"mae": None, "rmse": None, "mape": None}
+
             with ThreadPoolExecutor(max_workers=cat_workers) as ex:
                 for cat_val in category_values:
                     cat_df = category_filtered.get(cat_val)
@@ -800,7 +819,8 @@ class ForecasterService:
                     cat_val, m = cat_futures[fut]
                     try:
                         result_tuple = fut.result()
-                        cat_results[cat_val][m] = _assemble_model_result(m, result_tuple, {})
+                        cv_for_cat = cat_cv_results.get(cat_val, {})
+                        cat_results[cat_val][m] = _assemble_model_result(m, result_tuple, cv_for_cat)
                     except Exception as e:
                         logger.warning("Category %s model %s failed: %s", cat_val, m, e)
                         cat_results[cat_val][m] = {

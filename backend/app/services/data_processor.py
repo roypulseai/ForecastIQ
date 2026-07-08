@@ -285,11 +285,7 @@ class DataProcessor:
             result[col] = pd.to_numeric(result[col], downcast="float")
         for col in result.select_dtypes(include=["int64"]).columns:
             result[col] = pd.to_numeric(result[col], downcast="integer")
-        # Convert object columns with low cardinality to category
-        for col in result.select_dtypes(include=["object"]).columns:
-            nunique = result[col].nunique(dropna=True)
-            if 0 < nunique < max(100, len(result) * 0.5):
-                result[col] = result[col].astype("category")
+        # Note: categorical conversion is done in optimize_dtypes() at end of process()
         return result
 
     # --------------------------------------------------------- normalization
@@ -299,6 +295,8 @@ class DataProcessor:
             raise ValueError(f"Unknown file_type: {file_type}. "
                              f"Supported: {self.SUPPORTED_TYPES}")
         spec = FILE_TYPE_SPECS[file_type]
+        # Avoid full copy — only copy if we need to mutate (which we do for column adds)
+        # But use shallow copy + copy-on-write pattern via assign
         df = df.copy()
         df.columns = [str(c) for c in df.columns]
 

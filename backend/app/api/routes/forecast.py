@@ -234,12 +234,10 @@ async def _create_forecast_impl(
     )
 
     if async_mode:
-        sales_copy = sales_df.copy()
-        exog_copy = {k: v.copy() for k, v in (exog_data or {}).items()}
         jm = get_job_manager()
 
         def _task() -> Dict[str, Any]:
-            result = service.run(sales_copy, request_dict, exog_data=exog_copy)
+            result = service.run(sales_df, request_dict, exog_data=exog_data)
             forecast_id = storage.save_forecast(result)
             return {"result": result, "forecast_id": forecast_id}
 
