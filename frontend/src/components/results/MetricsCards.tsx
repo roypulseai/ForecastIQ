@@ -2,6 +2,9 @@ import type { ReactNode } from 'react';
 import { Box, Card, CardContent, Stack, Typography } from '@mui/material';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import TrendingDownIcon from '@mui/icons-material/TrendingDown';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import { alpha, useTheme } from '@mui/material/styles';
 import { formatCurrency, formatNumber, formatPct } from '../../utils/format';
 import type { ForecastSummary, ModelRanking } from '../../types';
@@ -19,9 +22,10 @@ interface MetricCardProps {
   helper?: string;
   trend?: 'up' | 'down' | 'flat';
   tone?: 'primary' | 'success' | 'warning' | 'error' | 'info';
+  icon?: ReactNode;
 }
 
-function MetricCard({ label, value, helper, trend, tone = 'primary' }: MetricCardProps): ReactNode {
+function MetricCard({ label, value, helper, trend, tone = 'primary', icon }: MetricCardProps): ReactNode {
   const theme = useTheme();
   const color = theme.palette[tone].main;
   const bg = `${alpha(color, 0.08)}`;
@@ -58,7 +62,7 @@ function MetricCard({ label, value, helper, trend, tone = 'primary' }: MetricCar
               justifyContent: 'center',
             }}
           >
-            {TrendIcon ? <TrendIcon sx={{ color: trendColor }} /> : <Box sx={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: color }} />}
+            {icon ?? (TrendIcon ? <TrendIcon sx={{ color: trendColor }} /> : <Box sx={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: color }} />)}
           </Box>
         </Stack>
       </CardContent>
@@ -86,6 +90,20 @@ export function MetricsCards({
         ? 'up'
         : 'down';
 
+  const accuracy = best?.forecast_accuracy ?? null;
+  const grade = best?.accuracy_grade ?? null;
+  const accuracyTone: 'success' | 'info' | 'warning' | 'error' =
+    !accuracy ? 'info'
+      : accuracy >= 90 ? 'success'
+        : accuracy >= 80 ? 'info'
+          : accuracy >= 70 ? 'warning'
+            : 'error';
+  const accuracyIcon =
+    !accuracy ? null
+      : accuracy >= 80 ? <CheckCircleIcon />
+        : accuracy >= 70 ? <WarningAmberIcon />
+          : <ErrorOutlineIcon />;
+
   return (
     <Box
       sx={{
@@ -105,10 +123,11 @@ export function MetricsCards({
         tone="primary"
       />
       <MetricCard
-        label="Baseline"
-        value={targetCurrency ? formatCurrency(summary?.total_baseline, targetCurrency) : formatNumber(summary?.total_baseline)}
-        helper="no-external-factors scenario"
-        tone="info"
+        label="Forecast accuracy"
+        value={accuracy != null ? `${accuracy.toFixed(0)}%` : '—'}
+        helper={grade ? `Grade: ${grade} · ${best?.model ?? ''}` : 'awaiting run'}
+        tone={accuracyTone}
+        icon={accuracyIcon}
       />
       <MetricCard
         label="Total uplift"
@@ -126,7 +145,7 @@ export function MetricsCards({
         value={bestModel ? bestModel.toUpperCase() : '—'}
         helper={
           best
-            ? `MAPE ${best.mape !== null && best.mape !== undefined ? formatPct(best.mape) : '—'} · MAE ${formatNumber(best.mae, 1)}`
+            ? `MAPE ${best.mape !== null && best.mape !== undefined ? `${best.mape.toFixed(1)}%` : '—'} · MAE ${formatNumber(best.mae, 1)}`
             : 'awaiting run'
         }
         tone="success"

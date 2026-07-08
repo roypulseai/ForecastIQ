@@ -379,6 +379,8 @@ export interface ModelRanking {
   rmse?: number | null;
   mape?: number | null;
   score?: number | null;
+  forecast_accuracy?: number | null;
+  accuracy_grade?: string | null;
 }
 
 export interface ModelResult {

@@ -446,10 +446,13 @@ class ForecasterService:
                     # Merge into the per-model metrics dict
                     if "metrics" not in pm:
                         pm["metrics"] = {}
+                    test_acc = _compute_forecast_accuracy(test_metrics.mape)
                     pm["metrics"].update({
                         "test_mae": test_metrics.mae,
                         "test_rmse": test_metrics.rmse,
                         "test_mape": test_metrics.mape,
+                        "test_forecast_accuracy": test_acc,
+                        "test_accuracy_grade": _accuracy_grade(test_acc),
                     })
             logger.info(
                 "Test metrics per model: %s",
@@ -875,6 +878,32 @@ class ForecasterService:
             return {}
 
 
+def _compute_forecast_accuracy(mape: Optional[float]) -> Optional[float]:
+    """Convert MAPE (%) to a business-friendly accuracy percentage (0-100).
+
+    MAPE is already a percentage (e.g. 1.5 = 1.5% error), so accuracy
+    is simply 100 - MAPE, clamped to [0, 100].
+    """
+    if mape is None or (isinstance(mape, float) and np.isnan(mape)):
+        return None
+    return max(0.0, min(100.0, 100.0 - mape))
+
+
+def _accuracy_grade(accuracy: Optional[float]) -> Optional[str]:
+    """Letter-style grade based on forecast accuracy."""
+    if accuracy is None:
+        return None
+    if accuracy >= 90:
+        return "Excellent"
+    if accuracy >= 80:
+        return "Good"
+    if accuracy >= 70:
+        return "Fair"
+    if accuracy >= 60:
+        return "Marginal"
+    return "Poor"
+
+
 def _assemble_model_result(
     model_type: str,
     result_tuple: Tuple,
@@ -898,10 +927,16 @@ def _assemble_model_result(
     for k in ("mae", "rmse", "mape"):
         if cv.get(k) is not None and not (isinstance(cv[k], float) and np.isnan(cv[k])):
             metrics[k] = float(cv[k])
+    mape = metrics.get("mape")
+    forecast_accuracy = _compute_forecast_accuracy(mape)
     return {
         "model_name": model.name,
         "model": model_type,
-        "metrics": metrics,
+        "metrics": {
+            **metrics,
+            "forecast_accuracy": forecast_accuracy,
+            "accuracy_grade": _accuracy_grade(forecast_accuracy),
+        },
         "forecast_values": forecast,
         "baseline_values": baseline,
         "feature_importance": fi,
@@ -972,6 +1007,7 @@ def _build_rankings(cv: Dict[str, Dict[str, float]]) -> List[Dict[str, Any]]:
                 score = float(1.0 / (float(mae) + 1.0))
             except Exception:
                 score = None
+        forecast_accuracy = _compute_forecast_accuracy(mape)
         out.append({
             "model": m,
             "name": m,
@@ -979,6 +1015,8 @@ def _build_rankings(cv: Dict[str, Dict[str, float]]) -> List[Dict[str, Any]]:
             "rmse": _safe_float(rmse) if rmse is not None else None,
             "mape": _safe_float(mape) if mape is not None else None,
             "score": score,
+            "forecast_accuracy": forecast_accuracy,
+            "accuracy_grade": _accuracy_grade(forecast_accuracy),
         })
     # Rank: valid metrics first (lower MAE is better), then no-metric entries
     valid = [r for r in out if r["mae"] is not None]
@@ -1006,6 +1044,7 @@ def _build_rankings_from_test(
                 score = float(1.0 / (float(mae) + 1.0))
             except Exception:
                 score = None
+        forecast_accuracy = _compute_forecast_accuracy(mape)
         out.append({
             "model": m,
             "name": m,
@@ -1013,6 +1052,8 @@ def _build_rankings_from_test(
             "rmse": _safe_float(rmse) if rmse is not None else None,
             "mape": _safe_float(mape) if mape is not None else None,
             "score": score,
+            "forecast_accuracy": forecast_accuracy,
+            "accuracy_grade": _accuracy_grade(forecast_accuracy),
             "source": "test" if tm.get("mae") is not None else "cv",
             "test_rows": tm.get("test_rows"),
         })

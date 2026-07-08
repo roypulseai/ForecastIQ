@@ -485,6 +485,15 @@ function ForecastRow({
 
 function ModelMetricsCard({ result, testMetrics }: { result: ModelResult; testMetrics?: { mae: number | null; rmse: number | null; mape: number | null } | null }): ReactNode {
   const m = result.metrics;
+  const accuracy = m?.forecast_accuracy ?? null;
+  const grade = m?.accuracy_grade ?? null;
+  const testAccuracy = m?.test_forecast_accuracy ?? null;
+  const accuracyTone: 'success' | 'info' | 'warning' | 'error' =
+    !accuracy ? 'info'
+      : accuracy >= 90 ? 'success'
+        : accuracy >= 80 ? 'info'
+          : accuracy >= 70 ? 'warning'
+            : 'error';
   return (
     <Card>
       <CardContent>
@@ -499,6 +508,12 @@ function ModelMetricsCard({ result, testMetrics }: { result: ModelResult; testMe
           <MetricRow label="RMSE" value={m.rmse} />
           <MetricRow label="MAPE" value={m.mape} fmt="pct" />
           <MetricRow label="R²" value={m.r2} />
+          {accuracy != null && (
+            <>
+              <MetricRow label="Forecast accuracy" value={accuracy} fmt="pct" tone={accuracyTone} />
+              {grade && <MetricRow label="Grade" value={grade} fmt="str" />}
+            </>
+          )}
           {testMetrics && testMetrics.mae != null && (
             <>
               <Divider sx={{ my: 0.5 }} />
@@ -508,6 +523,9 @@ function ModelMetricsCard({ result, testMetrics }: { result: ModelResult; testMe
               <MetricRow label="Test MAE" value={testMetrics.mae} />
               <MetricRow label="Test RMSE" value={testMetrics.rmse} />
               <MetricRow label="Test MAPE" value={testMetrics.mape} fmt="pct" />
+              {testAccuracy != null && (
+                <MetricRow label="Test accuracy" value={testAccuracy} fmt="pct" tone={accuracyTone} />
+              )}
             </>
           )}
           {result.error && (
@@ -525,22 +543,26 @@ function MetricRow({
   label,
   value,
   fmt = 'num',
+  tone,
 }: {
   label: string;
-  value: number | undefined | null;
-  fmt?: 'num' | 'pct';
+  value: number | string | undefined | null;
+  fmt?: 'num' | 'pct' | 'str';
+  tone?: 'success' | 'info' | 'warning' | 'error';
 }): ReactNode {
   return (
     <Stack direction="row" justifyContent="space-between" alignItems="center">
       <Typography variant="body2" color="text.secondary">
         {label}
       </Typography>
-      <Typography variant="body2" sx={{ fontWeight: 600 }}>
-        {value === null || value === undefined || !Number.isFinite(value)
+      <Typography variant="body2" sx={{ fontWeight: 600, color: tone ? `${tone}.main` : undefined }}>
+        {value === null || value === undefined || value === '' || (typeof value === 'number' && !Number.isFinite(value))
           ? '—'
           : fmt === 'pct'
-            ? `${(value * 100).toFixed(2)}%`
-            : value.toFixed(2)}
+            ? `${Number(value).toFixed(1)}%`
+            : fmt === 'str'
+              ? String(value)
+              : Number(value).toFixed(2)}
       </Typography>
     </Stack>
   );
