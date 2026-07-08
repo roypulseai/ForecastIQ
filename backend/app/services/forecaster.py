@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 import os
 import traceback
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -258,33 +258,54 @@ class ForecasterService:
         save_model_name = request.get("save_model_name")
         save_model_tags = request.get("save_model_tags") or []
         save_model_notes = request.get("save_model_notes", "")
-        category_column = request.get("category_column") or None
-
         # ---- Pre-step: hierarchical / per-category forecasting ----
-        # When a category_column is set (e.g. "region", "product"), the data
-        # has multiple rows per date (one per category).  We first aggregate
-        # to a single series for the main pipeline, then run lightweight
-        # per-category forecasts.
+        # Accept either new `category_columns` (list) or deprecated `category_column` (str).
+        category_columns: List[str] = []
+        raw_col_val = request.get("category_columns") or request.get("category_column") or None
+        if isinstance(raw_col_val, str):
+            category_columns = [raw_col_val]
+        elif isinstance(raw_col_val, list):
+            category_columns = [c for c in raw_col_val if isinstance(c, str) and c in sales_df.columns]
+
         category_values: List[str] = []
         category_filtered: Dict[str, pd.DataFrame] = {}
-        raw_sales_df = sales_df.copy()  # keep original for per-category forecasts
-        if category_column and category_column in sales_df.columns:
-            # Get unique category values
-            cats = sales_df[category_column].dropna().unique()
-            category_values = sorted(str(c) for c in cats)
-            # Aggregate the main sales_df: group by date, sum value across categories
+        category_column_values: Dict[str, Dict[str, str]] = {}
+        COMPOSITE_SEP = " ||| "
+
+        if category_columns:
+            # Create a composite key column from all category columns
+            composite_key_col = "_composite_cat_key"
+            sales_df[composite_key_col] = (
+                sales_df[category_columns].astype(str).apply(
+                    lambda r: COMPOSITE_SEP.join(r.values), axis=1
+                )
+            )
+            # Build the mapping from composite key → individual column values
+            for _, row in sales_df[category_columns + [composite_key_col]].drop_duplicates(
+                subset=[composite_key_col]
+            ).iterrows():
+                key = row[composite_key_col]
+                category_column_values[key] = {c: str(row[c]) for c in category_columns}
+
+            # Aggregate the main sales_df: group by date, sum value across all categories
             agg_df = sales_df.groupby(date_col, as_index=False, sort=True)[value_col].sum()
-            # Store per-category DataFrames (also grouped by date)
-            for cv in category_values:
-                mask = sales_df[category_column].astype(str) == cv
-                cat_df = sales_df[mask].groupby(date_col, as_index=False, sort=True)[value_col].sum()
+
+            # Efficient single-pass grouping: group by composite key + date, then split
+            grouped = sales_df.groupby([composite_key_col, date_col], as_index=False, sort=True)[value_col].sum()
+            for key, grp in grouped.groupby(composite_key_col):
+                cat_df = grp.drop(columns=[composite_key_col]).reset_index(drop=True)
                 if len(cat_df) >= 20:
-                    category_filtered[cv] = cat_df
+                    category_filtered[key] = cat_df
+
+            category_values = sorted(category_filtered.keys())
+
             # Replace sales_df with the aggregate for the main pipeline
             if len(agg_df) >= 20:
                 sales_df = agg_df
             else:
-                category_column = None  # too few rows, fall back to flat
+                category_columns = []  # too few rows, fall back to flat
+
+        raw_sales_df = sales_df.copy() if not category_filtered else None
 
         # ---- Pre-step: optional train/test split for ML models ----
         # Train/test split only applies to ML models (xgboost, lightgbm).
@@ -706,31 +727,54 @@ class ForecasterService:
                 except Exception as e:
                     logger.warning("Ensemble backtest re-forecast failed: %s", e)
 
-        # ---- 6) Per-category forecasts (lightweight) ----
-        # When a category_column is used, run a simplified forecast for each
-        # category value.  No tuning, no CV, no ensemble — just fit + forecast.
+        # ---- 6) Per-category forecasts (parallel) ----
+        # Run forecasts for each category value in parallel for speed.
+        # Each (category, model) pair is submitted to a thread pool.
         category_forecasts: Dict[str, Dict[str, Any]] = {}
-        if category_column and category_values:
-            for cat_val in category_values:
-                cat_df = category_filtered.get(cat_val)
-                if cat_df is None or len(cat_df) < 20:
-                    continue
-                cat_per_model: Dict[str, Dict[str, Any]] = {}
-                for m in models:
-                    try:
-                        result_tuple = _fit_and_forecast_one(
+        if category_columns and category_values:
+            cat_futures: Dict[Future, Tuple[str, str]] = {}
+            cat_results: Dict[str, Dict[str, Any]] = {}
+            cat_workers = min(len(category_values) * len(models), MAX_PARALLEL_WORKERS)
+            with ThreadPoolExecutor(max_workers=cat_workers) as ex:
+                for cat_val in category_values:
+                    cat_df = category_filtered.get(cat_val)
+                    if cat_df is None or len(cat_df) < 20:
+                        continue
+                    cat_results.setdefault(cat_val, {})
+                    for m in models:
+                        fut = ex.submit(
+                            _fit_and_forecast_one,
                             m, params, cat_df, date_col, value_col, horizon, exog_data,
                         )
-                        cat_per_model[m] = _assemble_model_result(m, result_tuple, {})
+                        cat_futures[fut] = (cat_val, m)
+
+                cat_done = 0
+                cat_total = len(cat_futures)
+                for fut in as_completed(cat_futures):
+                    cat_val, m = cat_futures[fut]
+                    try:
+                        result_tuple = fut.result()
+                        cat_results[cat_val][m] = _assemble_model_result(m, result_tuple, {})
                     except Exception as e:
                         logger.warning("Category %s model %s failed: %s", cat_val, m, e)
-                        cat_per_model[m] = {
+                        cat_results[cat_val][m] = {
                             "model_name": m, "metrics": {"error": str(e)},
                             "forecast_values": [], "error": str(e),
                         }
-                cat_summary = _build_summary(cat_per_model, None, horizon)
+                    cat_done += 1
+                    if progress_cb and cat_total > 0:
+                        progress_cb(0.90 + 0.05 * (cat_done / cat_total), f"Category forecasts {cat_done}/{cat_total}")
+
+            # Stitch results: add category metadata + build summary
+            for cat_val, per_model in cat_results.items():
+                for m_res in per_model.values():
+                    for fv in m_res.get("forecast_values", []):
+                        fv["category"] = cat_val
+                        for col, val in category_column_values.get(cat_val, {}).items():
+                            fv[col] = val
+                cat_summary = _build_summary(per_model, None, horizon)
                 category_forecasts[cat_val] = {
-                    "results": cat_per_model,
+                    "results": per_model,
                     "summary": cat_summary,
                 }
             if progress_cb:
@@ -749,9 +793,11 @@ class ForecasterService:
             "test_metrics": test_metrics_per_model,
             "saved_model": saved_model_meta,
             "tuning_results": tuning_results,
-            "category_column": category_column,
-            "category_values": category_values if category_column else [],
+            "category_column": category_columns[0] if len(category_columns) == 1 else None,
+            "category_columns": category_columns or None,
+            "category_values": category_values if category_columns else [],
             "category_forecasts": category_forecasts,
+            "category_column_values": category_column_values if category_columns else {},
             "created_at": datetime.utcnow().isoformat() + "Z",
         }
         if progress_cb:

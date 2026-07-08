@@ -357,8 +357,9 @@ export interface ForecastRequest {
   backtest_overlap?: number;
   // Hyperparameter tuning via randomized search with time-series CV.
   tune_hyperparameters?: boolean;
-  // Optional categorical column for hierarchical forecasting.
+  // Optional categorical column(s) for hierarchical forecasting.
   category_column?: string;
+  category_columns?: string[];
   // Save the best model to the registry after a successful run.
   save_model?: boolean;
   // Optional name for the saved model.
@@ -372,6 +373,9 @@ export interface ForecastValue {
   upper_ci: number;
   baseline?: number | null;
   uplift?: number | null;
+  category?: string;
+  // Extra fields from multi-category forecasting (e.g. store, sku)
+  [key: string]: string | number | null | undefined;
 }
 
 export interface ModelRanking {
@@ -460,11 +464,13 @@ export interface ForecastDetail {
     tuned: boolean;
   }>;
   category_column?: string | null;
+  category_columns?: string[] | null;
   category_values?: string[];
   category_forecasts?: Record<string, {
     results: Record<string, ModelResult>;
     summary?: ForecastSummary | null;
   }>;
+  category_column_values?: Record<string, Record<string, string>>;
 }
 
 export interface ForecastListItem {

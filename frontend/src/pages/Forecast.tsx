@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Alert,
+  Autocomplete,
   Box,
   Button,
   Card,
@@ -95,6 +96,7 @@ const initialRequest = (dateColumn: string, valueColumn: string): ForecastReques
   backtest_overlap: 0,
   tune_hyperparameters: false,
   category_column: '',
+  category_columns: [],
   save_model: false,
   save_model_name: '',
 });
@@ -605,30 +607,38 @@ export function ForecastPage(): ReactNode {
                   </TextField>
                 </Grid>
                 <Grid item xs={12} sm={6}>
-                  <TextField
-                    fullWidth
-                    select
-                    label="Category breakdown (optional)"
-                    value={request.category_column ?? ''}
-                    onChange={(e) => update('category_column', e.target.value || '')}
-                    helperText={
-                      sortedForCategory.length
-                        ? 'Run a separate forecast for each value in this column'
-                        : 'No categorical columns detected'
+                  <Autocomplete
+                    multiple
+                    size="small"
+                    options={sortedForCategory}
+                    value={request.category_columns ?? []}
+                    onChange={(_, newVal) => update('category_columns', newVal)}
+                    disableCloseOnSelect
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => (
+                        <Chip label={option} size="small" {...getTagProps({ index })} />
+                      ))
                     }
-                  >
-                    <MenuItem value="">
-                      <em>None (aggregate forecast)</em>
-                    </MenuItem>
-                    {sortedForCategory.map((c) => (
-                      <MenuItem key={c} value={c}>
+                    renderOption={(props, option) => (
+                      <li {...props}>
                         <Stack direction="row" alignItems="center" spacing={1}>
-                          <Typography variant="body2">{c}</Typography>
-                          <Chip label={columnTypes[c] || '?'} size="small" color={typeColor(columnTypes[c] || '')} variant="outlined" sx={{ height: 18, fontSize: 10 }} />
+                          <Typography variant="body2">{option}</Typography>
+                          <Chip label={columnTypes[option] || '?'} size="small" color={typeColor(columnTypes[option] || '')} variant="outlined" sx={{ height: 18, fontSize: 10 }} />
                         </Stack>
-                      </MenuItem>
-                    ))}
-                  </TextField>
+                      </li>
+                    )}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Category breakdown (optional)"
+                        helperText={
+                          sortedForCategory.length
+                            ? 'Run a separate forecast for each combination of selected columns'
+                            : 'No categorical columns detected'
+                        }
+                      />
+                    )}
+                  />
                 </Grid>
               </Grid>
 

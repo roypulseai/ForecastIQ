@@ -16,15 +16,20 @@ interface ResultsTableProps {
 export function ResultsTable({
   values, modelName, modelOptions, selectedModel, onModelChange, height = 520,
 }: ResultsTableProps): ReactNode {
+  // Detect category columns from the first value's extra keys beyond known fields.
+  const knownFields = new Set(['date', 'forecast', 'lower_ci', 'upper_ci', 'baseline', 'uplift', 'category']);
+  const sample = values[0];
+  const extraFields = sample
+    ? Object.keys(sample).filter((k) => !knownFields.has(k))
+    : [];
+  const hasCategory = extraFields.length > 0 || (values.length > 0 && values.some((v) => v.category));
+
   const rows = useMemo(
     () =>
       values.map((v, idx) => ({
-        id: `${modelName}-${idx}-${v.date}`,
+        ...v, // carry through extra fields (store, sku, etc.)
+        id: `${modelName}-${idx}-${v.date}${v.category ? '-' + v.category : ''}`,
         model: modelName,
-        date: v.date,
-        forecast: v.forecast,
-        lower_ci: v.lower_ci,
-        upper_ci: v.upper_ci,
         baseline: v.baseline ?? null,
         uplift: v.uplift ?? null,
       })),
@@ -33,6 +38,19 @@ export function ResultsTable({
 
   const columns: GridColDef[] = useMemo(
     () => [
+      // Dynamic columns for multi-category breakdown
+      ...extraFields.map((f) => ({
+        field: f as string,
+        headerName: f.charAt(0).toUpperCase() + f.slice(1),  // capitalize
+        width: 140,
+      })),
+      ...(hasCategory && extraFields.length === 0
+        ? [{
+            field: 'category' as const,
+            headerName: 'Category',
+            width: 140,
+          }]
+        : []),
       {
         field: 'model',
         headerName: 'Model',
@@ -90,7 +108,7 @@ export function ResultsTable({
           params.value === null || params.value === undefined ? '\u2014' : formatNumber(params.value, 2),
       },
     ],
-    [],
+    [hasCategory, extraFields],
   );
 
   return (

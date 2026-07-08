@@ -125,7 +125,13 @@ export function MetricsCards({
       <MetricCard
         label="Forecast accuracy"
         value={accuracy != null ? `${accuracy.toFixed(0)}%` : '—'}
-        helper={grade ? `Grade: ${grade} · ${best?.model ?? ''}` : 'awaiting run'}
+        helper={
+          grade
+            ? `Grade: ${grade} · ${best?.model ?? ''}`
+            : best
+              ? `MAPE ${best.mape != null ? `${best.mape.toFixed(1)}%` : '—'}`
+              : '—'
+        }
         tone={accuracyTone}
         icon={accuracyIcon}
       />
@@ -145,8 +151,8 @@ export function MetricsCards({
         value={bestModel ? bestModel.toUpperCase() : '—'}
         helper={
           best
-            ? `MAPE ${best.mape !== null && best.mape !== undefined ? `${best.mape.toFixed(1)}%` : '—'} · MAE ${formatNumber(best.mae, 1)}`
-            : 'awaiting run'
+            ? `MAPE ${best.mape != null ? `${best.mape.toFixed(1)}%` : '—'} · MAE ${formatNumber(best.mae, 1)}`
+            : '—'
         }
         tone="success"
       />

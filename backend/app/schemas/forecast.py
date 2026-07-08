@@ -129,10 +129,11 @@ class ForecastRequest(BaseModel):
     aggregation: Optional[AggregationConfig] = None
     country: Optional[str] = None
     notes: Optional[str] = None
-    # Optional categorical column for hierarchical forecasting.
-    # When set (e.g. "region", "product"), the pipeline runs one forecast
-    # per unique value in that column and an aggregate forecast.
-    category_column: Optional[str] = None
+    # Optional categorical column(s) for hierarchical forecasting.
+    # When set (e.g. ["region"] or ["store", "sku"]), the pipeline runs one
+    # forecast per unique value (or combination) and an aggregate forecast.
+    category_column: Optional[str] = None  # deprecated, prefer category_columns
+    category_columns: Optional[List[str]] = None
     # Train/test split for proper held-out evaluation.
     # When < 1.0, the last (1 - ratio) rows are held out as the test set.
     # Models are trained on the train portion; the test set is used to

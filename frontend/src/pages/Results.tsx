@@ -142,6 +142,28 @@ export function ResultsPage(): ReactNode {
     return selectedModel;
   }, [selectedModel]);
 
+  // Handle both old single-column and new multi-column category formats.
+  const categoryColumns = useMemo(() => {
+    const data = resultQuery.data;
+    if (data?.category_columns?.length) return data.category_columns;
+    if (data?.category_column) return [data.category_column];
+    return [];
+  }, [resultQuery.data]);
+
+  const hasCategory = categoryColumns.length > 0;
+
+  const categoryLabel = hasCategory
+    ? `Category${categoryColumns.length > 1 ? 'ies' : ''}: ${categoryColumns.join(', ')}`
+    : '';
+
+  // Format a composite key for display (replace ||| separator with ·).
+  const formatCategoryValue = (cv: string, columnValues?: Record<string, string>): string => {
+    if (columnValues) {
+      return Object.values(columnValues).join(' · ');
+    }
+    return cv.replace(/\s*\|\|\|\s*/g, ' · ');
+  };
+
   if (listQuery.isLoading) {
     return (
       <PageContainer title="Results">
@@ -270,13 +292,13 @@ export function ResultsPage(): ReactNode {
 
       {resultQuery.data && (
         <>
-          {/* Category selector — shown when a category_column was used */}
-          {resultQuery.data.category_column && resultQuery.data.category_values && resultQuery.data.category_values.length > 0 && (
+          {/* Category selector — shown when category columns were used */}
+          {hasCategory && resultQuery.data.category_values && resultQuery.data.category_values.length > 0 && (
             <Box sx={{ mb: 2 }}>
               <TextField
                 select
                 size="small"
-                label={`Category: ${resultQuery.data.category_column}`}
+                label={categoryLabel}
                 value={selectedCategory}
                 onChange={(e) => { setSelectedCategory(e.target.value); setSelectedModel('__ensemble__'); }}
                 sx={{ minWidth: 240 }}
@@ -284,9 +306,9 @@ export function ResultsPage(): ReactNode {
                 <MenuItem value="">
                   <em>Aggregate (all categories)</em>
                 </MenuItem>
-                {resultQuery.data.category_values.map((cv) => (
+                {resultQuery.data!.category_values.map((cv) => (
                   <MenuItem key={cv} value={cv}>
-                    {cv}
+                    {formatCategoryValue(cv, resultQuery.data!.category_column_values?.[cv])}
                   </MenuItem>
                 ))}
               </TextField>
@@ -308,6 +330,8 @@ export function ResultsPage(): ReactNode {
                       rmse: r.metrics.rmse ?? null,
                       mape: r.metrics.mape ?? null,
                       score: r.metrics.score ?? null,
+                      forecast_accuracy: r.metrics.forecast_accuracy ?? null,
+                      accuracy_grade: String(r.metrics.accuracy_grade ?? '') || null,
                       name: r.model_name,
                     }))
                   : resultQuery.data.ensemble
@@ -318,6 +342,8 @@ export function ResultsPage(): ReactNode {
                         rmse: r.metrics.rmse ?? null,
                         mape: r.metrics.mape ?? null,
                         score: r.metrics.score ?? null,
+                        forecast_accuracy: r.metrics.forecast_accuracy ?? null,
+                        accuracy_grade: String(r.metrics.accuracy_grade ?? '') || null,
                         name: r.model_name,
                       }))
               }
