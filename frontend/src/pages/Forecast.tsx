@@ -93,6 +93,7 @@ const initialRequest = (dateColumn: string, valueColumn: string): ForecastReques
   aggregation: DEFAULT_AGGREGATION,
   train_test_split: 1.0,
   backtest_overlap: 0,
+  tune_hyperparameters: false,
   save_model: false,
   save_model_name: '',
 });
@@ -308,6 +309,7 @@ export function ForecastPage(): ReactNode {
       parameters: Object.keys(request.parameters ?? {}).length > 0 ? request.parameters : undefined,
       train_test_split: request.train_test_split ?? 1.0,
       backtest_overlap: request.backtest_overlap ?? 0,
+      tune_hyperparameters: request.tune_hyperparameters ?? false,
       save_model: request.save_model ?? false,
       save_model_name: request.save_model_name || undefined,
     };
@@ -651,6 +653,17 @@ export function ForecastPage(): ReactNode {
                   <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
                     Maximum {maxBacktestOverlap}d (20% of data span)
                   </Typography>
+                </Grid>
+                <Grid item xs={12}>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={request.tune_hyperparameters ?? false}
+                        onChange={(_, c) => update('tune_hyperparameters', c)}
+                      />
+                    }
+                    label="Tune hyperparameters (time-series CV randomized search)"
+                  />
                 </Grid>
                 <Grid item xs={12}>
                   <FormControlLabel

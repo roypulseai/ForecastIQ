@@ -456,13 +456,37 @@ class ModelSelector:
     def recommend_models(
         self, data_chars: Dict[str, Any], has_external: bool = False,
         business_type: Optional[str] = None, business_stage: Optional[str] = None,
+        cv_results: Optional[Dict[str, Dict[str, float]]] = None,
     ) -> List[Dict[str, Any]]:
         recs: List[Dict[str, Any]] = []
         n = data_chars.get("length", 0)
         cv = data_chars.get("cv", 0.0)
         season = data_chars.get("seasonality", "none")
         stationary = data_chars.get("stationarity", True)
+        outliers = data_chars.get("outliers_pct", 0.0)
 
+        # --- CV-based scoring (most reliable) ---
+        if cv_results:
+            seen: set = set()
+            for m, scores in sorted(
+                cv_results.items(),
+                key=lambda kv: kv[1].get("mae") or float("inf"),
+            ):
+                mae = scores.get("mae")
+                if mae is None or mae <= 0:
+                    continue
+                # Score: inverse of normalized MAE, mapped to [0.5, 0.98]
+                score = max(0.5, min(0.98, 1.0 - mae / (data_chars.get("mean", 1.0) or 1.0)))
+                recs.append({
+                    "model": m,
+                    "score": round(score, 4),
+                    "reason": f"CV MAE={mae:.2f}  RMSE={scores.get('rmse', 0):.2f} over {scores.get('n_folds', '?')} folds",
+                })
+                seen.add(m)
+            recs.sort(key=lambda x: x["score"], reverse=True)
+            return recs[:8]
+
+        # --- Heuristic scoring (when CV not available) ---
         # --- Business context adjustments ---
         boost_ml = business_stage in ("hyper_growth", "volatile")
         boost_seasonal = business_stage == "seasonal"
@@ -499,14 +523,17 @@ class ModelSelector:
             recs.append({"model": "prophet", "score": 0.88, "reason": "Prophet handles growth curves & changepoints"})
         if boost_stable:
             recs.append({"model": "ets", "score": 0.85, "reason": "ETS works well for stable, mature demand"})
+        if outliers > 5:
+            recs.append({"model": "prophet", "score": 0.83, "reason": "Robust to outliers"})
+            recs.append({"model": "stl", "score": 0.80, "reason": "STL handles outliers via robust decomposition"})
         # Always include theta as a robust baseline
         recs.append({"model": "theta", "score": 0.7, "reason": "Strong general-purpose baseline"})
         recs.sort(key=lambda x: x["score"], reverse=True)
-        seen, unique = set(), []
+        seen_set, unique = set(), []
         for r in recs:
-            if r["model"] in seen:
+            if r["model"] in seen_set:
                 continue
-            seen.add(r["model"])
+            seen_set.add(r["model"])
             unique.append(r)
         return unique[:5]
 
@@ -519,39 +546,78 @@ class ModelSelector:
         model_type: str,
         params: Optional[Dict[str, Any]] = None,
         horizon: int = 7,
-    ) -> Dict[str, float]:
-        """One-step hold-out cross-validation on the last `horizon` points."""
+        n_folds: int = 5,
+    ) -> Dict[str, Any]:
+        """Expanding-window time-series cross-validation.
+
+        Runs up to `n_folds` folds with a growing training window and a
+        fixed-size test window.  Returns mean + std of MAE / RMSE / MAPE
+        across folds, plus per-fold details.
+        """
         if df.empty or value_col not in df.columns or date_col not in df.columns:
             return {"mae": None, "rmse": None, "mape": None}
         ts = df[[date_col, value_col]].copy()
         ts[date_col] = pd.to_datetime(ts[date_col], errors="coerce")
         ts[value_col] = pd.to_numeric(ts[value_col], errors="coerce")
-        ts = ts.dropna().sort_values(date_col)
+        ts = ts.dropna().sort_values(date_col).reset_index(drop=True)
         ts = ts.groupby(date_col, as_index=False)[value_col].mean()
         n = len(ts)
-        if n < max(horizon * 2, 10):
+        if n < max(horizon * 2, 14):
             return {"mae": None, "rmse": None, "mape": None, "note": "insufficient_data"}
-        train = ts.iloc[:-horizon]
-        test = ts.iloc[-horizon:]
-        train_df = train.rename(columns={date_col: date_col, value_col: value_col})
-        try:
-            model = self.get_model(model_type, params)
-            model.fit(train_df, date_col, value_col)
-            preds = model.forecast(horizon)
-            pred_values = np.array([self._safe_float(p.get("forecast", 0.0)) for p in preds])
-            actuals = test[value_col].astype(float).values
-            if len(pred_values) != len(actuals):
+
+        min_train = max(horizon * 2, 14)
+        test_size = min(horizon, max(1, (n - min_train) // (n_folds + 1)))
+        if test_size < 1:
+            test_size = horizon
+
+        fold_results: List[Dict[str, float]] = []
+        for i in range(n_folds):
+            train_end = min_train + i * test_size
+            test_start = train_end
+            test_end = test_start + test_size
+            if test_end > n:
+                break
+            train = ts.iloc[:train_end]
+            test = ts.iloc[test_start:test_end]
+            if len(train) < min_train or len(test) < 1:
+                continue
+            try:
+                model = self.get_model(model_type, params)
+                model.fit(train, date_col, value_col)
+                preds = model.forecast(len(test))
+                pred_values = np.array([self._safe_float(p.get("forecast", 0.0)) for p in preds])
+                actuals = test[value_col].astype(float).values
                 m = min(len(pred_values), len(actuals))
-                pred_values = pred_values[:m]
-                actuals = actuals[:m]
-            mae = float(np.mean(np.abs(pred_values - actuals)))
-            rmse = float(np.sqrt(np.mean((pred_values - actuals) ** 2)))
-            denom = np.where(np.abs(actuals) < 1e-9, 1e-9, np.abs(actuals))
-            mape = float(np.mean(np.abs((pred_values - actuals) / denom)) * 100)
-            return {"mae": mae, "rmse": rmse, "mape": mape}
-        except Exception as e:
-            logger.warning("CV failed for %s: %s", model_type, e)
-            return {"mae": None, "rmse": None, "mape": None, "error": str(e)}
+                if m == 0:
+                    continue
+                pv, av = pred_values[:m], actuals[:m]
+                diff = pv - av
+                mae = float(np.mean(np.abs(diff)))
+                rmse = float(np.sqrt(np.mean(diff ** 2)))
+                denom = np.where(np.abs(av) < 1e-9, 1e-9, np.abs(av))
+                mape = float(np.mean(np.abs(diff / denom)) * 100)
+                fold_results.append({"mae": mae, "rmse": rmse, "mape": mape, "fold": i, "train_size": len(train), "test_size": len(test)})
+            except Exception as e:
+                logger.debug("CV fold %d failed for %s: %s", i, model_type, e)
+
+        if len(fold_results) < 2:
+            logger.warning("CV for %s: only %d fold(s) succeeded — insufficient", model_type, len(fold_results))
+            return {"mae": None, "rmse": None, "mape": None, "note": "insufficient_folds"}
+
+        mae_vals = [f["mae"] for f in fold_results]
+        rmse_vals = [f["rmse"] for f in fold_results]
+        mape_vals = [f["mape"] for f in fold_results]
+
+        return {
+            "mae": float(np.mean(mae_vals)),
+            "rmse": float(np.mean(rmse_vals)),
+            "mape": float(np.mean(mape_vals)),
+            "mae_std": float(np.std(mae_vals)),
+            "rmse_std": float(np.std(rmse_vals)),
+            "mape_std": float(np.std(mape_vals)),
+            "n_folds": len(fold_results),
+            "fold_details": fold_results,
+        }
 
     @staticmethod
     def _safe_float(x: Any, default: float = 0.0) -> float:

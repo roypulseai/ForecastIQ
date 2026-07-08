@@ -31,6 +31,7 @@ import pandas as pd
 
 from ..core.utils import to_python
 from .data_processor import DataProcessor
+from .hyperparameter_tuner import tune_model
 from .model_selector import ModelSelector
 from .models.base import BaseForecaster
 from .models.registry import (
@@ -249,6 +250,7 @@ class ForecasterService:
         params = request.get("parameters") or {}
         ensemble_models = request.get("ensemble_models") or []
         ensemble_weights = request.get("ensemble_weights") or None
+        tune_hyperparameters = bool(request.get("tune_hyperparameters", False))
         # New options
         train_test_split = float(request.get("train_test_split", 1.0))
         backtest_overlap = int(request.get("backtest_overlap", 0))
@@ -302,6 +304,36 @@ class ForecasterService:
 
         if progress_cb:
             progress_cb(0.05, "Data prepared")
+
+        # ---- 0) Optional hyperparameter tuning ----
+        # Runs randomized search with expanding-window CV for each model.
+        # Tuned parameters are merged into the user-supplied params.
+        tuning_results: Dict[str, Any] = {}
+        if tune_hyperparameters:
+            cv_df = (train_df if has_split else sales_df)
+            n_models = len(models)
+            for idx, m in enumerate(models):
+                try:
+                    if progress_cb:
+                        progress_cb(0.05 + 0.10 * (idx / n_models), f"Tuning {m}…")
+                    result = tune_model(
+                        cv_df, date_col, value_col, m,
+                        n_iter=15, n_folds=5,
+                    )
+                    if result.get("tuned") and result["best_params"]:
+                        tuning_results[m] = result
+                        m_key = m
+                        existing = params.get(m_key, {})
+                        # Merge: tuned params override user defaults
+                        params[m_key] = {**existing, **result["best_params"]}
+                        logger.info(
+                            "Tuned %s: %s  → CV MAE=%.4f",
+                            m, result["best_params"], result["cv_scores"].get("mae", 0),
+                        )
+                except Exception as e:
+                    logger.warning("Tuning failed for %s: %s", m, e)
+            if progress_cb:
+                progress_cb(0.15, "Tuning complete")
 
         # ---- 1) Cross-validate each requested model in parallel ----
         # CV uses the training portion only for ML models (to avoid leakage),
@@ -612,6 +644,7 @@ class ForecasterService:
             "downsample_info": downsample_info,
             "test_metrics": test_metrics_per_model,
             "saved_model": saved_model_meta,
+            "tuning_results": tuning_results,
             "created_at": datetime.utcnow().isoformat() + "Z",
         }
         if progress_cb:

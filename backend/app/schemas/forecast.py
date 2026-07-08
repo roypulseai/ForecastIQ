@@ -138,6 +138,8 @@ class ForecastRequest(BaseModel):
     # How many of the last actuals to overlay with the forecast in the
     # results chart, for visual backtesting. 0 = no overlap (forecast only).
     backtest_overlap: int = Field(default=0, ge=0, le=365)
+    # Hyperparameter tuning via randomized search with time-series CV.
+    tune_hyperparameters: bool = Field(default=False)
     # Business context — influences model selection and default parameters.
     business_type: Optional[BusinessType] = None
     business_stage: Optional[BusinessStage] = None

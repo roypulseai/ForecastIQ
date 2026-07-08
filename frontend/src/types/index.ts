@@ -355,6 +355,8 @@ export interface ForecastRequest {
   // E.g. 30 means the chart shows the last 30 days of actuals alongside the
   // forecast so you can visually compare. 0 = no overlap.
   backtest_overlap?: number;
+  // Hyperparameter tuning via randomized search with time-series CV.
+  tune_hyperparameters?: boolean;
   // Save the best model to the registry after a successful run.
   save_model?: boolean;
   // Optional name for the saved model.
@@ -446,6 +448,11 @@ export interface ForecastDetail {
   downsample_info?: DownsampleInfo | null;
   best_model?: string | null;
   model_rankings?: ModelRanking[];
+  tuning_results?: Record<string, {
+    best_params: Record<string, unknown>;
+    cv_scores: { mae: number; rmse: number; mape: number };
+    tuned: boolean;
+  }>;
 }
 
 export interface ForecastListItem {
