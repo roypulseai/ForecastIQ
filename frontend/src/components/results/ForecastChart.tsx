@@ -133,7 +133,6 @@ export function ForecastChart({
               upper: null,
               baseline: v.forecast,
               actual: null,
-              backtest: null,
             });
           }
         }
