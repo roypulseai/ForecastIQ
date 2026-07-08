@@ -99,6 +99,12 @@ export function ForecastChart({
   // We merge on date so a single ComposedChart can show them together.
   const data: ChartPoint[] = useMemo(() => {
     const byDate = new Map<string, ChartPoint>();
+
+    // Debug: log actuals range
+    if (actuals.length > 0) {
+      console.log('[ForecastChart] Actuals range:', actuals[0].date, 'to', actuals[actuals.length - 1].date, 'count:', actuals.length);
+    }
+
     if (showActuals) {
       for (const p of actualsToPoints(actuals)) {
         byDate.set(p.date, p);
@@ -115,6 +121,15 @@ export function ForecastChart({
       }
       return [];
     })();
+
+    // Debug: log selected model info
+    console.log('[ForecastChart] selectedModel:', selectedModel, 'isEnsemble:', isEnsemble);
+    console.log('[ForecastChart] resultsSource keys:', Object.keys(resultsSource));
+    console.log('[ForecastChart] forecastValues count:', forecastValues.length);
+    if (forecastValues.length > 0) {
+      console.log('[ForecastChart] Forecast range:', forecastValues[0].date, 'to', forecastValues[forecastValues.length - 1].date);
+    }
+
     for (const p of valuesToPoints(forecastValues)) {
       const existing = byDate.get(p.date);
       if (existing) {
@@ -182,7 +197,15 @@ export function ForecastChart({
         }
       }
     }
-    return Array.from(byDate.values()).sort((a, b) => (a.date < b.date ? -1 : 1));
+    const sortedData = Array.from(byDate.values()).sort((a, b) => (a.date < b.date ? -1 : 1));
+    console.log('[ForecastChart] Final data count:', sortedData.length);
+    if (sortedData.length > 0) {
+      console.log('[ForecastChart] Data date range:', sortedData[0].date, 'to', sortedData[sortedData.length - 1].date);
+      const withForecast = sortedData.filter(p => p.forecast !== null).length;
+      const withActual = sortedData.filter(p => p.actual !== null).length;
+      console.log('[ForecastChart] Points with forecast:', withForecast, 'with actual:', withActual);
+    }
+    return sortedData;
   }, [actuals, showActuals, showBaseline, isEnsemble, detail, selectedModel, categoryResults]);
 
   // Reference line at the boundary between actuals and forecast
