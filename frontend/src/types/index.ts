@@ -408,6 +408,8 @@ export interface ModelResult {
   feature_importance?: Record<string, number> | null;
   components?: Record<string, unknown> | null;
   error?: string | null;
+  accuracy_grade?: string | null;
+  test_accuracy_grade?: string | null;
 }
 
 export interface EnsembleResult {
@@ -417,6 +419,7 @@ export interface EnsembleResult {
   baseline_values?: ForecastValue[] | null;
   backtest_forecast_values?: ForecastValue[] | null;
   backtest_metrics?: Record<string, number>;
+  metrics?: Record<string, number>;
   individual_results: ModelResult[];
 }
 

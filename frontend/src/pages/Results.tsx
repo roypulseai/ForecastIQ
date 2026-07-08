@@ -337,9 +337,10 @@ export function ResultsPage(): ReactNode {
                   ? Object.values(activeResults ?? {}).map((r) => {
                       const btMetrics = r.backtest_metrics ?? {};
                       const cvAcc = r.metrics.forecast_accuracy;
-                      const cvGrade = r.metrics.accuracy_grade;
+                      const cvGrade = r.metrics.accuracy_grade != null ? String(r.metrics.accuracy_grade) : null;
                       const btAcc = btMetrics.forecast_accuracy ?? r.metrics.test_forecast_accuracy;
-                      const btGrade = btMetrics.accuracy_grade ?? r.metrics.test_accuracy_grade;
+                      const btGradeRaw = btMetrics.accuracy_grade ?? r.metrics.test_accuracy_grade;
+                      const btGrade = btGradeRaw != null ? String(btGradeRaw) : null;
                       return {
                         model: r.model_name,
                         mae: r.metrics.test_mae ?? r.metrics.mae ?? null,
@@ -350,11 +351,11 @@ export function ResultsPage(): ReactNode {
                         forecast_accuracy: btAcc ?? cvAcc ?? null,
                         accuracy_grade: btGrade ?? cvGrade ?? null,
                         cv_forecast_accuracy: cvAcc ?? null,
-                        cv_accuracy_grade: cvGrade != 'null' && cvGrade ? String(cvGrade) : null,
+                        cv_accuracy_grade: cvGrade ?? null,
                         cv_mae: r.metrics.mae ?? null,
                         cv_mape: r.metrics.mape ?? null,
                         backtest_forecast_accuracy: btAcc,
-                        backtest_accuracy_grade: btGrade != 'null' && btGrade ? String(btGrade) : null,
+                        backtest_accuracy_grade: btGrade ?? null,
                         backtest_mae: btMetrics.mae ?? r.metrics.test_mae ?? null,
                         backtest_mape: btMetrics.mape ?? r.metrics.test_mape ?? null,
                         name: r.model_name,
@@ -365,6 +366,8 @@ export function ResultsPage(): ReactNode {
                         const ens = resultQuery.data.ensemble;
                         const ensBt = ens.backtest_metrics ?? {};
                         const ensMetrics = ens.metrics ?? {};
+                        const ensGradeRaw = ensBt.accuracy_grade ?? ensMetrics.accuracy_grade;
+                        const ensGrade = ensGradeRaw != null ? String(ensGradeRaw) : null;
                         return [{
                           model: 'ensemble',
                           mae: ensBt.mae ?? ensMetrics.mae ?? null,
@@ -373,11 +376,11 @@ export function ResultsPage(): ReactNode {
                           r2: ensBt.r2 ?? ensMetrics.r2 ?? null,
                           score: 1,
                           forecast_accuracy: ensBt.forecast_accuracy ?? ensMetrics.forecast_accuracy ?? null,
-                          accuracy_grade: ensBt.accuracy_grade ?? ensMetrics.accuracy_grade ?? null,
+                          accuracy_grade: ensGrade,
                           cv_forecast_accuracy: ensMetrics.forecast_accuracy ?? null,
-                          cv_accuracy_grade: ensMetrics.accuracy_grade ?? null,
+                          cv_accuracy_grade: ensMetrics.accuracy_grade != null ? String(ensMetrics.accuracy_grade) : null,
                           backtest_forecast_accuracy: ensBt.forecast_accuracy ?? null,
-                          backtest_accuracy_grade: ensBt.accuracy_grade ?? null,
+                          backtest_accuracy_grade: ensBt.accuracy_grade != null ? String(ensBt.accuracy_grade) : null,
                           backtest_mae: ensBt.mae ?? null,
                           backtest_mape: ensBt.mape ?? null,
                           name: 'Ensemble',
@@ -386,9 +389,10 @@ export function ResultsPage(): ReactNode {
                     : Object.values(activeResults ?? {}).map((r) => {
                       const btMetrics = r.backtest_metrics ?? {};
                       const cvAcc = r.metrics.forecast_accuracy;
-                      const cvGrade = r.metrics.accuracy_grade;
+                      const cvGrade = r.metrics.accuracy_grade != null ? String(r.metrics.accuracy_grade) : null;
                       const btAcc = btMetrics.forecast_accuracy ?? r.metrics.test_forecast_accuracy;
-                      const btGrade = btMetrics.accuracy_grade ?? r.metrics.test_accuracy_grade;
+                      const btGradeRaw = btMetrics.accuracy_grade ?? r.metrics.test_accuracy_grade;
+                      const btGrade = btGradeRaw != null ? String(btGradeRaw) : null;
                       return {
                         model: r.model_name,
                         mae: r.metrics.test_mae ?? r.metrics.mae ?? null,
@@ -399,11 +403,11 @@ export function ResultsPage(): ReactNode {
                         forecast_accuracy: btAcc ?? cvAcc ?? null,
                         accuracy_grade: btGrade ?? cvGrade ?? null,
                         cv_forecast_accuracy: cvAcc ?? null,
-                        cv_accuracy_grade: cvGrade != 'null' && cvGrade ? String(cvGrade) : null,
+                        cv_accuracy_grade: cvGrade ?? null,
                         cv_mae: r.metrics.mae ?? null,
                         cv_mape: r.metrics.mape ?? null,
                         backtest_forecast_accuracy: btAcc,
-                        backtest_accuracy_grade: btGrade != 'null' && btGrade ? String(btGrade) : null,
+                        backtest_accuracy_grade: btGrade ?? null,
                         backtest_mae: btMetrics.mae ?? r.metrics.test_mae ?? null,
                         backtest_mape: btMetrics.mape ?? r.metrics.test_mape ?? null,
                         name: r.model_name,
