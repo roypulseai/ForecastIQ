@@ -76,7 +76,7 @@ function modelOptions(detail: ForecastDetail, categoryResults?: Record<string, M
   const resultsSource = categoryResults ?? detail.results;
   for (const key of Object.keys(resultsSource)) {
     const r: ModelResult = resultsSource[key];
-    opts.push({ value: r.model_name, label: r.model_name });
+    opts.push({ value: key, label: r.model_name });
   }
   return opts;
 }

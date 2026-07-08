@@ -514,8 +514,8 @@ export function ResultsPage(): ReactNode {
 }
 
 function firstModelKey(results: Record<string, ModelResult>): string {
-  const first = Object.values(results)[0];
-  return first ? first.model_name : '';
+  const firstKey = Object.keys(results)[0];
+  return firstKey ?? '';
 }
 
 function InsightsDetail({
