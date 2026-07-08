@@ -32,7 +32,6 @@ interface ForecastChartProps {
   actuals?: ActualPoint[];
   showActuals?: boolean;
   onShowActualsChange?: (show: boolean) => void;
-  /** When a category is selected, pass the category-specific results here so the chart shows them instead of aggregate results. */
   categoryResults?: Record<string, ModelResult> | null;
 }
 
@@ -45,31 +44,8 @@ interface ChartPoint {
   actual: number | null;
 }
 
-function valuesToPoints(values: ForecastValue[]): ChartPoint[] {
-  return values.map((v) => ({
-    date: v.date,
-    forecast: v.forecast,
-    lower: v.lower_ci,
-    upper: v.upper_ci,
-    baseline: v.baseline ?? null,
-    actual: null,
-  }));
-}
-
-function actualsToPoints(actuals: ActualPoint[]): ChartPoint[] {
-  return actuals.map((a) => ({
-    date: a.date,
-    forecast: null,
-    lower: null,
-    upper: null,
-    baseline: null,
-    actual: a.value,
-  }));
-}
-
 function modelOptions(detail: ForecastDetail, categoryResults?: Record<string, ModelResult> | null): Array<{ value: string; label: string }> {
   const opts: Array<{ value: string; label: string }> = [];
-  // Only show ensemble option when NOT in category mode
   if (detail.ensemble && !categoryResults) {
     opts.push({ value: '__ensemble__', label: 'Ensemble (recommended)' });
   }
@@ -79,6 +55,12 @@ function modelOptions(detail: ForecastDetail, categoryResults?: Record<string, M
     opts.push({ value: key, label: r.model_name });
   }
   return opts;
+}
+
+function normalizeDate(d: unknown): string {
+  if (d == null) return '';
+  const s = String(d);
+  return s.slice(0, 10);
 }
 
 export function ForecastChart({
@@ -92,102 +74,99 @@ export function ForecastChart({
   categoryResults,
 }: ForecastChartProps): ReactNode {
   const theme = useTheme();
-
   const isEnsemble = selectedModel === '__ensemble__';
 
-  // Build the merged series: actuals first, forecast points, then baseline.
-  // We merge on date so a single ComposedChart can show them together.
+  const resultsSource = categoryResults ?? detail.results;
+
+  const getModelData = <T,>(selector: (r: ModelResult) => T | undefined | null, ensembleSelector?: (e: NonNullable<ForecastDetail['ensemble']>) => T | undefined | null): T | undefined | null => {
+    if (isEnsemble && !categoryResults && detail.ensemble) {
+      return ensembleSelector?.(detail.ensemble);
+    }
+    if (selectedModel && resultsSource[selectedModel]) {
+      return selector(resultsSource[selectedModel]);
+    }
+    return undefined;
+  };
+
+  const forecastValues: ForecastValue[] = getModelData(
+    (r) => r.forecast_values ?? [],
+    (e) => e.forecast_values ?? [],
+  ) ?? [];
+
+  const baselineValues: ForecastValue[] | undefined = getModelData(
+    (r) => r.baseline_values ?? undefined,
+    (e) => e.baseline_values ?? undefined,
+  ) ?? undefined;
+
+  const backtestValues: ForecastValue[] | undefined = getModelData(
+    (r) => r.backtest_forecast_values ?? undefined,
+    (e) => e.backtest_forecast_values ?? undefined,
+  ) ?? undefined;
+
   const data: ChartPoint[] = useMemo(() => {
     const byDate = new Map<string, ChartPoint>();
 
-    // Debug: log actuals range
-    if (actuals.length > 0) {
-      console.log('[ForecastChart] Actuals range:', actuals[0].date, 'to', actuals[actuals.length - 1].date, 'count:', actuals.length);
-    }
-
     if (showActuals) {
-      for (const p of actualsToPoints(actuals)) {
-        byDate.set(p.date, p);
+      for (const a of actuals) {
+        const date = normalizeDate(a.date);
+        if (!date) continue;
+        byDate.set(date, {
+          date,
+          forecast: null,
+          lower: null,
+          upper: null,
+          baseline: null,
+          actual: a.value,
+        });
       }
-    }
-    // Use category results if a category is selected, otherwise use aggregate results.
-    const resultsSource = categoryResults ?? detail.results;
-    const forecastValues = (() => {
-      if (isEnsemble && !categoryResults && detail.ensemble) {
-        return detail.ensemble.forecast_values ?? [];
-      }
-      if (selectedModel && resultsSource[selectedModel]) {
-        return resultsSource[selectedModel].forecast_values ?? [];
-      }
-      return [];
-    })();
-
-    // Debug: log selected model info
-    console.log('[ForecastChart] selectedModel:', selectedModel, 'isEnsemble:', isEnsemble);
-    console.log('[ForecastChart] resultsSource keys:', Object.keys(resultsSource));
-    console.log('[ForecastChart] forecastValues count:', forecastValues.length);
-    if (forecastValues.length > 0) {
-      console.log('[ForecastChart] Forecast range:', forecastValues[0].date, 'to', forecastValues[forecastValues.length - 1].date);
     }
 
-    for (const p of valuesToPoints(forecastValues)) {
-      const existing = byDate.get(p.date);
-      if (existing) {
-        byDate.set(p.date, { ...existing, ...p, actual: existing.actual });
-      } else {
-        byDate.set(p.date, p);
-      }
+    for (const v of forecastValues) {
+      const date = normalizeDate(v.date);
+      if (!date) continue;
+      const existing = byDate.get(date);
+      byDate.set(date, {
+        date,
+        forecast: v.forecast,
+        lower: v.lower_ci,
+        upper: v.upper_ci,
+        baseline: existing?.baseline ?? null,
+        actual: existing?.actual ?? null,
+      });
     }
-    // Merge baseline into the same data array (avoids Recharts issues with
-    // separate `data` props on child elements).
-    if (showBaseline) {
-      const baselineValues = (() => {
-        if (isEnsemble && !categoryResults && detail.ensemble) {
-          return detail.ensemble.baseline_values;
-        }
-        if (selectedModel) {
-          return resultsSource[selectedModel]?.baseline_values;
-        }
-        return undefined;
-      })();
-      if (baselineValues) {
-        for (const v of baselineValues) {
-          const existing = byDate.get(v.date);
-          if (existing) {
-            byDate.set(v.date, { ...existing, baseline: v.forecast });
-          } else {
-            byDate.set(v.date, {
-              date: v.date,
-              forecast: null,
-              lower: null,
-              upper: null,
-              baseline: v.forecast,
-              actual: null,
-            });
-          }
+
+    if (showBaseline && baselineValues) {
+      for (const v of baselineValues) {
+        const date = normalizeDate(v.date);
+        if (!date) continue;
+        const existing = byDate.get(date);
+        if (existing) {
+          existing.baseline = v.forecast;
+        } else {
+          byDate.set(date, {
+            date,
+            forecast: null,
+            lower: null,
+            upper: null,
+            baseline: v.forecast,
+            actual: null,
+          });
         }
       }
     }
-    // Merge backtest forecast into the `forecast` field so the blue "Forecast"
-    // line extends through the backtest zone, allowing visual comparison with
-    // actuals.
-    const backtestValues = (() => {
-      if (isEnsemble && !categoryResults && detail.ensemble) {
-        return detail.ensemble.backtest_forecast_values;
-      }
-      if (selectedModel) {
-        return resultsSource[selectedModel]?.backtest_forecast_values;
-      }
-      return undefined;
-    })();
+
     if (backtestValues) {
       for (const v of backtestValues) {
-        const existing = byDate.get(v.date);
+        const date = normalizeDate(v.date);
+        if (!date) continue;
+        const existing = byDate.get(date);
         if (existing) {
-          byDate.set(v.date, { ...existing, forecast: v.forecast, lower: v.lower_ci, upper: v.upper_ci, actual: existing.actual });
+          existing.forecast = v.forecast;
+          existing.lower = v.lower_ci;
+          existing.upper = v.upper_ci;
         } else {
-          byDate.set(v.date, {
-            date: v.date,
+          byDate.set(date, {
+            date,
             forecast: v.forecast,
             lower: v.lower_ci,
             upper: v.upper_ci,
@@ -197,19 +176,17 @@ export function ForecastChart({
         }
       }
     }
-    const sortedData = Array.from(byDate.values()).sort((a, b) => (a.date < b.date ? -1 : 1));
-    console.log('[ForecastChart] Final data count:', sortedData.length);
-    if (sortedData.length > 0) {
-      console.log('[ForecastChart] Data date range:', sortedData[0].date, 'to', sortedData[sortedData.length - 1].date);
-      const withForecast = sortedData.filter(p => p.forecast !== null).length;
-      const withActual = sortedData.filter(p => p.actual !== null).length;
-      console.log('[ForecastChart] Points with forecast:', withForecast, 'with actual:', withActual);
-    }
-    return sortedData;
-  }, [actuals, showActuals, showBaseline, isEnsemble, detail, selectedModel, categoryResults]);
 
-  // Reference line at the boundary between actuals and forecast
-  const boundary = actuals.length > 0 ? actuals[actuals.length - 1].date : null;
+    return Array.from(byDate.values()).sort((a, b) => (a.date < b.date ? -1 : 1));
+  }, [actuals, showActuals, showBaseline, forecastValues, baselineValues, backtestValues]);
+
+  const boundary = actuals.length > 0 ? normalizeDate(actuals[actuals.length - 1].date) : null;
+
+  const backtestN = detail.backtest_overlap_n || detail.request.backtest_overlap || 0;
+  const hasBacktest = detail.auto_backtest || (detail.request.backtest_overlap != null && detail.request.backtest_overlap > 0);
+  const backtestStartDate = hasBacktest && backtestN > 0 && actuals.length >= backtestN
+    ? normalizeDate(actuals[actuals.length - backtestN].date)
+    : null;
 
   const options = modelOptions(detail, categoryResults);
 
@@ -292,22 +269,22 @@ export function ForecastChart({
                 }}
               />
               <Legend />
+              {backtestStartDate && boundary && (
+                <ReferenceArea
+                  x1={backtestStartDate}
+                  x2={boundary}
+                  fill={theme.palette.warning.light}
+                  fillOpacity={0.08}
+                  stroke="none"
+                  label={{ value: detail.auto_backtest ? 'Auto backtest zone' : 'Backtest zone', position: 'insideTopLeft', fontSize: 10, fill: theme.palette.warning.main }}
+                />
+              )}
               {boundary && (
                 <ReferenceLine
                   x={boundary}
                   stroke={theme.palette.text.disabled}
                   strokeDasharray="3 3"
                   label={{ value: 'Forecast start', position: 'top', fontSize: 10, fill: theme.palette.text.secondary }}
-                />
-              )}
-              {boundary && (detail.auto_backtest || (detail.request.backtest_overlap != null && detail.request.backtest_overlap > 0)) && actuals.length > 0 && (
-                <ReferenceArea
-                  x1={actuals.slice(-(detail.backtest_overlap_n || detail.request.backtest_overlap || 0))[0]?.date ?? boundary}
-                  x2={boundary}
-                  fill={theme.palette.warning.light}
-                  fillOpacity={0.08}
-                  stroke="none"
-                  label={{ value: detail.auto_backtest ? 'Auto backtest zone' : 'Backtest zone', position: 'insideTopLeft', fontSize: 10, fill: theme.palette.warning.main }}
                 />
               )}
               <Area
