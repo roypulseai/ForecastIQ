@@ -384,9 +384,18 @@ export interface ModelRanking {
   mae?: number | null;
   rmse?: number | null;
   mape?: number | null;
+  r2?: number | null;
   score?: number | null;
   forecast_accuracy?: number | null;
   accuracy_grade?: string | null;
+  backtest_forecast_accuracy?: number | null;
+  backtest_accuracy_grade?: string | null;
+  backtest_mae?: number | null;
+  backtest_mape?: number | null;
+  cv_forecast_accuracy?: number | null;
+  cv_accuracy_grade?: string | null;
+  cv_mae?: number | null;
+  cv_mape?: number | null;
 }
 
 export interface ModelResult {
@@ -395,6 +404,7 @@ export interface ModelResult {
   forecast_values: ForecastValue[];
   baseline_values?: ForecastValue[] | null;
   backtest_forecast_values?: ForecastValue[] | null;
+  backtest_metrics?: Record<string, number>;
   feature_importance?: Record<string, number> | null;
   components?: Record<string, unknown> | null;
   error?: string | null;
@@ -406,6 +416,7 @@ export interface EnsembleResult {
   forecast_values: ForecastValue[];
   baseline_values?: ForecastValue[] | null;
   backtest_forecast_values?: ForecastValue[] | null;
+  backtest_metrics?: Record<string, number>;
   individual_results: ModelResult[];
 }
 

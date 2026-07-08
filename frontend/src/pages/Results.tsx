@@ -334,28 +334,81 @@ export function ResultsPage(): ReactNode {
               }
               rankings={
                 selectedCategory
-                  ? Object.values(activeResults ?? {}).map((r) => ({
-                      model: r.model_name,
-                      mae: r.metrics.mae ?? null,
-                      rmse: r.metrics.rmse ?? null,
-                      mape: r.metrics.mape ?? null,
-                      score: r.metrics.score ?? null,
-                      forecast_accuracy: r.metrics.forecast_accuracy ?? null,
-                      accuracy_grade: String(r.metrics.accuracy_grade ?? '') || null,
-                      name: r.model_name,
-                    }))
-                  : resultQuery.data.ensemble
-                    ? [{ model: 'ensemble', mae: null, rmse: null, mape: null, score: 1, name: 'Ensemble' }]
-                    : Object.values(activeResults ?? {}).map((r) => ({
+                  ? Object.values(activeResults ?? {}).map((r) => {
+                      const btMetrics = r.backtest_metrics ?? {};
+                      const cvAcc = r.metrics.forecast_accuracy;
+                      const cvGrade = r.metrics.accuracy_grade;
+                      const btAcc = btMetrics.forecast_accuracy ?? r.metrics.test_forecast_accuracy;
+                      const btGrade = btMetrics.accuracy_grade ?? r.metrics.test_accuracy_grade;
+                      return {
                         model: r.model_name,
-                        mae: r.metrics.mae ?? null,
-                        rmse: r.metrics.rmse ?? null,
-                        mape: r.metrics.mape ?? null,
+                        mae: r.metrics.test_mae ?? r.metrics.mae ?? null,
+                        rmse: r.metrics.test_rmse ?? r.metrics.rmse ?? null,
+                        mape: r.metrics.test_mape ?? r.metrics.mape ?? null,
+                        r2: r.metrics.test_r2 ?? r.metrics.r2 ?? null,
                         score: r.metrics.score ?? null,
-                        forecast_accuracy: r.metrics.forecast_accuracy ?? null,
-                        accuracy_grade: String(r.metrics.accuracy_grade ?? '') || null,
+                        forecast_accuracy: btAcc ?? cvAcc ?? null,
+                        accuracy_grade: btGrade ?? cvGrade ?? null,
+                        cv_forecast_accuracy: cvAcc ?? null,
+                        cv_accuracy_grade: cvGrade != 'null' && cvGrade ? String(cvGrade) : null,
+                        cv_mae: r.metrics.mae ?? null,
+                        cv_mape: r.metrics.mape ?? null,
+                        backtest_forecast_accuracy: btAcc,
+                        backtest_accuracy_grade: btGrade != 'null' && btGrade ? String(btGrade) : null,
+                        backtest_mae: btMetrics.mae ?? r.metrics.test_mae ?? null,
+                        backtest_mape: btMetrics.mape ?? r.metrics.test_mape ?? null,
                         name: r.model_name,
-                      }))
+                      };
+                    })
+                  : resultQuery.data.ensemble
+                    ? (() => {
+                        const ens = resultQuery.data.ensemble;
+                        const ensBt = ens.backtest_metrics ?? {};
+                        const ensMetrics = ens.metrics ?? {};
+                        return [{
+                          model: 'ensemble',
+                          mae: ensBt.mae ?? ensMetrics.mae ?? null,
+                          rmse: ensBt.rmse ?? ensMetrics.rmse ?? null,
+                          mape: ensBt.mape ?? ensMetrics.mape ?? null,
+                          r2: ensBt.r2 ?? ensMetrics.r2 ?? null,
+                          score: 1,
+                          forecast_accuracy: ensBt.forecast_accuracy ?? ensMetrics.forecast_accuracy ?? null,
+                          accuracy_grade: ensBt.accuracy_grade ?? ensMetrics.accuracy_grade ?? null,
+                          cv_forecast_accuracy: ensMetrics.forecast_accuracy ?? null,
+                          cv_accuracy_grade: ensMetrics.accuracy_grade ?? null,
+                          backtest_forecast_accuracy: ensBt.forecast_accuracy ?? null,
+                          backtest_accuracy_grade: ensBt.accuracy_grade ?? null,
+                          backtest_mae: ensBt.mae ?? null,
+                          backtest_mape: ensBt.mape ?? null,
+                          name: 'Ensemble',
+                        }];
+                      })()
+                    : Object.values(activeResults ?? {}).map((r) => {
+                      const btMetrics = r.backtest_metrics ?? {};
+                      const cvAcc = r.metrics.forecast_accuracy;
+                      const cvGrade = r.metrics.accuracy_grade;
+                      const btAcc = btMetrics.forecast_accuracy ?? r.metrics.test_forecast_accuracy;
+                      const btGrade = btMetrics.accuracy_grade ?? r.metrics.test_accuracy_grade;
+                      return {
+                        model: r.model_name,
+                        mae: r.metrics.test_mae ?? r.metrics.mae ?? null,
+                        rmse: r.metrics.test_rmse ?? r.metrics.rmse ?? null,
+                        mape: r.metrics.test_mape ?? r.metrics.mape ?? null,
+                        r2: r.metrics.test_r2 ?? r.metrics.r2 ?? null,
+                        score: r.metrics.score ?? null,
+                        forecast_accuracy: btAcc ?? cvAcc ?? null,
+                        accuracy_grade: btGrade ?? cvGrade ?? null,
+                        cv_forecast_accuracy: cvAcc ?? null,
+                        cv_accuracy_grade: cvGrade != 'null' && cvGrade ? String(cvGrade) : null,
+                        cv_mae: r.metrics.mae ?? null,
+                        cv_mape: r.metrics.mape ?? null,
+                        backtest_forecast_accuracy: btAcc,
+                        backtest_accuracy_grade: btGrade != 'null' && btGrade ? String(btGrade) : null,
+                        backtest_mae: btMetrics.mae ?? r.metrics.test_mae ?? null,
+                        backtest_mape: btMetrics.mape ?? r.metrics.test_mape ?? null,
+                        name: r.model_name,
+                      };
+                    })
               }
             />
           </Box>
@@ -403,14 +456,18 @@ export function ResultsPage(): ReactNode {
               )}
               {tab === 1 && (
                 <ModelComparison
-                  rankings={Object.values(activeResults ?? {}).map((r) => ({
-                    model: r.model_name,
-                    name: r.model_name,
-                    mae: r.metrics.mae ?? null,
-                    rmse: r.metrics.rmse ?? null,
-                    mape: r.metrics.mape ?? null,
-                    score: r.metrics.score ?? null,
-                  }))}
+                  rankings={Object.values(activeResults ?? {}).map((r) => {
+                    const btMetrics = r.backtest_metrics ?? {};
+                    return {
+                      model: r.model_name,
+                      name: r.model_name,
+                      mae: btMetrics.mae ?? r.metrics.test_mae ?? r.metrics.mae ?? null,
+                      rmse: btMetrics.rmse ?? r.metrics.test_rmse ?? r.metrics.rmse ?? null,
+                      mape: btMetrics.mape ?? r.metrics.test_mape ?? r.metrics.mape ?? null,
+                      score: r.metrics.score ?? null,
+                      forecast_accuracy: btMetrics.forecast_accuracy ?? r.metrics.test_forecast_accuracy ?? r.metrics.forecast_accuracy ?? null,
+                    };
+                  })}
                   bestModel={selectedCategory ? firstModelKey(activeResults ?? {}) : resultQuery.data.ensemble ? 'ensemble' : resultQuery.data.request.models[0] ?? null}
                 />
               )}

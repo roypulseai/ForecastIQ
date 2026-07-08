@@ -489,6 +489,7 @@ class ForecasterService:
                         "mae": test_metrics.mae,
                         "rmse": test_metrics.rmse,
                         "mape": test_metrics.mape,
+                        "r2": test_metrics.r2,
                         "test_rows": test_metrics.test_rows,
                     }
                     # Merge into the per-model metrics dict
@@ -499,6 +500,7 @@ class ForecasterService:
                         "test_mae": test_metrics.mae,
                         "test_rmse": test_metrics.rmse,
                         "test_mape": test_metrics.mape,
+                        "test_r2": test_metrics.r2,
                         "test_forecast_accuracy": test_acc,
                         "test_accuracy_grade": _accuracy_grade(test_acc),
                     })
@@ -656,11 +658,38 @@ class ForecasterService:
                         ens_fc = ens.forecast(horizon, exog_data=exog_data)
                         ens_base = ens.get_baseline(horizon, exog_data=exog_data)
                         attach_uplift(ens_fc, ens_base)
+
+                        # Compute ensemble metrics if test data exists
+                        ens_metrics: Dict[str, float] = {}
+                        if test_df is not None and len(test_df) > 0:
+                            try:
+                                actual_vals = test_df[value_col].values
+                                pred_vals = [fv.get("forecast", 0.0) for fv in ens_fc]
+                                n = min(len(actual_vals), len(pred_vals))
+                                if n > 0:
+                                    actuals_arr = np.array(actual_vals[:n])
+                                    preds_arr = np.array(pred_vals[:n])
+                                    errors = np.abs(actuals_arr - preds_arr)
+                                    mae = float(np.mean(errors))
+                                    rmse = float(np.sqrt(np.mean(errors ** 2)))
+                                    mape_vals = np.where(actuals_arr == 0, 1e-9, np.abs(actuals_arr))
+                                    mape = float(np.mean(np.abs(errors) / mape_vals) * 100)
+                                    ens_metrics = {
+                                        "mae": mae,
+                                        "rmse": rmse,
+                                        "mape": mape,
+                                        "forecast_accuracy": _compute_forecast_accuracy(mape),
+                                        "accuracy_grade": _accuracy_grade(_compute_forecast_accuracy(mape)),
+                                    }
+                            except Exception as e:
+                                logger.warning("Failed to compute ensemble metrics: %s", e)
+
                         ensemble_result = {
                             "models_used": [mm.name for mm in members],
                             "weights": ens.weights,
                             "forecast_values": ens_fc,
                             "baseline_values": ens_base,
+                            "metrics": ens_metrics,
                             "individual_results": [
                                 {
                                     "model_name": per_model[c].get("model_name", c),
@@ -695,9 +724,21 @@ class ForecasterService:
         # `backtest_overlap` and forecast that window.  The resulting forecast
         # values overlap the last N actuals, giving users a visual comparison
         # of "what the model would have predicted" vs what actually happened.
-        if backtest_overlap and backtest_overlap > 0 and len(sales_df) > backtest_overlap + 10:
-            overlap_n = min(backtest_overlap, horizon)
+        # When backtest_overlap == 0 and train_test_split == 1.0 (no explicit split),
+        # auto-use latest 20% of data as backtest period for business users.
+        auto_backtest = False
+        if backtest_overlap == 0 and train_test_split >= 1.0 and len(sales_df) > 50:
+            auto_backtest = True
+            overlap_n = max(1, int(len(sales_df) * 0.2))
+            logger.info("No backtest_overlap set — auto-using last %d rows (~20%%) as backtest period", overlap_n)
+        elif backtest_overlap > 0:
+            overlap_n = backtest_overlap
+        else:
+            overlap_n = 0
+
+        if overlap_n > 0 and len(sales_df) > overlap_n + 10:
             backtest_df = sales_df.iloc[:-overlap_n]
+            backtest_actuals = sales_df.iloc[-overlap_n:]
             for m_name, pm in per_model.items():
                 if pm.get("error"):
                     continue
@@ -706,13 +747,16 @@ class ForecasterService:
                     bt_model.fit(backtest_df, date_col, value_col, exog_data=exog_data or {})
                     bt_fc = bt_model.forecast(overlap_n, exog_data=exog_data)
                     pm["backtest_forecast_values"] = bt_fc
+                    # Compute backtest metrics: MAE, RMSE, MAPE, R2
+                    bt_metrics = _compute_backtest_metrics(bt_fc, backtest_actuals, date_col, value_col)
+                    pm["backtest_metrics"] = bt_metrics
                 except Exception as e:
                     logger.warning("Backtest re-forecast failed for %s: %s", m_name, e)
                     pm["backtest_forecast_values"] = []
+                    pm["backtest_metrics"] = {}
             if ensemble_result:
                 try:
                     bt_members: List[BaseForecaster] = []
-                    # Re-fit ensemble members on truncated data
                     for m_name in ensemble_result.get("models_used", []):
                         try:
                             inst = self.selector.get_model(m_name, params)
@@ -724,6 +768,8 @@ class ForecasterService:
                         ens = EnsembleForecaster(bt_members, [])
                         bt_fc = ens.forecast(overlap_n, exog_data=exog_data)
                         ensemble_result["backtest_forecast_values"] = bt_fc
+                        bt_metrics = _compute_backtest_metrics(bt_fc, backtest_actuals, date_col, value_col)
+                        ensemble_result["backtest_metrics"] = bt_metrics
                 except Exception as e:
                     logger.warning("Ensemble backtest re-forecast failed: %s", e)
 
@@ -1188,6 +1234,7 @@ def _build_rankings_from_test(
         mae = tm.get("mae") if tm.get("mae") is not None else cv.get("mae")
         rmse = tm.get("rmse") if tm.get("rmse") is not None else cv.get("rmse")
         mape = tm.get("mape") if tm.get("mape") is not None else cv.get("mape")
+        r2 = tm.get("r2") if tm.get("r2") is not None else cv.get("r2")
         score = None
         if mae is not None and not (isinstance(mae, float) and np.isnan(mae)):
             try:
@@ -1201,6 +1248,7 @@ def _build_rankings_from_test(
             "mae": _safe_float(mae) if mae is not None else None,
             "rmse": _safe_float(rmse) if rmse is not None else None,
             "mape": _safe_float(mape) if mape is not None else None,
+            "r2": _safe_float(r2) if r2 is not None else None,
             "score": score,
             "forecast_accuracy": forecast_accuracy,
             "accuracy_grade": _accuracy_grade(forecast_accuracy),
@@ -1212,6 +1260,54 @@ def _build_rankings_from_test(
     valid.sort(key=lambda r: r["mae"])
     invalid.sort(key=lambda r: r["model"])
     return valid + invalid
+
+
+def _compute_backtest_metrics(
+    forecast_values: List[Dict[str, Any]],
+    actuals_df: pd.DataFrame,
+    date_col: str,
+    value_col: str,
+) -> Dict[str, float]:
+    """Compute MAE, MAPE, R2 from backtest forecast vs actuals."""
+    if not forecast_values or actuals_df.empty:
+        return {}
+    try:
+        actuals: Dict[str, float] = {}
+        for _, row in actuals_df.iterrows():
+            d = pd.Timestamp(row[date_col]).strftime("%Y-%m-%d")
+            actuals[d] = float(row[value_col])
+        pred_vals: List[float] = []
+        actual_vals: List[float] = []
+        for fv in forecast_values:
+            d = str(fv.get("date", ""))[:10]
+            if d in actuals:
+                pred_vals.append(float(fv.get("forecast", 0.0)))
+                actual_vals.append(actuals[d])
+        if not pred_vals:
+            return {}
+        preds = np.array(pred_vals)
+        acts = np.array(actual_vals)
+        diff = preds - acts
+        mae = float(np.mean(np.abs(diff)))
+        rmse = float(np.sqrt(np.mean(diff ** 2)))
+        denom = np.where(np.abs(acts) < 1e-9, 1e-9, np.abs(acts))
+        mape = float(np.mean(np.abs(diff) / denom) * 100.0)
+        ss_res = float(np.sum(diff ** 2))
+        ss_tot = float(np.sum((acts - acts.mean()) ** 2))
+        r2 = 1 - ss_res / ss_tot if ss_tot != 0 else None
+        forecast_accuracy = _compute_forecast_accuracy(mape)
+        return {
+            "mae": mae,
+            "rmse": rmse,
+            "mape": mape,
+            "r2": r2,
+            "forecast_accuracy": forecast_accuracy,
+            "accuracy_grade": _accuracy_grade(forecast_accuracy),
+            "backtest_rows": len(pred_vals),
+        }
+    except Exception as e:
+        logger.warning("Failed to compute backtest metrics: %s", e)
+        return {}
 
 
 def _build_summary(

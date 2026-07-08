@@ -585,13 +585,16 @@ def evaluate_on_test(
     diff = preds - acts
     mae = float(diff.abs().mean())
     rmse = float((diff ** 2).mean() ** 0.5)
-    # MAPE: avoid div by zero
     denom = acts.abs().clip(lower=1e-9)
     mape = float((diff.abs() / denom).mean() * 100.0)
+    ss_res = float(np.sum(diff ** 2))
+    ss_tot = float(np.sum((acts - acts.mean()) ** 2))
+    r2 = 1 - ss_res / ss_tot if ss_tot != 0 else None
     return ModelMetrics(
         mae=mae,
         rmse=rmse,
         mape=mape,
+        r2=r2,
         train_rows=0,
         test_rows=len(pred_vals),
     )

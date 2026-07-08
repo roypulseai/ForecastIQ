@@ -596,7 +596,11 @@ class ModelSelector:
                 rmse = float(np.sqrt(np.mean(diff ** 2)))
                 denom = np.where(np.abs(av) < 1e-9, 1e-9, np.abs(av))
                 mape = float(np.mean(np.abs(diff / denom)) * 100)
-                fold_results.append({"mae": mae, "rmse": rmse, "mape": mape, "fold": i, "train_size": len(train), "test_size": len(test)})
+                fold_results.append({
+                    "mae": mae, "rmse": rmse, "mape": mape,
+                    "r2": 1 - float(np.sum(diff ** 2)) / float(np.sum((av - np.mean(av)) ** 2)) if len(av) > 0 and np.std(av) != 0 else None,
+                    "fold": i, "train_size": len(train), "test_size": len(test)
+                })
             except Exception as e:
                 logger.debug("CV fold %d failed for %s: %s", i, model_type, e)
 
@@ -607,6 +611,7 @@ class ModelSelector:
         mae_vals = [f["mae"] for f in fold_results]
         rmse_vals = [f["rmse"] for f in fold_results]
         mape_vals = [f["mape"] for f in fold_results]
+        r2_vals = [f["r2"] for f in fold_results if f.get("r2") is not None]
 
         return {
             "mae": float(np.mean(mae_vals)),
@@ -615,6 +620,8 @@ class ModelSelector:
             "mae_std": float(np.std(mae_vals)),
             "rmse_std": float(np.std(rmse_vals)),
             "mape_std": float(np.std(mape_vals)),
+            "r2": float(np.mean(r2_vals)) if r2_vals else None,
+            "r2_std": float(np.std(r2_vals)) if r2_vals else None,
             "n_folds": len(fold_results),
             "fold_details": fold_results,
         }

@@ -90,25 +90,29 @@ export function MetricsCards({
         ? 'up'
         : 'down';
 
-  const accuracy = best?.forecast_accuracy ?? null;
-  const grade = best?.accuracy_grade ?? null;
-  const accuracyTone: 'success' | 'info' | 'warning' | 'error' =
-    !accuracy ? 'info'
-      : accuracy >= 90 ? 'success'
-        : accuracy >= 80 ? 'info'
-          : accuracy >= 70 ? 'warning'
+  const backtestAccuracy = best?.backtest_forecast_accuracy ?? best?.forecast_accuracy ?? null;
+  const backtestGrade = best?.backtest_accuracy_grade ?? best?.accuracy_grade ?? null;
+  const cvAccuracy = best?.cv_forecast_accuracy ?? null;
+  const cvGrade = best?.cv_accuracy_grade ?? null;
+  const primaryAccuracy = backtestAccuracy ?? cvAccuracy;
+  const primaryGrade = backtestGrade ?? cvGrade;
+  const primaryTone: 'success' | 'info' | 'warning' | 'error' =
+    !primaryAccuracy ? 'info'
+      : primaryAccuracy >= 90 ? 'success'
+        : primaryAccuracy >= 80 ? 'info'
+          : primaryAccuracy >= 70 ? 'warning'
             : 'error';
-  const accuracyIcon =
-    !accuracy ? null
-      : accuracy >= 80 ? <CheckCircleIcon />
-        : accuracy >= 70 ? <WarningAmberIcon />
+  const primaryIcon =
+    !primaryAccuracy ? null
+      : primaryAccuracy >= 80 ? <CheckCircleIcon />
+        : primaryAccuracy >= 70 ? <WarningAmberIcon />
           : <ErrorOutlineIcon />;
 
   return (
     <Box
       sx={{
         display: 'grid',
-        gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(4, 1fr)' },
+        gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(5, 1fr)' },
         gap: 2,
       }}
     >
@@ -124,17 +128,32 @@ export function MetricsCards({
       />
       <MetricCard
         label="Forecast accuracy"
-        value={accuracy != null ? `${accuracy.toFixed(0)}%` : '—'}
+        value={primaryAccuracy != null ? `${primaryAccuracy.toFixed(0)}%` : '—'}
         helper={
-          grade
-            ? `Grade: ${grade} · ${best?.model ?? ''}`
+          primaryGrade
+            ? `Grade: ${primaryGrade} · ${best?.model ?? ''}`
             : best
-              ? `MAPE ${best.mape != null ? `${best.mape.toFixed(1)}%` : '—'}`
+              ? `MAPE ${best.backtest_mape != null ? `${best.backtest_mape.toFixed(1)}%` : (best.mape != null ? `${best.mape.toFixed(1)}%` : '—')}`
               : '—'
         }
-        tone={accuracyTone}
-        icon={accuracyIcon}
+        tone={primaryTone}
+        icon={primaryIcon}
       />
+      {cvAccuracy != null && (
+        <MetricCard
+          label="CV accuracy"
+          value={`${cvAccuracy.toFixed(0)}%`}
+          helper={
+            cvGrade
+              ? `Grade: ${cvGrade}`
+              : best
+                ? `MAPE ${best.cv_mape != null ? `${best.cv_mape.toFixed(1)}%` : '—'}`
+                : '—'
+          }
+          tone={cvAccuracy >= 80 ? 'success' : cvAccuracy >= 70 ? 'warning' : 'error'}
+          icon={cvAccuracy >= 80 ? <CheckCircleIcon /> : cvAccuracy >= 70 ? <WarningAmberIcon /> : <ErrorOutlineIcon />}
+        />
+      )}
       <MetricCard
         label="Total uplift"
         value={
@@ -151,7 +170,7 @@ export function MetricsCards({
         value={bestModel ? bestModel.toUpperCase() : '—'}
         helper={
           best
-            ? `MAPE ${best.mape != null ? `${best.mape.toFixed(1)}%` : '—'} · MAE ${formatNumber(best.mae, 1)}`
+            ? `MAE ${formatNumber(best.backtest_mae ?? best.mae, 1)}`
             : '—'
         }
         tone="success"
