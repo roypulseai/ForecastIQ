@@ -32,6 +32,8 @@ interface ForecastChartProps {
   actuals?: ActualPoint[];
   showActuals?: boolean;
   onShowActualsChange?: (show: boolean) => void;
+  /** When a category is selected, pass the category-specific results here so the chart shows them instead of aggregate results. */
+  categoryResults?: Record<string, ModelResult> | null;
 }
 
 interface ChartPoint {
@@ -65,13 +67,15 @@ function actualsToPoints(actuals: ActualPoint[]): ChartPoint[] {
   }));
 }
 
-function modelOptions(detail: ForecastDetail): Array<{ value: string; label: string }> {
+function modelOptions(detail: ForecastDetail, categoryResults?: Record<string, ModelResult> | null): Array<{ value: string; label: string }> {
   const opts: Array<{ value: string; label: string }> = [];
-  if (detail.ensemble) {
+  // Only show ensemble option when NOT in category mode
+  if (detail.ensemble && !categoryResults) {
     opts.push({ value: '__ensemble__', label: 'Ensemble (recommended)' });
   }
-  for (const key of Object.keys(detail.results)) {
-    const r: ModelResult = detail.results[key];
+  const resultsSource = categoryResults ?? detail.results;
+  for (const key of Object.keys(resultsSource)) {
+    const r: ModelResult = resultsSource[key];
     opts.push({ value: r.model_name, label: r.model_name });
   }
   return opts;
@@ -85,6 +89,7 @@ export function ForecastChart({
   actuals = [],
   showActuals = true,
   onShowActualsChange,
+  categoryResults,
 }: ForecastChartProps): ReactNode {
   const theme = useTheme();
 
@@ -99,9 +104,11 @@ export function ForecastChart({
         byDate.set(p.date, p);
       }
     }
+    // Use category results if a category is selected, otherwise use aggregate results.
+    const resultsSource = categoryResults ?? detail.results;
     const forecastValues = (() => {
-      if (isEnsemble && detail.ensemble) return detail.ensemble.forecast_values;
-      const found = Object.values(detail.results).find(
+      if (isEnsemble && !categoryResults && detail.ensemble) return detail.ensemble.forecast_values;
+      const found = Object.values(resultsSource).find(
         (r) => r.model_name === selectedModel,
       );
       return found?.forecast_values ?? [];
@@ -118,8 +125,8 @@ export function ForecastChart({
     // separate `data` props on child elements).
     if (showBaseline) {
       const baselineValues =
-        (isEnsemble && detail.ensemble?.baseline_values) ||
-        Object.values(detail.results).find((r) => r.model_name === selectedModel)?.baseline_values;
+        (isEnsemble && !categoryResults && detail.ensemble?.baseline_values) ||
+        Object.values(resultsSource).find((r) => r.model_name === selectedModel)?.baseline_values;
       if (baselineValues) {
         for (const v of baselineValues) {
           const existing = byDate.get(v.date);
@@ -142,8 +149,8 @@ export function ForecastChart({
     // line extends through the backtest zone, allowing visual comparison with
     // actuals.
     const backtestValues =
-      (isEnsemble && detail.ensemble?.backtest_forecast_values) ||
-      Object.values(detail.results).find((r) => r.model_name === selectedModel)?.backtest_forecast_values;
+      (isEnsemble && !categoryResults && detail.ensemble?.backtest_forecast_values) ||
+      Object.values(resultsSource).find((r) => r.model_name === selectedModel)?.backtest_forecast_values;
     if (backtestValues) {
       for (const v of backtestValues) {
         const existing = byDate.get(v.date);
@@ -162,12 +169,12 @@ export function ForecastChart({
       }
     }
     return Array.from(byDate.values()).sort((a, b) => (a.date < b.date ? -1 : 1));
-  }, [actuals, showActuals, showBaseline, isEnsemble, detail, selectedModel]);
+  }, [actuals, showActuals, showBaseline, isEnsemble, detail, selectedModel, categoryResults]);
 
   // Reference line at the boundary between actuals and forecast
   const boundary = actuals.length > 0 ? actuals[actuals.length - 1].date : null;
 
-  const options = modelOptions(detail);
+  const options = modelOptions(detail, categoryResults);
 
   return (
     <Card>

@@ -300,7 +300,17 @@ export function ResultsPage(): ReactNode {
                 size="small"
                 label={categoryLabel}
                 value={selectedCategory}
-                onChange={(e) => { setSelectedCategory(e.target.value); setSelectedModel('__ensemble__'); }}
+                onChange={(e) => {
+                  const catKey = e.target.value;
+                  setSelectedCategory(catKey);
+                  // For categories, don't use ensemble - use first model of the category
+                  if (catKey && resultQuery.data?.category_forecasts?.[catKey]) {
+                    const catResults = resultQuery.data.category_forecasts[catKey].results;
+                    setSelectedModel(firstModelKey(catResults));
+                  } else {
+                    setSelectedModel(resultQuery.data?.ensemble ? '__ensemble__' : firstModelKey(resultQuery.data?.results ?? {}));
+                  }
+                }}
                 sx={{ minWidth: 240 }}
               >
                 <MenuItem value="">
@@ -387,6 +397,7 @@ export function ResultsPage(): ReactNode {
                     actuals={actuals}
                     showActuals={showActuals}
                     onShowActualsChange={setShowActuals}
+                    categoryResults={hasCategory ? activeResults : null}
                   />
                 </Stack>
               )}
