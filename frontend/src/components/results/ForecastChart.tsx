@@ -107,11 +107,13 @@ export function ForecastChart({
     // Use category results if a category is selected, otherwise use aggregate results.
     const resultsSource = categoryResults ?? detail.results;
     const forecastValues = (() => {
-      if (isEnsemble && !categoryResults && detail.ensemble) return detail.ensemble.forecast_values;
-      const found = Object.values(resultsSource).find(
-        (r) => r.model_name === selectedModel,
-      );
-      return found?.forecast_values ?? [];
+      if (isEnsemble && !categoryResults && detail.ensemble) {
+        return detail.ensemble.forecast_values ?? [];
+      }
+      if (selectedModel && resultsSource[selectedModel]) {
+        return resultsSource[selectedModel].forecast_values ?? [];
+      }
+      return [];
     })();
     for (const p of valuesToPoints(forecastValues)) {
       const existing = byDate.get(p.date);
@@ -124,9 +126,15 @@ export function ForecastChart({
     // Merge baseline into the same data array (avoids Recharts issues with
     // separate `data` props on child elements).
     if (showBaseline) {
-      const baselineValues =
-        (isEnsemble && !categoryResults && detail.ensemble?.baseline_values) ||
-        Object.values(resultsSource).find((r) => r.model_name === selectedModel)?.baseline_values;
+      const baselineValues = (() => {
+        if (isEnsemble && !categoryResults && detail.ensemble) {
+          return detail.ensemble.baseline_values;
+        }
+        if (selectedModel) {
+          return resultsSource[selectedModel]?.baseline_values;
+        }
+        return undefined;
+      })();
       if (baselineValues) {
         for (const v of baselineValues) {
           const existing = byDate.get(v.date);
@@ -148,9 +156,15 @@ export function ForecastChart({
     // Merge backtest forecast into the `forecast` field so the blue "Forecast"
     // line extends through the backtest zone, allowing visual comparison with
     // actuals.
-    const backtestValues =
-      (isEnsemble && !categoryResults && detail.ensemble?.backtest_forecast_values) ||
-      Object.values(resultsSource).find((r) => r.model_name === selectedModel)?.backtest_forecast_values;
+    const backtestValues = (() => {
+      if (isEnsemble && !categoryResults && detail.ensemble) {
+        return detail.ensemble.backtest_forecast_values;
+      }
+      if (selectedModel) {
+        return resultsSource[selectedModel]?.backtest_forecast_values;
+      }
+      return undefined;
+    })();
     if (backtestValues) {
       for (const v of backtestValues) {
         const existing = byDate.get(v.date);
