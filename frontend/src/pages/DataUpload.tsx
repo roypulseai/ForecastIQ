@@ -75,11 +75,12 @@ export function DataUploadPage(): ReactNode {
     }
   };
 
-  const handleAnalyze = async () => {
+  const handleAnalyze = async (navigateToExplore = true) => {
     if (!salesFile) return;
     setError(null);
     try {
       await analyzeMut.mutateAsync(salesFile.file_id);
+      if (navigateToExplore) navigate('/explore');
     } catch (e) {
       setError(getErrorMessage(e));
     }
@@ -120,7 +121,7 @@ export function DataUploadPage(): ReactNode {
   return (
     <PageContainer
       title="Data upload"
-      subtitle="Upload your sales history plus any supporting data sources (media plan, promotions, holidays, etc.)."
+      subtitle="Upload your primary business data (sales, orders, traffic, etc.) plus any supporting data sources (media plan, promotions, holidays, etc.)."
       actions={
         salesFile && (
           <Button
@@ -129,9 +130,9 @@ export function DataUploadPage(): ReactNode {
               analyzeMut.isPending ? <CircularProgress size={16} color="inherit" /> : <InsightsIcon />
             }
             disabled={analyzeMut.isPending}
-            onClick={handleAnalyze}
+            onClick={() => handleAnalyze()}
           >
-            {analyzeMut.isPending ? 'Analyzing…' : 'Analyze sales data'}
+            {analyzeMut.isPending ? 'Analyzing…' : 'Analyze & explore'}
           </Button>
         )
       }
@@ -164,15 +165,15 @@ export function DataUploadPage(): ReactNode {
                   <StorageIcon />
                 </Box>
                 <Box>
-                  <Typography variant="h5">Sales data</Typography>
+                  <Typography variant="h5">Business metrics</Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Required
+                    Required — sales, orders, traffic, etc.
                   </Typography>
                 </Box>
               </Stack>
               <FileUploader
                 fileType="sales"
-                label="Upload sales CSV"
+                label="Upload CSV"
                 description={FILE_TYPE_DESCRIPTIONS.sales}
                 isLoading={activeUpload === 'sales'}
                 onFileSelected={(f) => handleFile('sales', f)}
@@ -303,7 +304,7 @@ export function DataUploadPage(): ReactNode {
                   <Button
                     variant="outlined"
                     startIcon={<RestartAltIcon />}
-                    onClick={handleAnalyze}
+                    onClick={() => handleAnalyze(false)}
                     disabled={analyzeMut.isPending}
                   >
                     Re-analyze

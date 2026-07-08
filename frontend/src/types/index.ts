@@ -20,7 +20,7 @@ export const FILE_TYPES: FileType[] = [
 ];
 
 export const FILE_TYPE_LABELS: Record<FileType, string> = {
-  sales: 'Sales Data',
+  sales: 'Business Metrics',
   media_plan: 'Media Plan',
   promotions: 'Promotions',
   holidays: 'Holidays',
@@ -31,7 +31,7 @@ export const FILE_TYPE_LABELS: Record<FileType, string> = {
 };
 
 export const FILE_TYPE_DESCRIPTIONS: Record<FileType, string> = {
-  sales: 'Primary sales history with date and value columns',
+  sales: 'Primary time-series data (sales, orders, traffic, revenue — any business metric with date and value columns)',
   media_plan: 'Marketing spend across channels',
   promotions: 'Discount and promotion events',
   holidays: 'Holiday calendar with impact factors',
