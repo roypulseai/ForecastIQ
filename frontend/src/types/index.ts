@@ -388,6 +388,7 @@ export interface ModelResult {
   metrics: Record<string, number>;
   forecast_values: ForecastValue[];
   baseline_values?: ForecastValue[] | null;
+  backtest_forecast_values?: ForecastValue[] | null;
   feature_importance?: Record<string, number> | null;
   components?: Record<string, unknown> | null;
   error?: string | null;
@@ -398,6 +399,7 @@ export interface EnsembleResult {
   weights: number[];
   forecast_values: ForecastValue[];
   baseline_values?: ForecastValue[] | null;
+  backtest_forecast_values?: ForecastValue[] | null;
   individual_results: ModelResult[];
 }
 

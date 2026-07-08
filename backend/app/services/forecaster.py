@@ -616,24 +616,42 @@ class ForecasterService:
             sales_df=sales_df, date_col=date_col, value_col=value_col,
         )
 
-        # Backtest overlap: trim forecast to drop the last `backtest_overlap`
-        # rows so the forecast vs actuals comparison is clean in the chart.
-        if backtest_overlap and backtest_overlap > 0:
+        # ---- 2b.5) Backtest re-forecast ----
+        # When backtest_overlap > 0, re-train each model on data truncated by
+        # `backtest_overlap` and forecast that window.  The resulting forecast
+        # values overlap the last N actuals, giving users a visual comparison
+        # of "what the model would have predicted" vs what actually happened.
+        if backtest_overlap and backtest_overlap > 0 and len(sales_df) > backtest_overlap + 10:
             overlap_n = min(backtest_overlap, horizon)
+            backtest_df = sales_df.iloc[:-overlap_n]
             for m_name, pm in per_model.items():
-                fv = pm.get("forecast_values", [])
-                if isinstance(fv, list) and len(fv) > overlap_n:
-                    pm["forecast_values"] = fv[: len(fv) - overlap_n]
-                    bv = pm.get("baseline_values", [])
-                    if isinstance(bv, list) and len(bv) > overlap_n:
-                        pm["baseline_values"] = bv[: len(bv) - overlap_n]
+                if pm.get("error"):
+                    continue
+                try:
+                    bt_model = self.selector.get_model(m_name, params)
+                    bt_model.fit(backtest_df, date_col, value_col, exog_data=exog_data or {})
+                    bt_fc = bt_model.forecast(overlap_n, exog_data=exog_data)
+                    pm["backtest_forecast_values"] = bt_fc
+                except Exception as e:
+                    logger.warning("Backtest re-forecast failed for %s: %s", m_name, e)
+                    pm["backtest_forecast_values"] = []
             if ensemble_result:
-                efv = ensemble_result.get("forecast_values", [])
-                if isinstance(efv, list) and len(efv) > overlap_n:
-                    ensemble_result["forecast_values"] = efv[: len(efv) - overlap_n]
-                ebv = ensemble_result.get("baseline_values", [])
-                if isinstance(ebv, list) and len(ebv) > overlap_n:
-                    ensemble_result["baseline_values"] = ebv[: len(ebv) - overlap_n]
+                try:
+                    bt_members: List[BaseForecaster] = []
+                    # Re-fit ensemble members on truncated data
+                    for m_name in ensemble_result.get("models_used", []):
+                        try:
+                            inst = self.selector.get_model(m_name, params)
+                            inst.fit(backtest_df, date_col, value_col, exog_data=exog_data or {})
+                            bt_members.append(inst)
+                        except Exception:
+                            pass
+                    if len(bt_members) >= 2:
+                        ens = EnsembleForecaster(bt_members, [])
+                        bt_fc = ens.forecast(overlap_n, exog_data=exog_data)
+                        ensemble_result["backtest_forecast_values"] = bt_fc
+                except Exception as e:
+                    logger.warning("Ensemble backtest re-forecast failed: %s", e)
 
         result: Dict[str, Any] = {
             "name": request.get("name", "Forecast"),
