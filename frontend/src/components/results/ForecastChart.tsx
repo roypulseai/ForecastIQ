@@ -169,7 +169,7 @@ export function ForecastChart({
       for (const v of backtestValues) {
         const existing = byDate.get(v.date);
         if (existing) {
-          byDate.set(v.date, { ...existing, forecast: v.forecast, lower: v.lower_ci, upper: v.upper_ci });
+          byDate.set(v.date, { ...existing, forecast: v.forecast, lower: v.lower_ci, upper: v.upper_ci, actual: existing.actual });
         } else {
           byDate.set(v.date, {
             date: v.date,
@@ -277,14 +277,14 @@ export function ForecastChart({
                   label={{ value: 'Forecast start', position: 'top', fontSize: 10, fill: theme.palette.text.secondary }}
                 />
               )}
-              {boundary && detail.request.backtest_overlap != null && detail.request.backtest_overlap > 0 && actuals.length > 0 && (
+              {boundary && (detail.auto_backtest || (detail.request.backtest_overlap != null && detail.request.backtest_overlap > 0)) && actuals.length > 0 && (
                 <ReferenceArea
-                  x1={actuals.slice(-detail.request.backtest_overlap)[0]?.date ?? boundary}
+                  x1={actuals.slice(-(detail.backtest_overlap_n || detail.request.backtest_overlap || 0))[0]?.date ?? boundary}
                   x2={boundary}
                   fill={theme.palette.warning.light}
                   fillOpacity={0.08}
                   stroke="none"
-                  label={{ value: 'Backtest zone', position: 'insideTopLeft', fontSize: 10, fill: theme.palette.warning.main }}
+                  label={{ value: detail.auto_backtest ? 'Auto backtest zone' : 'Backtest zone', position: 'insideTopLeft', fontSize: 10, fill: theme.palette.warning.main }}
                 />
               )}
               <Area

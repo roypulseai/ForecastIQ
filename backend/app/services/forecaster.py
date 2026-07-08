@@ -844,6 +844,8 @@ class ForecasterService:
             "category_values": category_values if category_columns else [],
             "category_forecasts": category_forecasts,
             "category_column_values": category_column_values if category_columns else {},
+            "auto_backtest": auto_backtest,
+            "backtest_overlap_n": overlap_n if overlap_n > 0 else (request.get("backtest_overlap") or 0),
             "created_at": datetime.utcnow().isoformat() + "Z",
         }
         if progress_cb:

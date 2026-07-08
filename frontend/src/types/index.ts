@@ -485,6 +485,8 @@ export interface ForecastDetail {
     summary?: ForecastSummary | null;
   }>;
   category_column_values?: Record<string, Record<string, string>>;
+  auto_backtest?: boolean;
+  backtest_overlap_n?: number;
 }
 
 export interface ForecastListItem {
