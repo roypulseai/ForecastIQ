@@ -727,18 +727,21 @@ class ForecasterService:
         # When backtest_overlap == 0 and train_test_split == 1.0 (no explicit split),
         # auto-use latest 20% of data as backtest period for business users.
         auto_backtest = False
+        overlap_n = 0
+        backtest_start_date: Optional[str] = None
+        backtest_end_date: Optional[str] = None
         if backtest_overlap == 0 and train_test_split >= 1.0 and len(sales_df) > 50:
             auto_backtest = True
             overlap_n = max(1, int(len(sales_df) * 0.2))
             logger.info("No backtest_overlap set — auto-using last %d rows (~20%%) as backtest period", overlap_n)
         elif backtest_overlap > 0:
             overlap_n = backtest_overlap
-        else:
-            overlap_n = 0
 
         if overlap_n > 0 and len(sales_df) > overlap_n + 10:
             backtest_df = sales_df.iloc[:-overlap_n]
             backtest_actuals = sales_df.iloc[-overlap_n:]
+            backtest_start_date = str(backtest_actuals[date_col].iloc[0])[:10]
+            backtest_end_date = str(backtest_actuals[date_col].iloc[-1])[:10]
             for m_name, pm in per_model.items():
                 if pm.get("error"):
                     continue
@@ -866,6 +869,8 @@ class ForecasterService:
             "category_column_values": category_column_values if category_columns else {},
             "auto_backtest": auto_backtest,
             "backtest_overlap_n": overlap_n if overlap_n > 0 else (request.get("backtest_overlap") or 0),
+            "backtest_start_date": backtest_start_date,
+            "backtest_end_date": backtest_end_date,
             "created_at": datetime.utcnow().isoformat() + "Z",
         }
         if progress_cb:

@@ -180,13 +180,26 @@ export function ForecastChart({
     return Array.from(byDate.values()).sort((a, b) => (a.date < b.date ? -1 : 1));
   }, [actuals, showActuals, showBaseline, forecastValues, baselineValues, backtestValues]);
 
-  const boundary = actuals.length > 0 ? normalizeDate(actuals[actuals.length - 1].date) : null;
+  const boundary = detail.backtest_end_date
+    ? normalizeDate(detail.backtest_end_date)
+    : (actuals.length > 0 ? normalizeDate(actuals[actuals.length - 1].date) : null);
 
-  const backtestN = detail.backtest_overlap_n || detail.request.backtest_overlap || 0;
-  const hasBacktest = detail.auto_backtest || (detail.request.backtest_overlap != null && detail.request.backtest_overlap > 0);
-  const backtestStartDate = hasBacktest && backtestN > 0 && actuals.length >= backtestN
-    ? normalizeDate(actuals[actuals.length - backtestN].date)
-    : null;
+  // Use backend-provided backtest dates when available (most reliable).
+  // Fall back to computing from actuals only if backend didn't provide dates.
+  const hasBacktest = detail.auto_backtest
+    || (detail.request.backtest_overlap != null && detail.request.backtest_overlap > 0)
+    || (detail.backtest_start_date != null && detail.backtest_end_date != null);
+  const backtestStartDate = detail.backtest_start_date
+    ? normalizeDate(detail.backtest_start_date)
+    : (hasBacktest && boundary ? (() => {
+        // Fallback: find the date from the chart's unique dates
+        const uniqueDates = data.map(d => d.date).filter((d): d is string => !!d);
+        const backtestN = detail.backtest_overlap_n || detail.request.backtest_overlap || 0;
+        if (backtestN > 0 && uniqueDates.length >= backtestN) {
+          return uniqueDates[uniqueDates.length - backtestN];
+        }
+        return null;
+      })() : null);
 
   const options = modelOptions(detail, categoryResults);
 
@@ -350,7 +363,7 @@ export function ForecastChart({
           </ResponsiveContainer>
         </Box>
         <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-          Black line: historical actuals · Blue line: forecast (through backtest zone) · Dashed grey line: baseline (no uplift) · Shaded area: 95% confidence interval.
+          Black line: historical actuals · Blue line: forecast · Shaded area: 95% confidence interval · Yellow zone: backtest (actual vs forecast comparison).
         </Typography>
       </CardContent>
     </Card>
