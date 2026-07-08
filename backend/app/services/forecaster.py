@@ -458,9 +458,35 @@ class ForecasterService:
                 "Test metrics per model: %s",
                 {k: round(v["mae"], 2) for k, v in test_metrics_per_model.items() if v.get("mae") is not None},
             )
-            # Refit each successful model on train+test for the final forecast
-            # (we already produced a forecast from the train-fit above, so we
-            # reuse those; refit is optional and would double the compute time)
+            # Refit each successful ML model on full data so the final forecast
+            # covers dates beyond ALL actuals (not just beyond the training split).
+            for m in models:
+                if m not in ml_models:
+                    continue
+                pm = per_model.get(m)
+                if not pm or pm.get("error"):
+                    continue
+                try:
+                    full_model = self.selector.get_model(m, params)
+                    full_model.fit(sales_df, date_col, value_col, exog_data=exog_data or {})
+                    full_fc = full_model.forecast(horizon, exog_data=exog_data)
+                    full_base = full_model.get_baseline(horizon, exog_data=exog_data)
+                    attach_uplift(full_fc, full_base)
+                    pm["forecast_values"] = full_fc
+                    pm["baseline_values"] = full_base
+                    # Update metrics from the full-data model
+                    full_metrics = _safe_metrics(full_model)
+                    mape = full_metrics.get("mape")
+                    forecast_accuracy = _compute_forecast_accuracy(mape)
+                    pm["metrics"].update({
+                        **full_metrics,
+                        "forecast_accuracy": forecast_accuracy,
+                        "accuracy_grade": _accuracy_grade(forecast_accuracy),
+                    })
+                    pm["feature_importance"] = _safe_fi(full_model.get_feature_importance())
+                    pm["components"] = _safe_dict(full_model.get_components())
+                except Exception as e:
+                    logger.warning("Full-data refit failed for %s (using train-only forecast): %s", m, e)
 
         # ---- 2c) Optionally save the best model to the registry ----
         saved_model_meta: Optional[Dict[str, Any]] = None

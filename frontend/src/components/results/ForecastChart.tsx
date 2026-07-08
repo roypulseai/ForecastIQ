@@ -41,7 +41,6 @@ interface ChartPoint {
   upper: number | null;
   baseline: number | null;
   actual: number | null;
-  backtest: number | null;
 }
 
 function valuesToPoints(values: ForecastValue[]): ChartPoint[] {
@@ -52,7 +51,6 @@ function valuesToPoints(values: ForecastValue[]): ChartPoint[] {
     upper: v.upper_ci,
     baseline: v.baseline ?? null,
     actual: null,
-    backtest: null,
   }));
 }
 
@@ -64,7 +62,6 @@ function actualsToPoints(actuals: ActualPoint[]): ChartPoint[] {
     upper: null,
     baseline: null,
     actual: a.value,
-    backtest: null,
   }));
 }
 
@@ -142,9 +139,9 @@ export function ForecastChart({
         }
       }
     }
-    // Merge backtest forecast (model re-trained on truncated data) into the
-    // backtest zone so users can compare "what the model would have predicted"
-    // vs actuals.
+    // Merge backtest forecast into the `forecast` field so the blue "Forecast"
+    // line extends through the backtest zone, allowing visual comparison with
+    // actuals.
     const backtestValues =
       (isEnsemble && detail.ensemble?.backtest_forecast_values) ||
       Object.values(detail.results).find((r) => r.model_name === selectedModel)?.backtest_forecast_values;
@@ -152,16 +149,15 @@ export function ForecastChart({
       for (const v of backtestValues) {
         const existing = byDate.get(v.date);
         if (existing) {
-          byDate.set(v.date, { ...existing, backtest: v.forecast });
+          byDate.set(v.date, { ...existing, forecast: v.forecast, lower: v.lower_ci, upper: v.upper_ci });
         } else {
           byDate.set(v.date, {
             date: v.date,
-            forecast: null,
-            lower: null,
-            upper: null,
+            forecast: v.forecast,
+            lower: v.lower_ci,
+            upper: v.upper_ci,
             baseline: null,
             actual: null,
-            backtest: v.forecast,
           });
         }
       }
@@ -321,18 +317,6 @@ export function ForecastChart({
                   connectNulls
                 />
               )}
-              {detail.request.backtest_overlap != null && detail.request.backtest_overlap > 0 && (
-                <Line
-                  type="monotone"
-                  dataKey="backtest"
-                  stroke={theme.palette.warning.main}
-                  strokeWidth={2}
-                  strokeDasharray="6 3"
-                  dot={false}
-                  name="Backtest forecast"
-                  connectNulls
-                />
-              )}
               <Brush
                 dataKey="date"
                 height={30}
@@ -346,7 +330,7 @@ export function ForecastChart({
           </ResponsiveContainer>
         </Box>
         <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-          Black line: historical actuals · Blue line: forecast · Dashed orange line: backtest forecast · Dashed grey line: baseline (no uplift) · Shaded area: 95% confidence interval.
+          Black line: historical actuals · Blue line: forecast (through backtest zone) · Dashed grey line: baseline (no uplift) · Shaded area: 95% confidence interval.
         </Typography>
       </CardContent>
     </Card>
