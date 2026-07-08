@@ -1,5 +1,5 @@
 import { useMemo, type ReactNode } from 'react';
-import { Box, Card, CardContent, Stack, Typography } from '@mui/material';
+import { Box, Card, CardContent, MenuItem, Stack, TextField, Typography } from '@mui/material';
 import { DataGrid, type GridColDef } from '@mui/x-data-grid';
 import type { ForecastValue } from '../../types';
 import { formatNumber, formatShortDate } from '../../utils/format';
@@ -7,14 +7,20 @@ import { formatNumber, formatShortDate } from '../../utils/format';
 interface ResultsTableProps {
   values: ForecastValue[];
   modelName: string;
+  modelOptions?: Array<{ value: string; label: string }>;
+  selectedModel?: string;
+  onModelChange?: (model: string) => void;
   height?: number;
 }
 
-export function ResultsTable({ values, modelName, height = 520 }: ResultsTableProps): ReactNode {
+export function ResultsTable({
+  values, modelName, modelOptions, selectedModel, onModelChange, height = 520,
+}: ResultsTableProps): ReactNode {
   const rows = useMemo(
     () =>
       values.map((v, idx) => ({
         id: `${modelName}-${idx}-${v.date}`,
+        model: modelName,
         date: v.date,
         forecast: v.forecast,
         lower_ci: v.lower_ci,
@@ -27,6 +33,11 @@ export function ResultsTable({ values, modelName, height = 520 }: ResultsTablePr
 
   const columns: GridColDef[] = useMemo(
     () => [
+      {
+        field: 'model',
+        headerName: 'Model',
+        width: 140,
+      },
       {
         field: 'date',
         headerName: 'Date',
@@ -67,7 +78,7 @@ export function ResultsTable({ values, modelName, height = 520 }: ResultsTablePr
         flex: 1,
         minWidth: 120,
         valueFormatter: (params: { value: number | null | undefined }) =>
-          params.value === null || params.value === undefined ? '—' : formatNumber(params.value, 2),
+          params.value === null || params.value === undefined ? '\u2014' : formatNumber(params.value, 2),
       },
       {
         field: 'uplift',
@@ -76,7 +87,7 @@ export function ResultsTable({ values, modelName, height = 520 }: ResultsTablePr
         flex: 1,
         minWidth: 120,
         valueFormatter: (params: { value: number | null | undefined }) =>
-          params.value === null || params.value === undefined ? '—' : formatNumber(params.value, 2),
+          params.value === null || params.value === undefined ? '\u2014' : formatNumber(params.value, 2),
       },
     ],
     [],
@@ -89,9 +100,25 @@ export function ResultsTable({ values, modelName, height = 520 }: ResultsTablePr
           <Box>
             <Typography variant="h5">Detailed forecast values</Typography>
             <Typography variant="body2" color="text.secondary">
-              {modelName} · {rows.length} rows
+              {modelName} &middot; {rows.length} rows
             </Typography>
           </Box>
+          {modelOptions && onModelChange && selectedModel && (
+            <TextField
+              select
+              size="small"
+              label="Model"
+              value={selectedModel}
+              onChange={(e) => onModelChange(e.target.value)}
+              sx={{ minWidth: 200 }}
+            >
+              {modelOptions.map((o) => (
+                <MenuItem key={o.value} value={o.value}>
+                  {o.label}
+                </MenuItem>
+              ))}
+            </TextField>
+          )}
         </Stack>
         <Box sx={{ width: '100%' }}>
           <DataGrid

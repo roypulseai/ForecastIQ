@@ -314,10 +314,16 @@ export function ResultsPage(): ReactNode {
                   bestModel={resultQuery.data.ensemble ? 'ensemble' : resultQuery.data.request.models[0] ?? null}
                 />
               )}
-              {tab === 2 && (
+              {tab === 2 && resultQuery.data && (
                 <ResultsTable
                   values={activeValues}
                   modelName={activeModelLabel}
+                  modelOptions={[
+                    ...(resultQuery.data.ensemble ? [{ value: '__ensemble__', label: 'Ensemble (recommended)' }] : []),
+                    ...Object.values(resultQuery.data.results).map((r) => ({ value: r.model_name, label: r.model_name })),
+                  ]}
+                  selectedModel={selectedModel}
+                  onModelChange={setSelectedModel}
                 />
               )}
               {tab === 3 && (
@@ -506,14 +512,14 @@ function ModelMetricsCard({ result, testMetrics }: { result: ModelResult; testMe
           </Typography>
           <MetricRow label="MAE" value={m.mae} />
           <MetricRow label="RMSE" value={m.rmse} />
-          <MetricRow label="MAPE" value={m.mape} fmt="pct" />
-          <MetricRow label="R²" value={m.r2} />
           {accuracy != null && (
             <>
               <MetricRow label="Forecast accuracy" value={accuracy} fmt="pct" tone={accuracyTone} />
               {grade && <MetricRow label="Grade" value={grade} fmt="str" />}
             </>
           )}
+          <MetricRow label="MAPE (error)" value={m.mape} fmt="pct" />
+          <MetricRow label="R²" value={m.r2} />
           {testMetrics && testMetrics.mae != null && (
             <>
               <Divider sx={{ my: 0.5 }} />
@@ -522,10 +528,10 @@ function ModelMetricsCard({ result, testMetrics }: { result: ModelResult; testMe
               </Typography>
               <MetricRow label="Test MAE" value={testMetrics.mae} />
               <MetricRow label="Test RMSE" value={testMetrics.rmse} />
-              <MetricRow label="Test MAPE" value={testMetrics.mape} fmt="pct" />
               {testAccuracy != null && (
                 <MetricRow label="Test accuracy" value={testAccuracy} fmt="pct" tone={accuracyTone} />
               )}
+              <MetricRow label="Test MAPE (error)" value={testMetrics.mape} fmt="pct" />
             </>
           )}
           {result.error && (
