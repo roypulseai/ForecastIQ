@@ -362,10 +362,17 @@ class DataProcessor:
         other = [c for c in df.columns if c not in keep]
         df = df[keep + other]
 
-        # Deduplicate rows by date (sum for numeric, first for object)
-        agg = {c: "sum" if pd.api.types.is_numeric_dtype(df[c]) else "first"
-               for c in df.columns if c != spec.standard_date}
-        df = df.groupby(spec.standard_date, as_index=False, sort=True).agg(agg)
+        # Deduplicate rows by date + all non-numeric columns to preserve
+        # categorical/region breakdowns (e.g. same date + different region
+        # yields 2 rows instead of collapsing into 1).
+        non_num_cols = [
+            c for c in df.columns
+            if c != spec.standard_date and not pd.api.types.is_numeric_dtype(df[c])
+        ]
+        group_cols = [spec.standard_date] + non_num_cols
+        num_cols = [c for c in df.columns if c not in group_cols]
+        agg = {c: "sum" for c in num_cols} if num_cols else {}
+        df = df.groupby(group_cols, as_index=False, sort=True).agg(agg) if agg else df.drop_duplicates(subset=group_cols)
         df = df.sort_values(spec.standard_date).reset_index(drop=True)
 
         # Memory optimization: downcast numerics, convert low-cardinality objects

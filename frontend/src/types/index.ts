@@ -357,6 +357,8 @@ export interface ForecastRequest {
   backtest_overlap?: number;
   // Hyperparameter tuning via randomized search with time-series CV.
   tune_hyperparameters?: boolean;
+  // Optional categorical column for hierarchical forecasting.
+  category_column?: string;
   // Save the best model to the registry after a successful run.
   save_model?: boolean;
   // Optional name for the saved model.
@@ -456,6 +458,12 @@ export interface ForecastDetail {
     best_params: Record<string, unknown>;
     cv_scores: { mae: number; rmse: number; mape: number };
     tuned: boolean;
+  }>;
+  category_column?: string | null;
+  category_values?: string[];
+  category_forecasts?: Record<string, {
+    results: Record<string, ModelResult>;
+    summary?: ForecastSummary | null;
   }>;
 }
 

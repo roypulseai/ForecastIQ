@@ -94,6 +94,7 @@ const initialRequest = (dateColumn: string, valueColumn: string): ForecastReques
   train_test_split: 1.0,
   backtest_overlap: 0,
   tune_hyperparameters: false,
+  category_column: '',
   save_model: false,
   save_model_name: '',
 });
@@ -231,12 +232,20 @@ export function ForecastPage(): ReactNode {
     }),
     [columns, columnTypes],
   );
-
+  // Category-eligible columns: categorical, region, or id type columns
+  const categoryTypeSet = useMemo(() => new Set(['categorical', 'region', 'id']), []);
   const [request, setRequest] = useState<ForecastRequest>(() => initialRequest(dateColumn, valueColumn));
   const [external, setExternal] = useState<ExternalState>(initialExternal);
   const [useEnsemble, setUseEnsemble] = useState<boolean>(false);
   const [useAdvanced, setUseAdvanced] = useState<boolean>(false);
   const [useAggregation, setUseAggregation] = useState<boolean>(false);
+  // sortedForCategory depends on request, so it must be declared after useState
+  const sortedForCategory = useMemo(
+    () => [...columns]
+      .filter((c) => c !== request.date_column && c !== request.target_column && categoryTypeSet.has(columnTypes[c]))
+      .sort((a, b) => a.localeCompare(b)),
+    [columns, columnTypes, request.date_column, request.target_column, categoryTypeSet],
+  );
 
   useEffect(() => {
     if (analysisData && request.date_column === 'date' && request.target_column === 'value') {
@@ -586,6 +595,32 @@ export function ForecastPage(): ReactNode {
                       </MenuItem>
                     )}
                     {sortedForTarget.map((c) => (
+                      <MenuItem key={c} value={c}>
+                        <Stack direction="row" alignItems="center" spacing={1}>
+                          <Typography variant="body2">{c}</Typography>
+                          <Chip label={columnTypes[c] || '?'} size="small" color={typeColor(columnTypes[c] || '')} variant="outlined" sx={{ height: 18, fontSize: 10 }} />
+                        </Stack>
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    select
+                    label="Category breakdown (optional)"
+                    value={request.category_column ?? ''}
+                    onChange={(e) => update('category_column', e.target.value || '')}
+                    helperText={
+                      sortedForCategory.length
+                        ? 'Run a separate forecast for each value in this column'
+                        : 'No categorical columns detected'
+                    }
+                  >
+                    <MenuItem value="">
+                      <em>None (aggregate forecast)</em>
+                    </MenuItem>
+                    {sortedForCategory.map((c) => (
                       <MenuItem key={c} value={c}>
                         <Stack direction="row" alignItems="center" spacing={1}>
                           <Typography variant="body2">{c}</Typography>

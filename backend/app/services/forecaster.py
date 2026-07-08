@@ -258,6 +258,33 @@ class ForecasterService:
         save_model_name = request.get("save_model_name")
         save_model_tags = request.get("save_model_tags") or []
         save_model_notes = request.get("save_model_notes", "")
+        category_column = request.get("category_column") or None
+
+        # ---- Pre-step: hierarchical / per-category forecasting ----
+        # When a category_column is set (e.g. "region", "product"), the data
+        # has multiple rows per date (one per category).  We first aggregate
+        # to a single series for the main pipeline, then run lightweight
+        # per-category forecasts.
+        category_values: List[str] = []
+        category_filtered: Dict[str, pd.DataFrame] = {}
+        raw_sales_df = sales_df.copy()  # keep original for per-category forecasts
+        if category_column and category_column in sales_df.columns:
+            # Get unique category values
+            cats = sales_df[category_column].dropna().unique()
+            category_values = sorted(str(c) for c in cats)
+            # Aggregate the main sales_df: group by date, sum value across categories
+            agg_df = sales_df.groupby(date_col, as_index=False, sort=True)[value_col].sum()
+            # Store per-category DataFrames (also grouped by date)
+            for cv in category_values:
+                mask = sales_df[category_column].astype(str) == cv
+                cat_df = sales_df[mask].groupby(date_col, as_index=False, sort=True)[value_col].sum()
+                if len(cat_df) >= 20:
+                    category_filtered[cv] = cat_df
+            # Replace sales_df with the aggregate for the main pipeline
+            if len(agg_df) >= 20:
+                sales_df = agg_df
+            else:
+                category_column = None  # too few rows, fall back to flat
 
         # ---- Pre-step: optional train/test split for ML models ----
         # Train/test split only applies to ML models (xgboost, lightgbm).
@@ -679,6 +706,36 @@ class ForecasterService:
                 except Exception as e:
                     logger.warning("Ensemble backtest re-forecast failed: %s", e)
 
+        # ---- 6) Per-category forecasts (lightweight) ----
+        # When a category_column is used, run a simplified forecast for each
+        # category value.  No tuning, no CV, no ensemble — just fit + forecast.
+        category_forecasts: Dict[str, Dict[str, Any]] = {}
+        if category_column and category_values:
+            for cat_val in category_values:
+                cat_df = category_filtered.get(cat_val)
+                if cat_df is None or len(cat_df) < 20:
+                    continue
+                cat_per_model: Dict[str, Dict[str, Any]] = {}
+                for m in models:
+                    try:
+                        result_tuple = _fit_and_forecast_one(
+                            m, params, cat_df, date_col, value_col, horizon, exog_data,
+                        )
+                        cat_per_model[m] = _assemble_model_result(m, result_tuple, {})
+                    except Exception as e:
+                        logger.warning("Category %s model %s failed: %s", cat_val, m, e)
+                        cat_per_model[m] = {
+                            "model_name": m, "metrics": {"error": str(e)},
+                            "forecast_values": [], "error": str(e),
+                        }
+                cat_summary = _build_summary(cat_per_model, None, horizon)
+                category_forecasts[cat_val] = {
+                    "results": cat_per_model,
+                    "summary": cat_summary,
+                }
+            if progress_cb:
+                progress_cb(0.95, "Category forecasts done")
+
         result: Dict[str, Any] = {
             "name": request.get("name", "Forecast"),
             "request": request,
@@ -692,6 +749,9 @@ class ForecasterService:
             "test_metrics": test_metrics_per_model,
             "saved_model": saved_model_meta,
             "tuning_results": tuning_results,
+            "category_column": category_column,
+            "category_values": category_values if category_column else [],
+            "category_forecasts": category_forecasts,
             "created_at": datetime.utcnow().isoformat() + "Z",
         }
         if progress_cb:

@@ -51,6 +51,7 @@ export function ResultsPage(): ReactNode {
   const deleteMut = useDeleteForecast();
   const [tab, setTab] = useState(0);
   const [selectedModel, setSelectedModel] = useState<string>('__ensemble__');
+  const [selectedCategory, setSelectedCategory] = useState<string>('');
   const [showBaseline, setShowBaseline] = useState<boolean>(true);
   const [showActuals, setShowActuals] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -95,19 +96,46 @@ export function ResultsPage(): ReactNode {
   useEffect(() => {
     if (resultQuery.data) {
       setSelectedModel(resultQuery.data.ensemble ? '__ensemble__' : firstModelKey(resultQuery.data.results));
+      // Reset category when the forecast changes
+      setSelectedCategory('');
     }
   }, [resultQuery.data]);
 
+  // When a category is selected, use its per-category results; otherwise use aggregate.
+  const activeResults = useMemo(() => {
+    const data = resultQuery.data;
+    if (!data) return null;
+    if (selectedCategory && data.category_forecasts?.[selectedCategory]) {
+      return data.category_forecasts[selectedCategory].results;
+    }
+    return data.results;
+  }, [resultQuery.data, selectedCategory]);
+
+  const activeSummary = useMemo(() => {
+    const data = resultQuery.data;
+    if (!data) return null;
+    if (selectedCategory && data.category_forecasts?.[selectedCategory]) {
+      return data.category_forecasts[selectedCategory].summary ?? null;
+    }
+    return data.summary ?? null;
+  }, [resultQuery.data, selectedCategory]);
+
+  const activeTestMetrics = useMemo(() => {
+    // Category forecasts have no test metrics; use aggregate when showing aggregate
+    if (selectedCategory) return {};
+    return resultQuery.data?.test_metrics ?? {};
+  }, [resultQuery.data, selectedCategory]);
+
   const activeValues = useMemo(() => {
-    if (!resultQuery.data) return [];
-    if (selectedModel === '__ensemble__' && resultQuery.data.ensemble) {
+    if (!resultQuery.data || !activeResults) return [];
+    if (selectedModel === '__ensemble__' && resultQuery.data.ensemble && !selectedCategory) {
       return resultQuery.data.ensemble.forecast_values;
     }
-    const found = Object.values(resultQuery.data.results).find(
+    const found = Object.values(activeResults).find(
       (r) => r.model_name === selectedModel,
     );
     return found?.forecast_values ?? [];
-  }, [resultQuery.data, selectedModel]);
+  }, [resultQuery.data, activeResults, selectedModel, selectedCategory]);
 
   const activeModelLabel = useMemo(() => {
     if (selectedModel === '__ensemble__') return 'Ensemble';
@@ -242,14 +270,39 @@ export function ResultsPage(): ReactNode {
 
       {resultQuery.data && (
         <>
+          {/* Category selector — shown when a category_column was used */}
+          {resultQuery.data.category_column && resultQuery.data.category_values && resultQuery.data.category_values.length > 0 && (
+            <Box sx={{ mb: 2 }}>
+              <TextField
+                select
+                size="small"
+                label={`Category: ${resultQuery.data.category_column}`}
+                value={selectedCategory}
+                onChange={(e) => { setSelectedCategory(e.target.value); setSelectedModel('__ensemble__'); }}
+                sx={{ minWidth: 240 }}
+              >
+                <MenuItem value="">
+                  <em>Aggregate (all categories)</em>
+                </MenuItem>
+                {resultQuery.data.category_values.map((cv) => (
+                  <MenuItem key={cv} value={cv}>
+                    {cv}
+                  </MenuItem>
+                ))}
+              </TextField>
+            </Box>
+          )}
           <Box sx={{ mb: 3 }}>
             <MetricsCards
-              summary={resultQuery.data.summary ?? null}
-              bestModel={resultQuery.data.ensemble ? 'ensemble' : resultQuery.data.request.models[0] ?? null}
+              summary={activeSummary}
+              bestModel={
+                selectedCategory
+                  ? (activeResults ? firstModelKey(activeResults) : null)
+                  : (resultQuery.data.ensemble ? 'ensemble' : resultQuery.data.request.models[0] ?? null)
+              }
               rankings={
-                resultQuery.data.ensemble
-                  ? [{ model: 'ensemble', mae: null, rmse: null, mape: null, score: 1, name: 'Ensemble' }]
-                  : Object.values(resultQuery.data.results).map((r) => ({
+                selectedCategory
+                  ? Object.values(activeResults ?? {}).map((r) => ({
                       model: r.model_name,
                       mae: r.metrics.mae ?? null,
                       rmse: r.metrics.rmse ?? null,
@@ -257,6 +310,16 @@ export function ResultsPage(): ReactNode {
                       score: r.metrics.score ?? null,
                       name: r.model_name,
                     }))
+                  : resultQuery.data.ensemble
+                    ? [{ model: 'ensemble', mae: null, rmse: null, mape: null, score: 1, name: 'Ensemble' }]
+                    : Object.values(activeResults ?? {}).map((r) => ({
+                        model: r.model_name,
+                        mae: r.metrics.mae ?? null,
+                        rmse: r.metrics.rmse ?? null,
+                        mape: r.metrics.mape ?? null,
+                        score: r.metrics.score ?? null,
+                        name: r.model_name,
+                      }))
               }
             />
           </Box>
@@ -303,7 +366,7 @@ export function ResultsPage(): ReactNode {
               )}
               {tab === 1 && (
                 <ModelComparison
-                  rankings={Object.values(resultQuery.data.results).map((r) => ({
+                  rankings={Object.values(activeResults ?? {}).map((r) => ({
                     model: r.model_name,
                     name: r.model_name,
                     mae: r.metrics.mae ?? null,
@@ -311,7 +374,7 @@ export function ResultsPage(): ReactNode {
                     mape: r.metrics.mape ?? null,
                     score: r.metrics.score ?? null,
                   }))}
-                  bestModel={resultQuery.data.ensemble ? 'ensemble' : resultQuery.data.request.models[0] ?? null}
+                  bestModel={selectedCategory ? firstModelKey(activeResults ?? {}) : resultQuery.data.ensemble ? 'ensemble' : resultQuery.data.request.models[0] ?? null}
                 />
               )}
               {tab === 2 && resultQuery.data && (
@@ -319,8 +382,8 @@ export function ResultsPage(): ReactNode {
                   values={activeValues}
                   modelName={activeModelLabel}
                   modelOptions={[
-                    ...(resultQuery.data.ensemble ? [{ value: '__ensemble__', label: 'Ensemble (recommended)' }] : []),
-                    ...Object.values(resultQuery.data.results).map((r) => ({ value: r.model_name, label: r.model_name })),
+                    ...(!selectedCategory && resultQuery.data.ensemble ? [{ value: '__ensemble__', label: 'Ensemble (recommended)' }] : []),
+                    ...Object.values(activeResults ?? {}).map((r) => ({ value: r.model_name, label: r.model_name })),
                   ]}
                   selectedModel={selectedModel}
                   onModelChange={setSelectedModel}
@@ -328,11 +391,11 @@ export function ResultsPage(): ReactNode {
               )}
               {tab === 3 && (
                 <Grid container spacing={2}>
-                  {Object.values(resultQuery.data.results).map((r) => (
+                  {Object.values(activeResults ?? {}).map((r) => (
                     <Grid key={r.model_name} item xs={12} sm={6} md={4}>
                       <ModelMetricsCard
                         result={r}
-                        testMetrics={resultQuery.data?.test_metrics?.[r.model_name] ?? null}
+                        testMetrics={activeTestMetrics?.[r.model_name] ?? null}
                       />
                     </Grid>
                   ))}
