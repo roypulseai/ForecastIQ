@@ -354,7 +354,7 @@ class ForecasterService:
             progress_cb(0.05, "Data prepared")
 
         # ---- 0) Optional hyperparameter tuning ----
-        # Runs randomized search with expanding-window CV for each model.
+        # Runs adaptive two-round search with expanding-window CV for each model.
         # Tuned parameters are merged into the user-supplied params.
         tuning_results: Dict[str, Any] = {}
         if tune_hyperparameters:
@@ -366,7 +366,7 @@ class ForecasterService:
                         progress_cb(0.05 + 0.10 * (idx / n_models), f"Tuning {m}…")
                     result = tune_model(
                         cv_df, date_col, value_col, m,
-                        n_iter=15, n_folds=5,
+                        n_iter=30, n_folds=max(3, min(7, int(n_unique_dates * 0.1))),
                     )
                     if result.get("tuned") and result["best_params"]:
                         tuning_results[m] = result

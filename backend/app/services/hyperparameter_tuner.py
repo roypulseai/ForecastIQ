@@ -20,57 +20,102 @@ logger = logging.getLogger(__name__)
 
 SEARCH_SPACES: Dict[str, Dict[str, List[Any]]] = {
     "arima": {
-        "p": [0, 1, 2, 3, 5],
+        "p": [0, 1, 2, 3, 4, 5, 6],
         "d": [0, 1],
-        "q": [0, 1, 2, 3, 5],
+        "q": [0, 1, 2, 3, 4, 5, 6],
     },
     "sarimax": {
-        "p": [1, 2, 3],
+        "p": [1, 2, 3, 4],
         "d": [0, 1],
-        "q": [1, 2, 3],
-        "seasonal_p": [0, 1],
+        "q": [1, 2, 3, 4],
+        "seasonal_p": [0, 1, 2],
         "seasonal_d": [0, 1],
-        "seasonal_q": [0, 1],
-        "seasonal_period": [7, 12, 30],
+        "seasonal_q": [0, 1, 2],
+        "seasonal_period": [7, 12, 30, 52],
     },
     "prophet": {
         "seasonality_mode": ["additive", "multiplicative"],
-        "changepoint_prior_scale": [0.001, 0.01, 0.05, 0.1, 0.5],
-        "seasonality_prior_scale": [0.01, 1.0, 10.0],
-        "holidays_prior_scale": [0.01, 1.0, 10.0],
+        "changepoint_prior_scale": [0.001, 0.005, 0.01, 0.05, 0.1, 0.2, 0.5],
+        "seasonality_prior_scale": [0.01, 0.1, 0.5, 1.0, 5.0, 10.0],
+        "holidays_prior_scale": [0.01, 0.1, 0.5, 1.0, 5.0, 10.0],
+        "weekly_seasonality": [True, False],
+        "yearly_seasonality": [True, False],
     },
     "lightgbm": {
-        "n_estimators": [100, 200, 500],
-        "learning_rate": [0.01, 0.05, 0.1],
-        "max_depth": [3, 5, 7, -1],
-        "num_leaves": [15, 31, 63],
-        "min_child_samples": [5, 20, 50],
+        "n_estimators": [100, 200, 300, 500, 800],
+        "learning_rate": [0.005, 0.01, 0.02, 0.05, 0.1],
+        "max_depth": [3, 5, 7, 9, -1],
+        "num_leaves": [15, 31, 63, 127],
+        "min_child_samples": [5, 10, 20, 50, 100],
+        "subsample": [0.7, 0.8, 0.9, 1.0],
+        "colsample_bytree": [0.7, 0.8, 0.9, 1.0],
+        "reg_alpha": [0.0, 0.001, 0.01, 0.1],
+        "reg_lambda": [0.0, 0.001, 0.01, 0.1],
     },
     "xgboost": {
-        "n_estimators": [100, 200, 500],
-        "learning_rate": [0.01, 0.05, 0.1],
-        "max_depth": [3, 5, 7],
-        "min_child_weight": [1, 3, 5],
-        "subsample": [0.7, 0.9, 1.0],
-        "colsample_bytree": [0.7, 0.9, 1.0],
+        "n_estimators": [100, 200, 300, 500, 800],
+        "learning_rate": [0.005, 0.01, 0.02, 0.05, 0.1],
+        "max_depth": [3, 5, 7, 9],
+        "min_child_weight": [1, 3, 5, 7],
+        "subsample": [0.6, 0.7, 0.8, 0.9, 1.0],
+        "colsample_bytree": [0.6, 0.7, 0.8, 0.9, 1.0],
+        "gamma": [0.0, 0.1, 0.2, 0.5],
+        "reg_alpha": [0.0, 0.001, 0.01, 0.1],
+        "reg_lambda": [0.0, 0.001, 0.01, 0.1],
     },
     "wma": {
-        "window": [4, 8, 12, 20, 30],
+        "window": [4, 8, 12, 20, 30, 52],
+        "min_periods": [1, 2, 4, 8],
     },
     "ets": {
         "trend": ["add", "mul", None],
         "seasonal": ["add", "mul", None],
-        "seasonal_periods": [7, 12, 30],
+        "damped_trend": [True, False],
+        "seasonal_periods": [7, 12, 30, 52],
     },
     "theta": {
-        "period": [7, 12, 30],
+        "period": [7, 12, 30, 52],
         "deseasonalize": [True, False],
     },
     "stl": {
-        "period": [7, 12, 30],
+        "period": [7, 12, 30, 52],
         "robust": [True, False],
+        "seasonal_degree": [0, 1],
+        "trend_degree": [0, 1],
     },
 }
+
+
+def detect_frequency(df: pd.DataFrame, date_col: str) -> Optional[int]:
+    """Auto-detect the dominant seasonal period in the time series.
+
+    Returns the likely seasonal period (7=daily→weekly, 12=monthly,
+    52=weekly→yearly, etc.) or None if detection fails.
+    """
+    try:
+        ts = df[[date_col]].copy()
+        ts[date_col] = pd.to_datetime(ts[date_col], errors="coerce")
+        ts = ts.dropna().sort_values(date_col).drop_duplicates()
+        if len(ts) < 14:
+            return None
+        # Infer frequency from the median gap between consecutive dates
+        deltas = ts[date_col].diff().dropna().dt.days
+        if deltas.empty:
+            return None
+        median_gap = int(deltas.median())
+        if median_gap <= 1:
+            # Daily data: check for weekly pattern
+            return 7
+        elif median_gap <= 7:
+            # Weekly data
+            return 52  # yearly seasonality
+        elif median_gap <= 31:
+            # Monthly data
+            return 12
+        return None
+    except Exception:
+        return None
+
 
 
 def _to_model_params(model_type: str, flat_params: Dict[str, Any]) -> Dict[str, Any]:
@@ -158,6 +203,49 @@ def _compute_metrics(
 # Tuning orchestrator
 # ---------------------------------------------------------------------------
 
+def _adaptive_search_round(
+    selector: ModelSelector,
+    model_type: str,
+    space: Dict[str, List[Any]],
+    folds: List[Tuple[pd.DataFrame, pd.DataFrame]],
+) -> Tuple[Dict[str, Any], List[Dict[str, float]], float]:
+    """Single round of random search: sample candidates, evaluate on folds,
+    return the best params, fold scores, and mean MAE."""
+    keys = list(space.keys())
+    all_combos = list(itertools.product(*space.values()))
+    n_iter = min(40, len(all_combos))
+    candidates = all_combos if len(all_combos) <= n_iter else random.sample(all_combos, n_iter)
+
+    best_mae = float("inf")
+    best_params: Dict[str, Any] = {}
+    best_fold_scores: List[Dict[str, float]] = []
+
+    for combo in candidates:
+        candidate_params = dict(zip(keys, combo))
+        fold_scores: List[Dict[str, float]] = []
+        for train_df, test_df in folds:
+            try:
+                model = selector.get_model(model_type, _to_model_params(model_type, candidate_params))
+                model.fit(train_df, date_col, value_col)
+                preds = model.forecast(len(test_df))
+                pred_values = np.array([_safe_float(p.get("forecast", 0.0)) for p in preds])
+                actual_values = test_df[value_col].astype(float).values
+                metrics = _compute_metrics(actual_values, pred_values)
+                if metrics["mae"] is not None:
+                    fold_scores.append(metrics)
+            except Exception as e:
+                logger.debug("Params %s failed on fold: %s", candidate_params, e)
+        if len(fold_scores) < 2:
+            continue
+        mean_mae = float(np.mean([s["mae"] for s in fold_scores if s["mae"] is not None]))
+        if mean_mae < best_mae:
+            best_mae = mean_mae
+            best_params = candidate_params
+            best_fold_scores = fold_scores
+
+    return best_params, best_fold_scores, best_mae
+
+
 def tune_model(
     df: pd.DataFrame,
     date_col: str,
@@ -168,7 +256,11 @@ def tune_model(
     min_train_size: int = 30,
     random_seed: int = 42,
 ) -> Dict[str, Any]:
-    """Run randomized search with time-series CV for a single model type.
+    """Run two-round adaptive search with time-series CV for a single model type.
+
+    Round 1 explores the full parameter space broadly.
+    Round 2 narrows the search around the best region found in round 1,
+    giving a more fine-grained search without exploding the candidate count.
 
     Returns
     -------
@@ -185,55 +277,48 @@ def tune_model(
 
     selector = ModelSelector()
 
-    # Pre-compute folds once
     folds = time_series_cv_folds(df, date_col, value_col, n_folds, min_train_size)
     if len(folds) < 2:
         logger.warning("Not enough data for CV tuning (%d folds) — using defaults", len(folds))
         return {"best_params": {}, "cv_scores": {}, "fold_scores": [], "tuned": False}
 
-    # Generate candidate parameter combinations
-    keys = list(space.keys())
-    all_combos = list(itertools.product(*space.values()))
-    if len(all_combos) <= n_iter:
-        candidates = all_combos
-    else:
-        rng = random.Random(random_seed)
-        candidates = rng.sample(all_combos, n_iter)
+    # ---- Round 1: broad exploration ----
+    random.seed(random_seed)
+    best_params, best_fold_scores, best_mae = _adaptive_search_round(
+        selector, model_type, space, folds,
+    )
 
-    best_mae = float("inf")
-    best_params: Dict[str, Any] = {}
-    best_fold_scores: List[Dict[str, float]] = []
-
-    for combo in candidates:
-        candidate_params = dict(zip(keys, combo))
-        fold_scores: List[Dict[str, float]] = []
-        for train_df, test_df in folds:
-            try:
-                model = selector.get_model(model_type, _to_model_params(model_type, candidate_params))
-                model.fit(train_df, date_col, value_col)
-                preds = model.forecast(len(test_df))
-                pred_values = np.array([
-                    _safe_float(p.get("forecast", 0.0)) for p in preds
-                ])
-                actual_values = test_df[value_col].astype(float).values
-                metrics = _compute_metrics(actual_values, pred_values)
-                if metrics["mae"] is not None:
-                    fold_scores.append(metrics)
-            except Exception as e:
-                logger.debug("Params %s failed on fold: %s", candidate_params, e)
-
-        if len(fold_scores) < 2:
-            continue
-
-        mean_mae = float(np.mean([s["mae"] for s in fold_scores if s["mae"] is not None]))
-        if mean_mae < best_mae:
-            best_mae = mean_mae
-            best_params = candidate_params
-            best_fold_scores = fold_scores
-
-    if not best_fold_scores:
-        logger.warning("Tuning for %s found no valid parameter set — using defaults", model_type)
+    if not best_fold_scores or len(best_fold_scores) < 2:
+        logger.warning("Initial tuning round for %s found no valid params — using defaults", model_type)
         return {"best_params": {}, "cv_scores": {}, "fold_scores": [], "tuned": False}
+
+    # ---- Round 2: narrow around best params ----
+    # For each numeric parameter, create a tighter grid around the best value.
+    narrowed_space: Dict[str, List[Any]] = {}
+    for key in space:
+        vals = space[key]
+        if all(isinstance(v, (int, float)) for v in vals if v is not None):
+            bv = best_params.get(key)
+            if bv is not None and len(vals) >= 3:
+                idx = list(vals).index(bv) if bv in vals else -1
+                if idx >= 0:
+                    lo = max(0, idx - 1)
+                    hi = min(len(vals), idx + 2)
+                    narrowed = vals[lo:hi]
+                    if len(narrowed) >= 2 and narrowed != vals:
+                        narrowed_space[key] = narrowed
+                        continue
+        # Fallback: keep original space for this param
+        narrowed_space[key] = list(vals)
+
+    if any(len(v) < len(space.get(k, [])) for k, v in narrowed_space.items() if k in space):
+        ref_params, ref_fold_scores, ref_mae = _adaptive_search_round(
+            selector, model_type, narrowed_space, folds,
+        )
+        if ref_fold_scores and ref_mae < best_mae:
+            best_params = ref_params
+            best_fold_scores = ref_fold_scores
+            best_mae = ref_mae
 
     mean_mae = float(np.mean([s["mae"] for s in best_fold_scores if s["mae"] is not None]))
     mean_rmse = float(np.mean([s["rmse"] for s in best_fold_scores if s["rmse"] is not None]))
