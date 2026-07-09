@@ -57,12 +57,24 @@ export function ResultsPage(): ReactNode {
   const [error, setError] = useState<string | null>(null);
   const analysisData = useStore((s) => s.analysisData);
 
-  // Find the sales file used by the current forecast
+  // Find the sales file used by the current forecast.
+  // Prefer the global sales file, but fall back to the file_id stored in the
+  // forecast result (so that fresh navigations always find the source data).
   const salesFile = useMemo(() => {
     const fromQuery = filesQuery.data?.find((f) => f.type === 'sales') ?? null;
     if (fromQuery) return fromQuery;
-    return uploadedFiles.find((f) => f.type === 'sales') ?? null;
-  }, [filesQuery.data, uploadedFiles]);
+    const fromUploaded = uploadedFiles.find((f) => f.type === 'sales') ?? null;
+    if (fromUploaded) return fromUploaded;
+    const forecastFileId = resultQuery.data?.data_file_id;
+    if (forecastFileId) {
+      const fromForecast =
+        filesQuery.data?.find((f) => f.file_id === forecastFileId) ?? null;
+      if (fromForecast) return fromForecast;
+      // Return a stub so the file-data query is enabled with the right id
+      return { file_id: forecastFileId } as any;
+    }
+    return null;
+  }, [filesQuery.data, uploadedFiles, resultQuery.data?.data_file_id]);
   const fileDataQuery = useFileData(salesFile?.file_id, 5000);
 
   // Compute historical actuals for the chart.

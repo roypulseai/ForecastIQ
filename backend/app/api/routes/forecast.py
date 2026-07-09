@@ -174,7 +174,7 @@ def _build_response_from_result(
     out["test_metrics"] = result.get("test_metrics") or {}
     out["saved_model"] = result.get("saved_model")
     out["downsample_info"] = result.get("downsample_info")
-    out["ensemble"] = result.get("ensemble") is not None
+    out["ensemble"] = result.get("ensemble")
     return out
 
 
@@ -237,6 +237,7 @@ async def _create_forecast_impl(
 
         def _task() -> Dict[str, Any]:
             result = service.run(sales_df, request_dict, exog_data=exog_data)
+            result["data_file_id"] = sales_entry["file_id"]
             forecast_id = storage.save_forecast(result)
             return {"result": result, "forecast_id": forecast_id}
 
@@ -259,6 +260,7 @@ async def _create_forecast_impl(
         logger.exception("Forecast failed")
         raise HTTPException(status_code=500, detail=f"Forecast failed: {e}")
 
+    result["data_file_id"] = sales_entry["file_id"]
     forecast_id = storage.save_forecast(result)
     return _build_response_from_result(result, forecast_id)
 

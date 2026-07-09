@@ -490,6 +490,7 @@ export interface ForecastDetail {
   backtest_overlap_n?: number;
   backtest_start_date?: string | null;
   backtest_end_date?: string | null;
+  data_file_id?: string;
 }
 
 export interface ForecastListItem {

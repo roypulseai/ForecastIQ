@@ -182,7 +182,11 @@ export function ForecastChart({
 
   const boundary = detail.backtest_end_date
     ? normalizeDate(detail.backtest_end_date)
-    : (actuals.length > 0 ? normalizeDate(actuals[actuals.length - 1].date) : null);
+    : (actuals.length > 0
+        ? normalizeDate(actuals[actuals.length - 1].date)
+        : (backtestValues && backtestValues.length > 0
+            ? normalizeDate(backtestValues[backtestValues.length - 1].date)
+            : null));
 
   // Use backend-provided backtest dates when available (most reliable).
   // Fall back to computing from actuals only if backend didn't provide dates.

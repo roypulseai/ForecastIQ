@@ -101,12 +101,13 @@ export function MetricsCards({
         ? 'up'
         : 'down';
 
-  // --- Accuracy: use selected model (or best) ---
+  // --- Accuracy: show backtest accuracy when available, otherwise CV ---
   const activeBtAcc = activeRank?.backtest_forecast_accuracy ?? activeRank?.forecast_accuracy ?? null;
   const activeBtGrade = activeRank?.backtest_accuracy_grade ?? activeRank?.accuracy_grade ?? null;
   const activeCvAcc = activeRank?.cv_forecast_accuracy ?? null;
   const activeCvGrade = activeRank?.cv_accuracy_grade ?? null;
   const hasBacktest = activeRank?.backtest_mae != null;
+  const accuracyLabel = hasBacktest ? 'Backtest accuracy' : 'CV accuracy';
   const primaryAccuracy = hasBacktest ? activeBtAcc : (activeCvAcc ?? activeBtAcc);
   const primaryGrade = hasBacktest ? activeBtGrade : (activeCvGrade ?? activeBtGrade);
   const primaryTone: 'success' | 'info' | 'warning' | 'error' =
@@ -130,7 +131,7 @@ export function MetricsCards({
       }}
     >
       <MetricCard
-        label="Total forecast"
+        label={activeModelKey && activeModelKey !== bestModel ? `${activeRank?.name ?? activeModelKey}` : 'Total forecast'}
         value={targetCurrency ? formatCurrency(summary?.total_forecast, targetCurrency) : formatNumber(summary?.total_forecast)}
         helper={
           summary
@@ -140,22 +141,30 @@ export function MetricsCards({
         tone="primary"
       />
       <MetricCard
-        label={activeModelKey && activeModelKey !== bestModel ? `${activeRank?.name ?? activeModelKey}` : 'Forecast accuracy'}
+        label={accuracyLabel}
         value={primaryAccuracy != null ? `${primaryAccuracy.toFixed(0)}%` : '—'}
         helper={
           (primaryGrade ? `Grade: ${primaryGrade}` : '') + (
             hasBacktest && activeRank?.backtest_mape != null
-              ? ` · Backtest MAPE ${activeRank.backtest_mape.toFixed(1)}%`
+              ? ` · MAPE ${activeRank.backtest_mape.toFixed(1)}%`
               : activeRank?.mape != null
-                ? ` · CV MAPE ${activeRank.mape.toFixed(1)}%`
+                ? ` · MAPE ${activeRank.mape.toFixed(1)}%`
                 : ''
+          ) + (
+            hasBacktest && activeCvAcc != null
+              ? ` · CV ${activeCvAcc.toFixed(0)}%`
+              : ''
           )
         }
         tone={primaryTone}
         icon={
           <Stack direction="row" spacing={0.5} alignItems="center">
             {primaryIcon}
-            <Tooltip title={`${hasBacktest ? 'Backtest: model re-forecasts on held-out historical data' : 'Cross-validation: average across multiple train/test splits'}`}>
+            <Tooltip title={
+              hasBacktest
+                ? 'Backtest: model re-forecasts on held-out historical data'
+                : 'Cross-validation: average across multiple train/test splits'
+            }>
               <InfoOutlinedIcon sx={{ fontSize: 14, color: 'text.disabled' }} />
             </Tooltip>
           </Stack>
@@ -177,7 +186,7 @@ export function MetricsCards({
         value={bestModel ? bestModel.toUpperCase() : '—'}
         helper={
           bestRank
-            ? `MAE ${formatNumber(bestRank.backtest_mae ?? bestRank.mae, 1)}`
+            ? `Backtest MAE ${formatNumber(bestRank.backtest_mae ?? bestRank.mae, 1)}`
             : '—'
         }
         tone="success"
