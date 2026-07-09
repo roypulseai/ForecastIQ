@@ -80,16 +80,22 @@ export function ResultsPage(): ReactNode {
   const fileDataQuery = useFileData(salesFile?.file_id, 5000);
 
   // Compute historical actuals for the chart.
-  // Uses a layered search: exact match → case-insensitive match → value-based
-  // scan of all columns (date pattern / numeric), so actuals always load even
-  // when analysis data hasn't been fetched yet.
+  // Priority: 1) backend-embedded historical_actuals (most reliable),
+  //           2) fetch from file with column-name/type matching (fallback).
   const actuals = useMemo(() => {
-    if (!fileDataQuery.data || !resultQuery.data) return [] as Array<{ date: string; value: number }>;
+    if (!resultQuery.data) return [] as Array<{ date: string; value: number }>;
+
+    // Fast path: use data the backend already extracted from the source file.
+    if (resultQuery.data.historical_actuals?.length) {
+      return resultQuery.data.historical_actuals;
+    }
+
+    // Fallback: try fetching from the original file.
+    if (!fileDataQuery.data) return [];
     const rows = fileDataQuery.data.rows;
     if (rows.length === 0) return [];
     const columns: string[] = fileDataQuery.data.columns ?? Object.keys(rows[0]);
 
-    // Scan the first N rows of a column to see if values look like dates.
     const isDateCol = (col: string): boolean => {
       const sample = rows.slice(0, Math.min(rows.length, 20));
       const hits = sample.filter((r) => {
@@ -99,7 +105,6 @@ export function ResultsPage(): ReactNode {
       return hits.length >= sample.length * 0.5;
     };
 
-    // Scan the first N rows of a column to see if values look numeric.
     const isNumericCol = (col: string): boolean => {
       const sample = rows.slice(0, Math.min(rows.length, 20));
       const hits = sample.filter((r) => {
@@ -132,7 +137,6 @@ export function ResultsPage(): ReactNode {
       'value', 'Value', 'y', 'sales', 'Sales', 'revenue', 'Revenue',
     );
 
-    // Last resort: scan all columns by value type
     if (!dc || !vc) {
       const dateCandidates = columns.filter((c) => isDateCol(c));
       const numericCandidates = columns.filter((c) => isNumericCol(c));

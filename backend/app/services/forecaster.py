@@ -859,6 +859,24 @@ class ForecasterService:
             if progress_cb:
                 progress_cb(0.95, "Category forecasts done")
 
+        # Embed the source historical data so the frontend never needs to fetch
+        # the file separately or guess column names for the chart.
+        historical: List[Dict[str, Any]] = []
+        if date_col in sales_df.columns and value_col in sales_df.columns:
+            for _, row in sales_df.iterrows():
+                d = row[date_col]
+                v = row[value_col]
+                try:
+                    if pd.notna(d) and pd.notna(v):
+                        historical.append({
+                            "date": str(d)[:10],
+                            "value": float(v),
+                        })
+                except Exception:
+                    pass
+        if historical:
+            historical.sort(key=lambda x: x["date"])
+
         result: Dict[str, Any] = {
             "name": request.get("name", "Forecast"),
             "request": request,
@@ -881,6 +899,7 @@ class ForecasterService:
             "backtest_overlap_n": overlap_n if overlap_n > 0 else (request.get("backtest_overlap") or 0),
             "backtest_start_date": backtest_start_date,
             "backtest_end_date": backtest_end_date,
+            "historical_actuals": historical,
             "created_at": datetime.utcnow().isoformat() + "Z",
         }
         if progress_cb:
