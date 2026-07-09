@@ -31,6 +31,10 @@ import pandas as pd
 
 from ..core.utils import to_python
 from .data_processor import DataProcessor
+from .decomposition import (
+    decompose_series,
+    recommend_seasonal_params,
+)
 from .hyperparameter_tuner import tune_model
 from .model_selector import ModelSelector
 from .models.base import BaseForecaster
@@ -382,6 +386,38 @@ class ForecasterService:
                     logger.warning("Tuning failed for %s: %s", m, e)
             if progress_cb:
                 progress_cb(0.15, "Tuning complete")
+
+        # ---- 0.5) Seasonality analysis & auto-param injection ----
+        # Decompose the series, detect dominant seasonal periods, and
+        # inject the discovered periods into each model's parameters so
+        # downstream models (ETS, Prophet, SARIMAX, etc.) use them.
+        decomposition: Dict[str, Any] = {}
+        try:
+            if progress_cb:
+                progress_cb(0.15, "Analyzing seasonality…")
+            cv_df_seas = (train_df if has_split else sales_df)
+            decomposition = decompose_series(cv_df_seas, date_col, value_col)
+            if decomposition.get("period") and not decomposition.get("error"):
+                logger.info(
+                    "Detected seasonal period=%d  strength=%.2f",
+                    decomposition["period"],
+                    decomposition.get("seasonal_strength", 0),
+                )
+                if decomposition.get("seasonal_strength", 0) > 0.15:
+                    for m in models:
+                        seas_params = recommend_seasonal_params(
+                            cv_df_seas, date_col, value_col, m,
+                        )
+                        if seas_params:
+                            m_key = m
+                            existing = params.get(m_key, {})
+                            # Auto params are lower priority than user/tuned params
+                            merged = {**seas_params, **existing}
+                            if merged != existing:
+                                params[m_key] = merged
+                                logger.info("Auto-applied seasonal params for %s: %s", m, seas_params)
+        except Exception as e:
+            logger.warning("Seasonality analysis failed (continuing): %s", e)
 
         # ---- 1) Cross-validate each requested model in parallel ----
         # CV uses the training portion only for ML models (to avoid leakage),
@@ -900,6 +936,7 @@ class ForecasterService:
             "backtest_start_date": backtest_start_date,
             "backtest_end_date": backtest_end_date,
             "historical_actuals": historical,
+            "decomposition": decomposition if decomposition.get("period") else None,
             "created_at": datetime.utcnow().isoformat() + "Z",
         }
         if progress_cb:

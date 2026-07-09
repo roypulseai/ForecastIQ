@@ -486,6 +486,7 @@ export interface ForecastDetail {
     summary?: ForecastSummary | null;
   }>;
   category_column_values?: Record<string, Record<string, string>>;
+  decomposition?: DecompositionResult | null;
   auto_backtest?: boolean;
   backtest_overlap_n?: number;
   backtest_start_date?: string | null;
@@ -537,6 +538,16 @@ export interface DownsampleInfo {
   new_rows: number;
   reason: string | null;
   aggregation_level: string | null;
+}
+
+export interface DecompositionResult {
+  period: number | null;
+  seasonal_strength: number | null;
+  dates: string[];
+  trend: number[];
+  seasonal: number[];
+  residual: number[];
+  error?: string | null;
 }
 
 // ============================================================================
