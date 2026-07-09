@@ -1,10 +1,11 @@
 import type { ReactNode } from 'react';
-import { Box, Card, CardContent, Stack, Typography } from '@mui/material';
+import { Box, Card, CardContent, Stack, Tooltip, Typography } from '@mui/material';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { alpha, useTheme } from '@mui/material/styles';
 import { formatCurrency, formatNumber, formatPct } from '../../utils/format';
 import type { ForecastSummary, ModelRanking } from '../../types';
@@ -94,8 +95,10 @@ export function MetricsCards({
   const backtestGrade = best?.backtest_accuracy_grade ?? best?.accuracy_grade ?? null;
   const cvAccuracy = best?.cv_forecast_accuracy ?? null;
   const cvGrade = best?.cv_accuracy_grade ?? null;
-  const primaryAccuracy = backtestAccuracy ?? cvAccuracy;
-  const primaryGrade = backtestGrade ?? cvGrade;
+  const hasBacktest = best?.backtest_mae != null;
+  // Backtest is the primary (most realistic), CV is fallback
+  const primaryAccuracy = hasBacktest ? backtestAccuracy : (cvAccuracy ?? backtestAccuracy);
+  const primaryGrade = hasBacktest ? backtestGrade : (cvGrade ?? backtestGrade);
   const primaryTone: 'success' | 'info' | 'warning' | 'error' =
     !primaryAccuracy ? 'info'
       : primaryAccuracy >= 90 ? 'success'
@@ -112,7 +115,7 @@ export function MetricsCards({
     <Box
       sx={{
         display: 'grid',
-        gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(5, 1fr)' },
+        gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(4, 1fr)' },
         gap: 2,
       }}
     >
@@ -130,30 +133,24 @@ export function MetricsCards({
         label="Forecast accuracy"
         value={primaryAccuracy != null ? `${primaryAccuracy.toFixed(0)}%` : '—'}
         helper={
-          primaryGrade
-            ? `Grade: ${primaryGrade} · ${best?.model ?? ''}`
-            : best
-              ? `MAPE ${best.backtest_mape != null ? `${best.backtest_mape.toFixed(1)}%` : (best.mape != null ? `${best.mape.toFixed(1)}%` : '—')}`
-              : '—'
+          (primaryGrade ? `Grade: ${primaryGrade} · ` : '') + (
+            hasBacktest && best?.backtest_mape != null
+              ? `Backtest MAPE ${best.backtest_mape.toFixed(1)}%`
+              : best?.mape != null
+                ? `CV MAPE ${best.mape.toFixed(1)}%`
+                : best?.model ?? ''
+          )
         }
         tone={primaryTone}
-        icon={primaryIcon}
+        icon={
+          <Stack direction="row" spacing={0.5} alignItems="center">
+            {primaryIcon}
+            <Tooltip title={`${hasBacktest ? 'Backtest: model re-forecasts on held-out historical data' : 'Cross-validation: average across multiple train/test splits'}`}>
+              <InfoOutlinedIcon sx={{ fontSize: 14, color: 'text.disabled' }} />
+            </Tooltip>
+          </Stack>
+        }
       />
-      {cvAccuracy != null && (
-        <MetricCard
-          label="CV accuracy"
-          value={`${cvAccuracy.toFixed(0)}%`}
-          helper={
-            cvGrade
-              ? `Grade: ${cvGrade}`
-              : best
-                ? `MAPE ${best.cv_mape != null ? `${best.cv_mape.toFixed(1)}%` : '—'}`
-                : '—'
-          }
-          tone={cvAccuracy >= 80 ? 'success' : cvAccuracy >= 70 ? 'warning' : 'error'}
-          icon={cvAccuracy >= 80 ? <CheckCircleIcon /> : cvAccuracy >= 70 ? <WarningAmberIcon /> : <ErrorOutlineIcon />}
-        />
-      )}
       <MetricCard
         label="Total uplift"
         value={

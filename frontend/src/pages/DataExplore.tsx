@@ -50,6 +50,7 @@ export function DataExplorePage(): ReactNode {
   const [error, setError] = useState<string | null>(null);
   const [decompPeriod, setDecompPeriod] = useState<number>(7);
   const [bins, setBins] = useState<number>(25);
+  const [metricColumn, setMetricColumn] = useState<string | null>(null);
 
   const salesFile = useMemo(
     () => uploadedFiles.find((f) => f.type === 'sales') ?? null,
@@ -73,6 +74,21 @@ export function DataExplorePage(): ReactNode {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileIdToUse, analysisData]);
 
+  // Get all numeric columns from the analysis
+  const numericColumns = useMemo(() => {
+    if (!analysisData?.validation?.column_types) return [] as string[];
+    return Object.entries(analysisData.validation.column_types)
+      .filter(([col, type]) => type === 'numeric' && col !== analysisData.validation.date_column)
+      .map(([col]) => col);
+  }, [analysisData]);
+
+  // Init metricColumn to the detected value column on first load
+  useEffect(() => {
+    if (!metricColumn && analysisData?.validation?.value_column) {
+      setMetricColumn(analysisData.validation.value_column);
+    }
+  }, [analysisData, metricColumn]);
+
   // Build real series from the file rows
   const { dates, values, errorMsg } = useMemo(() => {
     if (!analysisData) {
@@ -82,7 +98,7 @@ export function DataExplorePage(): ReactNode {
       return { dates: [] as string[], values: [] as number[], errorMsg: fileDataQuery.error ? getErrorMessage(fileDataQuery.error) : null };
     }
     const dc = analysisData.validation.date_column || 'date';
-    const vc = analysisData.validation.value_column || 'value';
+    const vc = metricColumn || analysisData.validation.value_column || 'value';
     const rows = fileDataQuery.data.rows;
     if (!rows || rows.length === 0) {
       return { dates: [] as string[], values: [] as number[], errorMsg: `No rows returned for file` };
@@ -106,7 +122,7 @@ export function DataExplorePage(): ReactNode {
       values: pairs.map((p) => p[1]),
       errorMsg: null,
     };
-  }, [analysisData, fileDataQuery.data, fileDataQuery.error]);
+  }, [analysisData, fileDataQuery.data, fileDataQuery.error, metricColumn]);
 
   const handleAnalyze = async () => {
     if (!fileIdToUse) return;
@@ -280,9 +296,23 @@ export function DataExplorePage(): ReactNode {
 
       <Grid container spacing={3} sx={{ mb: 3 }}>
         <Grid item xs={12} lg={8}>
+          <Box sx={{ mb: 1 }}>
+            <TextField
+              select
+              size="small"
+              label="Metric"
+              value={metricColumn ?? data.validation.value_column ?? ''}
+              onChange={(e) => setMetricColumn(e.target.value)}
+              sx={{ minWidth: 200 }}
+            >
+              {numericColumns.map((col) => (
+                <MenuItem key={col} value={col}>{col}</MenuItem>
+              ))}
+            </TextField>
+          </Box>
           <TimeSeriesChart
             data={values.map((v, i) => ({ date: dates[i] ?? '', value: v }))}
-            title={`Business Metric (${data.validation.value_column}) over time`}
+            title={metricColumn ? `${metricColumn} over time` : `Business Metric (${data.validation.value_column}) over time`}
           />
         </Grid>
         <Grid item xs={12} lg={4}>

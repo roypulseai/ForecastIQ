@@ -276,13 +276,11 @@ export function ForecastPage(): ReactNode {
 
   const recommendations = analysisData.model_recommendations.map((r) => r.model);
 
-  // Backtest overlap capped at 20% of the data date range
+  // Backtest overlap capped at 20% of data rows (not calendar days)
   const maxBacktestOverlap = useMemo(() => {
-    const chars = analysisData?.data_characteristics;
-    if (!chars?.min_date || !chars?.max_date) return 365;
-    const rangeMs = new Date(chars.max_date).getTime() - new Date(chars.min_date).getTime();
-    if (rangeMs <= 0) return 0;
-    return Math.max(0, Math.floor(rangeMs / (1000 * 86400) * 0.2));
+    const rowCount = analysisData?.validation?.row_count;
+    if (!rowCount || rowCount <= 0) return 0;
+    return Math.max(1, Math.floor(rowCount * 0.2));
   }, [analysisData]);
 
   const update = <K extends keyof ForecastRequest>(key: K, value: ForecastRequest[K]) =>
