@@ -71,10 +71,12 @@ export function ResultsPage(): ReactNode {
   // request (which may have been renamed / dropped).
   const actuals = useMemo(() => {
     if (!fileDataQuery.data || !resultQuery.data) return [] as Array<{ date: string; value: number }>;
+    const dc = analysisData?.validation?.date_column ?? 'date';
+    const vc = analysisData?.validation?.value_column ?? 'value';
     const out: Array<{ date: string; value: number }> = [];
     for (const r of fileDataQuery.data.rows) {
-      const rawDate = r['date'];
-      const rawVal = r['value'];
+      const rawDate = r[dc];
+      const rawVal = r[vc];
       if (rawDate == null || rawVal == null) continue;
       const d = String(rawDate).slice(0, 10);
       const v = Number(rawVal);
@@ -83,7 +85,7 @@ export function ResultsPage(): ReactNode {
     }
     out.sort((a, b) => (a.date < b.date ? -1 : 1));
     return out;
-  }, [fileDataQuery.data, resultQuery.data]);
+  }, [fileDataQuery.data, resultQuery.data, analysisData]);
 
   useEffect(() => {
     if (listQuery.isError) setError(getErrorMessage(listQuery.error));

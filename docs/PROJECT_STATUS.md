@@ -105,6 +105,8 @@ ForecastIQ is a self-hosted advanced sales forecasting platform built for data s
 ## Recent Changes
 
 ### July 9, 2026
+- **Fixed backtest overlap slider stuck at 0:** `analyze.py` route now forwards `unique_dates` from `validate_sales()` to the frontend, so `maxBacktestOverlap` properly computes > 0
+- **Fixed actuals line not rendering:** `Results.tsx` now uses `analysisData.validation.date_column`/`value_column` instead of hardcoded `'date'`/`'value'` column names, fixing cases where uploaded files use different column names (e.g. `Date`/`Sales`)
 - **Backtest overlap uses unique dates** (not total rows): Fixed clamping, forecaster, and frontend slider to use `nunique()` on date column, preventing inflation from multi-row-per-date SKU-level data
 - **Date-based split in backtest:** Changed from `iloc` row-based to date-based (`< split_date` / `>= split_date`) so overlap_n corresponds exactly to N unique dates
 - **Auto-backtest fires earlier:** Removed `train_test_split >= 1.0` guard; runs whenever data > 50 rows (with descriptive log warnings)

@@ -68,6 +68,7 @@ async def _analyze_file(
             date_column=date_col,
             value_column=value_col,
             row_count=validation["row_count"],
+            unique_dates=validation.get("unique_dates", 0),
             frequency=validation.get("frequency"),
             extra_columns=validation.get("extra_columns", []),
             column_types=validation.get("column_types", {}),
