@@ -282,7 +282,7 @@ export function DataExplorePage(): ReactNode {
         <Grid item xs={12} lg={8}>
           <TimeSeriesChart
             data={values.map((v, i) => ({ date: dates[i] ?? '', value: v }))}
-            title="Sales over time"
+            title={`Business Metric (${data.validation.value_column}) over time`}
           />
         </Grid>
         <Grid item xs={12} lg={4}>

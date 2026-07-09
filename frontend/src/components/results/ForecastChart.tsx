@@ -297,7 +297,7 @@ export function ForecastChart({
                   x={boundary}
                   stroke={theme.palette.text.disabled}
                   strokeDasharray="3 3"
-                  label={{ value: 'Forecast start', position: 'top', fontSize: 10, fill: theme.palette.text.secondary }}
+                  label={{ value: 'Backtest end / Forecast start', position: 'top', fontSize: 10, fill: theme.palette.text.secondary }}
                 />
               )}
               <Area
@@ -363,7 +363,7 @@ export function ForecastChart({
           </ResponsiveContainer>
         </Box>
         <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-          Black line: historical actuals · Blue line: forecast · Shaded area: 95% confidence interval · Yellow zone: backtest (actual vs forecast comparison).
+          Black line: historical actuals · Blue line: forecast (backtest in yellow zone, future beyond dashed line) · Shaded area: 95% confidence interval · Yellow zone: model accuracy comparison (actual vs backtest forecast).
         </Typography>
       </CardContent>
     </Card>
