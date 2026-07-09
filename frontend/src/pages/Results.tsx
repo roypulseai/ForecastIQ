@@ -78,14 +78,34 @@ export function ResultsPage(): ReactNode {
   const fileDataQuery = useFileData(salesFile?.file_id, 5000);
 
   // Compute historical actuals for the chart.
-  // Try exact match from request/analysis column names first, then
-  // fall back to case-insensitive matching so old forecasts created
-  // before column-name detection still show actuals.
+  // Uses a layered search: exact match → case-insensitive match → value-based
+  // scan of all columns (date pattern / numeric), so actuals always load even
+  // when analysis data hasn't been fetched yet.
   const actuals = useMemo(() => {
     if (!fileDataQuery.data || !resultQuery.data) return [] as Array<{ date: string; value: number }>;
     const rows = fileDataQuery.data.rows;
     if (rows.length === 0) return [];
     const columns: string[] = fileDataQuery.data.columns ?? Object.keys(rows[0]);
+
+    // Scan the first N rows of a column to see if values look like dates.
+    const isDateCol = (col: string): boolean => {
+      const sample = rows.slice(0, Math.min(rows.length, 20));
+      const hits = sample.filter((r) => {
+        const v = r[col];
+        return v != null && /^\d{4}[-\/]\d{1,2}[-\/]\d{1,2}/.test(String(v));
+      });
+      return hits.length >= sample.length * 0.5;
+    };
+
+    // Scan the first N rows of a column to see if values look numeric.
+    const isNumericCol = (col: string): boolean => {
+      const sample = rows.slice(0, Math.min(rows.length, 20));
+      const hits = sample.filter((r) => {
+        const v = r[col];
+        return v != null && typeof v === 'number' || (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v.trim()));
+      });
+      return hits.length >= sample.length * 0.5;
+    };
 
     const findCol = (...candidates: (string | null | undefined)[]): string | null => {
       for (const c of candidates) {
@@ -99,16 +119,24 @@ export function ResultsPage(): ReactNode {
       return null;
     };
 
-    const dc = findCol(
+    let dc = findCol(
       resultQuery.data.request.date_column,
       analysisData?.validation?.date_column,
       'date', 'Date', 'ds', 'timestamp', 'datetime',
     );
-    const vc = findCol(
+    let vc = findCol(
       resultQuery.data.request.target_column,
       analysisData?.validation?.value_column,
       'value', 'Value', 'y', 'sales', 'Sales', 'revenue', 'Revenue',
     );
+
+    // Last resort: scan all columns by value type
+    if (!dc || !vc) {
+      const dateCandidates = columns.filter((c) => isDateCol(c));
+      const numericCandidates = columns.filter((c) => isNumericCol(c));
+      dc = dc ?? dateCandidates[0] ?? null;
+      vc = vc ?? numericCandidates.find((c) => c !== dc) ?? numericCandidates[0] ?? null;
+    }
     if (!dc || !vc) return [];
 
     const out: Array<{ date: string; value: number }> = [];
