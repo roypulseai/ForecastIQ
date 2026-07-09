@@ -66,6 +66,7 @@ export interface ValidationResult {
   date_column: string | null;
   value_column: string | null;
   row_count: number;
+  unique_dates: number;
   frequency: string | null;
   extra_columns: string[];
   column_types: Record<string, string>;

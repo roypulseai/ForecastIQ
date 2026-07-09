@@ -209,8 +209,12 @@ async def _create_forecast_impl(
     if sales_df is None or sales_df.empty:
         raise HTTPException(status_code=400, detail="Sales data is empty")
 
-    # Clamp backtest_overlap to 20% of data row count (not calendar days)
-    max_backtest = max(0, int(len(sales_df) * 0.2))
+    # Clamp backtest_overlap to 20% of unique dates
+    try:
+        n_dates = int(sales_df["date"].nunique())
+    except Exception:
+        n_dates = len(sales_df)
+    max_backtest = max(0, int(n_dates * 0.2))
     if request.backtest_overlap > max_backtest:
         request.backtest_overlap = max_backtest
 

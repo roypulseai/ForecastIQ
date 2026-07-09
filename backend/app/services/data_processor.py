@@ -622,7 +622,7 @@ class DataProcessor:
         if df.empty:
             errors.append("DataFrame is empty")
             return {"valid": False, "errors": errors, "warnings": warnings,
-                    "date_column": None, "value_column": None, "row_count": 0}
+                    "date_column": None, "value_column": None, "row_count": 0, "unique_dates": 0}
 
         date_col = "date" if "date" in df.columns else _find_date_column(df, DATE_ALIASES)
         value_col = "value" if "value" in df.columns else _find_column(
@@ -673,6 +673,7 @@ class DataProcessor:
             "date_column": date_col,
             "value_column": value_col,
             "row_count": int(len(df)),
+            "unique_dates": int(df[date_col].nunique()) if date_col in df.columns else 0,
             "frequency": frequency,
             "extra_columns": extra_cols,
             "column_types": _infer_column_types(df),

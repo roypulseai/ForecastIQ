@@ -1,7 +1,7 @@
 # ForecastIQ User Guide
 
 **Version:** 1.0
-**Last Updated:** July 8, 2026
+**Last Updated:** July 9, 2026
 
 ---
 
@@ -83,6 +83,8 @@ date,value,region,sku
 |---------|-------------|---------|
 | **Horizon** | Number of periods to forecast | 30 |
 | **Frequency** | Data granularity | Daily |
+| **Date Column** | Auto-detected date columns | First date column |
+| **Target Column** | Auto-detected numeric columns | First numeric column |
 | **Models** | Select forecasting models | Prophet |
 | **Include Factors** | External data (promotions, holidays, etc.) | None |
 | **Backtest Period** | Historical period to evaluate accuracy | Auto (20%) |
@@ -94,9 +96,14 @@ date,value,region,sku
 - Examples: 30 days, 12 weeks, 12 months
 
 **Backtest Period:**
-- **Auto (20%):** System uses latest 20% of data for accuracy evaluation
-- **Custom:** Specify exact number of periods
+- **Auto (20%):** System uses latest 20% of data (based on unique dates, not total rows)
+- **Custom:** Specify exact number of unique time periods
 - **None:** No accuracy evaluation (faster, no metrics)
+
+**Date / Target Column:**
+- Date column dropdown shows only columns typed as `'date'`
+- Target column dropdown shows only columns typed as `'numeric'`
+- Both auto-detect and filter based on uploaded data
 
 **Models:**
 - **Prophet:** Best for daily data with holidays/seasonality
@@ -118,13 +125,15 @@ After running a forecast, you'll see:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  [Total Forecast]  [Forecast Accuracy]  [CV Accuracy]   │
-│      $45,230            87% (Grade B)       85% (Grade B)   │
+│  [Total Forecast]  [Forecast Accuracy]  [Best Model]    │
+│      $45,230            87% (Grade B)       THETA         │
 │                                                             │
-│  [Total Uplift]    [Best Model]                             │
-│      +12.3%              PROPHET                            │
+│  [Total Uplift]    [Model Selected (if any)]               │
+│      +12.3%             THETA: 87% (Grade B)               │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+> **Note:** When you select a specific model in the chart dropdown, the Forecast Accuracy card switches to show that model's name and metrics. The Best Model card always shows the overall best-ranked model regardless of selection.
 
 ### Forecast Chart Tab
 
@@ -211,10 +220,12 @@ For proper held-out evaluation:
 
 Visual comparison of forecast vs actuals:
 
-1. Set `backtest_overlap` to number of periods (e.g., 30)
-2. System re-trains model on data minus last 30 periods
-3. Forecasts last 30 periods
+1. Set `backtest_overlap` to number of unique time periods (e.g., 30)
+2. System re-trains model on data minus last 30 unique dates
+3. Forecasts last 30 unique dates
 4. Compare forecasted vs actual values in chart
+
+> **Key detail:** Overlap is based on **unique dates**, not total rows. If you have SKU-level data with 3 rows per date, `backtest_overlap: 30` evaluates 30 unique dates (up to 90 rows).
 
 **Use case:** "What would the model have predicted last month?"
 
@@ -243,12 +254,12 @@ Example: MAPE of 13% → 87% Accuracy
 
 | Metric | When Used | Business Meaning |
 |--------|-----------|------------------|
-| **Backtest Accuracy** | When `train_test_split < 1.0` or `backtest_overlap > 0` | Real held-out evaluation on unseen data |
-| **CV Accuracy** | Always computed | Average across multiple folds of cross-validation |
+| **Backtest Accuracy** | When `backtest_overlap > 0` | Real held-out evaluation on unseen data |
+| **CV Accuracy** | Always computed | Average across multiple folds of cross-validation (shown in tooltip) |
 
 **Which to trust?**
 - **Backtest accuracy** is more representative of real-world performance
-- **CV accuracy** provides stability indication across different train/test splits
+- **CV accuracy** provides stability indication across different train/test splits (viewable in tooltip)
 
 ### R² (Coefficient of Determination)
 

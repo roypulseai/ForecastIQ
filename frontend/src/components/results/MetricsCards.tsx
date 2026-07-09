@@ -13,6 +13,7 @@ import type { ForecastSummary, ModelRanking } from '../../types';
 interface MetricsCardsProps {
   summary: ForecastSummary | null;
   bestModel: string | null | undefined;
+  selectedModel?: string | null;
   rankings: ModelRanking[];
   targetCurrency?: string;
 }
@@ -74,10 +75,19 @@ function MetricCard({ label, value, helper, trend, tone = 'primary', icon }: Met
 export function MetricsCards({
   summary,
   bestModel,
+  selectedModel,
   rankings,
   targetCurrency,
 }: MetricsCardsProps): ReactNode {
-  const best = rankings.find((r) => r.model === bestModel) ?? rankings[0];
+  // Pick the right ranking entry: selected model, or best model, or first
+  const activeModelKey = selectedModel ?? bestModel;
+  const activeRank: ModelRanking | undefined = activeModelKey
+    ? rankings.find((r) => r.model === activeModelKey) ?? rankings[0]
+    : rankings[0];
+  // For the "Best model" card, always point at the actual best model (not the selected one)
+  const bestRank: ModelRanking | undefined = bestModel
+    ? rankings.find((r) => r.model === bestModel) ?? rankings[0]
+    : rankings[0];
   const upliftTone: 'success' | 'error' | 'primary' =
     !summary || summary.total_uplift === 0
       ? 'primary'
@@ -91,14 +101,14 @@ export function MetricsCards({
         ? 'up'
         : 'down';
 
-  const backtestAccuracy = best?.backtest_forecast_accuracy ?? best?.forecast_accuracy ?? null;
-  const backtestGrade = best?.backtest_accuracy_grade ?? best?.accuracy_grade ?? null;
-  const cvAccuracy = best?.cv_forecast_accuracy ?? null;
-  const cvGrade = best?.cv_accuracy_grade ?? null;
-  const hasBacktest = best?.backtest_mae != null;
-  // Backtest is the primary (most realistic), CV is fallback
-  const primaryAccuracy = hasBacktest ? backtestAccuracy : (cvAccuracy ?? backtestAccuracy);
-  const primaryGrade = hasBacktest ? backtestGrade : (cvGrade ?? backtestGrade);
+  // --- Accuracy: use selected model (or best) ---
+  const activeBtAcc = activeRank?.backtest_forecast_accuracy ?? activeRank?.forecast_accuracy ?? null;
+  const activeBtGrade = activeRank?.backtest_accuracy_grade ?? activeRank?.accuracy_grade ?? null;
+  const activeCvAcc = activeRank?.cv_forecast_accuracy ?? null;
+  const activeCvGrade = activeRank?.cv_accuracy_grade ?? null;
+  const hasBacktest = activeRank?.backtest_mae != null;
+  const primaryAccuracy = hasBacktest ? activeBtAcc : (activeCvAcc ?? activeBtAcc);
+  const primaryGrade = hasBacktest ? activeBtGrade : (activeCvGrade ?? activeBtGrade);
   const primaryTone: 'success' | 'info' | 'warning' | 'error' =
     !primaryAccuracy ? 'info'
       : primaryAccuracy >= 90 ? 'success'
@@ -130,15 +140,15 @@ export function MetricsCards({
         tone="primary"
       />
       <MetricCard
-        label="Forecast accuracy"
+        label={activeModelKey && activeModelKey !== bestModel ? `${activeRank?.name ?? activeModelKey}` : 'Forecast accuracy'}
         value={primaryAccuracy != null ? `${primaryAccuracy.toFixed(0)}%` : '—'}
         helper={
-          (primaryGrade ? `Grade: ${primaryGrade} · ` : '') + (
-            hasBacktest && best?.backtest_mape != null
-              ? `Backtest MAPE ${best.backtest_mape.toFixed(1)}%`
-              : best?.mape != null
-                ? `CV MAPE ${best.mape.toFixed(1)}%`
-                : best?.model ?? ''
+          (primaryGrade ? `Grade: ${primaryGrade}` : '') + (
+            hasBacktest && activeRank?.backtest_mape != null
+              ? ` · Backtest MAPE ${activeRank.backtest_mape.toFixed(1)}%`
+              : activeRank?.mape != null
+                ? ` · CV MAPE ${activeRank.mape.toFixed(1)}%`
+                : ''
           )
         }
         tone={primaryTone}
@@ -166,8 +176,8 @@ export function MetricsCards({
         label="Best model"
         value={bestModel ? bestModel.toUpperCase() : '—'}
         helper={
-          best
-            ? `MAE ${formatNumber(best.backtest_mae ?? best.mae, 1)}`
+          bestRank
+            ? `MAE ${formatNumber(bestRank.backtest_mae ?? bestRank.mae, 1)}`
             : '—'
         }
         tone="success"

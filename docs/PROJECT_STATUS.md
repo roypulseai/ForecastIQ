@@ -1,6 +1,6 @@
 # ForecastIQ - Project Status
 
-**Last Updated:** July 8, 2026
+**Last Updated:** July 9, 2026
 
 ---
 
@@ -37,7 +37,7 @@ ForecastIQ is a self-hosted advanced sales forecasting platform built for data s
 | R² Computation | ✅ Complete | Both CV and backtest |
 | Forecast Accuracy % | ✅ Complete | Business-friendly metric |
 | Accuracy Grade | ✅ Complete | A/B/C/D/F grading |
-| Separate CV & Backtest Display | ✅ Complete | Clear labels in UI |
+| Consolidated Accuracy Display | ✅ Complete | Single KPI card, updates on model selection |
 
 ### External Factors
 | Feature | Status | Notes |
@@ -104,10 +104,21 @@ ForecastIQ is a self-hosted advanced sales forecasting platform built for data s
 
 ## Recent Changes
 
+### July 9, 2026
+- **Backtest overlap uses unique dates** (not total rows): Fixed clamping, forecaster, and frontend slider to use `nunique()` on date column, preventing inflation from multi-row-per-date SKU-level data
+- **Date-based split in backtest:** Changed from `iloc` row-based to date-based (`< split_date` / `>= split_date`) so overlap_n corresponds exactly to N unique dates
+- **Auto-backtest fires earlier:** Removed `train_test_split >= 1.0` guard; runs whenever data > 50 rows (with descriptive log warnings)
+- **Best Model uses backend ranking:** Fixed `Results.tsx` to read `resultQuery.data.best_model` instead of hardcoding to first model in request list
+- **KPI cards respond to model selection:** Single "Forecast accuracy" card now shows selected model's name and metrics; "Best model" card remains as reference
+- **Column selectors filter by type:** Date dropdown shows only `'date'` typed columns; Target dropdown shows only `'numeric'` typed columns
+- **Backtest structural fix:** Rewrote backtest section in `forecaster.py` to fix broken logic (code was trapped inside skip `elif` branch)
+- **Data Explore dynamic title:** Changed "Sales over time" → "Business Metric ({value_column}) over time"
+- **Explore column selector:** Added dropdown to switch between numeric columns in Explore tab
+
 ### July 8, 2026
 - **Auto Backtest (20% default):** When no `backtest_overlap` specified, system now automatically uses latest 20% of data as backtest period for business users
 - **Backtest Metrics:** MAE, RMSE, MAPE, R² computed from backtest forecasts vs actuals
-- **CV/Backtest Display:** UI now shows both "Forecast accuracy" (backtest) and "CV accuracy" with clear labels
+- **CV/Backtest Display:** UI now shows both backtest accuracy and CV accuracy
 - **Ensemble Metrics:** Ensemble models now compute and display accuracy metrics
 - **R² Support:** Added R² computation to CV (per-fold and aggregated) and backtest metrics
 

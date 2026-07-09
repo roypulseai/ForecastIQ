@@ -217,21 +217,15 @@ export function ForecastPage(): ReactNode {
     }
   };
   const sortedForDate = useMemo(
-    () => [...columns].sort((a, b) => {
-      const ta = columnTypes[a]; const tb = columnTypes[b];
-      if (ta === 'date' && tb !== 'date') return -1;
-      if (ta !== 'date' && tb === 'date') return 1;
-      return a.localeCompare(b);
-    }),
+    () => [...columns]
+      .filter((c) => columnTypes[c] === 'date')
+      .sort((a, b) => a.localeCompare(b)),
     [columns, columnTypes],
   );
   const sortedForTarget = useMemo(
-    () => [...columns].sort((a, b) => {
-      const ta = columnTypes[a]; const tb = columnTypes[b];
-      if (ta === 'numeric' && tb !== 'numeric') return -1;
-      if (ta !== 'numeric' && tb === 'numeric') return 1;
-      return a.localeCompare(b);
-    }),
+    () => [...columns]
+      .filter((c) => columnTypes[c] === 'numeric')
+      .sort((a, b) => a.localeCompare(b)),
     [columns, columnTypes],
   );
   // Category-eligible columns: categorical, region, or id type columns
@@ -276,11 +270,11 @@ export function ForecastPage(): ReactNode {
 
   const recommendations = analysisData.model_recommendations.map((r) => r.model);
 
-  // Backtest overlap capped at 20% of data rows (not calendar days)
+  // Backtest overlap capped at 20% of unique dates
   const maxBacktestOverlap = useMemo(() => {
-    const rowCount = analysisData?.validation?.row_count;
-    if (!rowCount || rowCount <= 0) return 0;
-    return Math.max(1, Math.floor(rowCount * 0.2));
+    const nDates = analysisData?.validation?.unique_dates;
+    if (!nDates || nDates <= 0) return 0;
+    return Math.max(1, Math.floor(nDates * 0.2));
   }, [analysisData]);
 
   const update = <K extends keyof ForecastRequest>(key: K, value: ForecastRequest[K]) =>

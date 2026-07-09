@@ -115,11 +115,12 @@ class UploadedFileInfo(BaseModel):
 
 class ValidationResult(BaseModel):
     valid: bool
-    errors: List[str] = Field(default_factory=list)
+    errors: List[str]
     warnings: List[str] = Field(default_factory=list)
     date_column: Optional[str] = None
     value_column: Optional[str] = None
     row_count: int = 0
+    unique_dates: int = 0
     frequency: Optional[str] = None
     extra_columns: List[str] = Field(default_factory=list)
     column_types: Dict[str, str] = Field(default_factory=dict)

@@ -327,11 +327,8 @@ export function ResultsPage(): ReactNode {
           <Box sx={{ mb: 3 }}>
             <MetricsCards
               summary={activeSummary}
-              bestModel={
-                selectedCategory
-                  ? (activeResults ? firstModelKey(activeResults) : null)
-                  : (resultQuery.data.ensemble ? 'ensemble' : resultQuery.data.request.models[0] ?? null)
-              }
+              bestModel={resultQuery.data.best_model ?? (resultQuery.data.ensemble ? 'ensemble' : null)}
+              selectedModel={selectedModel === '__ensemble__' ? null : selectedModel}
               rankings={
                 selectedCategory
                   ? Object.values(activeResults ?? {}).map((r) => {

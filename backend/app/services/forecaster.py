@@ -730,22 +730,26 @@ class ForecasterService:
         overlap_n = 0
         backtest_start_date: Optional[str] = None
         backtest_end_date: Optional[str] = None
-        if backtest_overlap == 0 and len(sales_df) > 50:
-            auto_backtest = True
-            overlap_n = max(1, int(len(sales_df) * 0.2))
-            logger.info("No backtest_overlap set — auto-using last %d rows (~20%%) as backtest period", overlap_n)
-        elif backtest_overlap > 0:
-            overlap_n = backtest_overlap
 
-        if overlap_n > 0 and len(sales_df) > overlap_n:
-            if len(sales_df) <= overlap_n + 5:
-                logger.warning("Backtest guard: only %d training rows for overlap=%d — results may be unreliable", len(sales_df) - overlap_n, overlap_n)
-            backtest_df = sales_df.iloc[:-overlap_n]
-        if overlap_n > 0 and len(sales_df) <= overlap_n:
-            logger.warning("Backtest skipped: overlap_n=%d requires more rows than available (%d)", overlap_n, len(sales_df))
-            backtest_actuals = sales_df.iloc[-overlap_n:]
+        # Compute overlap in terms of UNIQUE DATES, not row count
+        n_unique_dates = int(sales_df[date_col].nunique()) if date_col in sales_df.columns else len(sales_df)
+        if backtest_overlap == 0 and n_unique_dates > 50:
+            auto_backtest = True
+            overlap_n = max(1, int(n_unique_dates * 0.2))
+            logger.info("Auto-backtest: using last %d unique dates (~20%% of %d)", overlap_n, n_unique_dates)
+        elif backtest_overlap > 0:
+            overlap_n = min(backtest_overlap, n_unique_dates - 5)
+
+        if overlap_n > 0 and n_unique_dates > overlap_n + 5:
+            # Date-based split: train on data before split_date, test on data after
+            unique_dates = sorted(sales_df[date_col].unique())
+            split_date = unique_dates[-overlap_n]
+            backtest_df = sales_df[sales_df[date_col] < split_date].copy()
+            backtest_actuals = sales_df[sales_df[date_col] >= split_date].copy()
             backtest_start_date = str(backtest_actuals[date_col].iloc[0])[:10]
             backtest_end_date = str(backtest_actuals[date_col].iloc[-1])[:10]
+            logger.info("Backtest overlap_n=%d dates, train=%d rows, test=%d rows", overlap_n, len(backtest_df), len(backtest_actuals))
+
             for m_name, pm in per_model.items():
                 if pm.get("error"):
                     continue
@@ -754,13 +758,13 @@ class ForecasterService:
                     bt_model.fit(backtest_df, date_col, value_col, exog_data=exog_data or {})
                     bt_fc = bt_model.forecast(overlap_n, exog_data=exog_data)
                     pm["backtest_forecast_values"] = bt_fc
-                    # Compute backtest metrics: MAE, RMSE, MAPE, R2
                     bt_metrics = _compute_backtest_metrics(bt_fc, backtest_actuals, date_col, value_col)
                     pm["backtest_metrics"] = bt_metrics
                 except Exception as e:
                     logger.warning("Backtest re-forecast failed for %s: %s", m_name, e)
                     pm["backtest_forecast_values"] = []
                     pm["backtest_metrics"] = {}
+
             if ensemble_result:
                 try:
                     bt_members: List[BaseForecaster] = []
@@ -779,6 +783,8 @@ class ForecasterService:
                         ensemble_result["backtest_metrics"] = bt_metrics
                 except Exception as e:
                     logger.warning("Ensemble backtest re-forecast failed: %s", e)
+        elif overlap_n > 0:
+            logger.warning("Backtest skipped: overlap=%d unique dates, but only %d available", overlap_n, n_unique_dates)
 
         # ---- 6) Per-category forecasts (parallel) ----
         # Run forecasts for each category value in parallel for speed.
