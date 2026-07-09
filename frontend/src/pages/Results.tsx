@@ -31,6 +31,7 @@ import { ModelComparison } from '../components/results/ModelComparison';
 import { ResultsTable } from '../components/results/ResultsTable';
 import { ExportButton } from '../components/results/ExportButton';
 import { MetricsCards } from '../components/results/MetricsCards';
+import { useAnalyze } from '../hooks/useAnalysis';
 import { useDeleteForecast, useForecastList } from '../hooks/useForecast';
 import { useForecastResult } from '../hooks/useForecastResults';
 import { useFileData, useFiles } from '../hooks/useFiles';
@@ -49,6 +50,7 @@ export function ResultsPage(): ReactNode {
   const filesQuery = useFiles();
   const resultQuery = useForecastResult(currentForecastId);
   const deleteMut = useDeleteForecast();
+  const analyzeMut = useAnalyze();
   const [tab, setTab] = useState(0);
   const [selectedModel, setSelectedModel] = useState<string>('__ensemble__');
   const [selectedCategory, setSelectedCategory] = useState<string>('');
@@ -509,6 +511,20 @@ export function ResultsPage(): ReactNode {
                       }
                       label="Show baseline"
                     />
+                    {(!fileDataQuery.data || actuals.length === 0) && (
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        startIcon={<AssessmentIcon />}
+                        disabled={analyzeMut.isPending}
+                        onClick={() => {
+                          const fid = salesFile?.file_id ?? resultQuery.data?.data_file_id;
+                          if (fid) analyzeMut.mutate(fid);
+                        }}
+                      >
+                        {analyzeMut.isPending ? 'Analyzing…' : 'Analyze data'}
+                      </Button>
+                    )}
                   </Stack>
                   <ForecastChart
                     detail={resultQuery.data}

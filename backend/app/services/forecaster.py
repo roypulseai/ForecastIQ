@@ -776,7 +776,7 @@ class ForecasterService:
                         except Exception:
                             pass
                     if len(bt_members) >= 1:
-                        ens = EnsembleForecaster(bt_members, [])
+                        ens = EnsembleForecaster(bt_members)
                         bt_fc = ens.forecast(overlap_n, exog_data=exog_data)
                         ensemble_result["backtest_forecast_values"] = bt_fc
                         bt_metrics = _compute_backtest_metrics(bt_fc, backtest_actuals, date_col, value_col)
