@@ -66,13 +66,12 @@ export function ResultsPage(): ReactNode {
   const fileDataQuery = useFileData(salesFile?.file_id, 5000);
 
   // Compute historical actuals for the chart.
-  // The DataProcessor normalizes all column names to 'date' and 'value',
-  // so we use those standardized names — NOT the original names from the
-  // request (which may have been renamed / dropped).
+  // Use the column names from the forecast request (always available in the result).
+  // Fall back to analysisData, then to hardcoded 'date'/'value'.
   const actuals = useMemo(() => {
     if (!fileDataQuery.data || !resultQuery.data) return [] as Array<{ date: string; value: number }>;
-    const dc = analysisData?.validation?.date_column ?? 'date';
-    const vc = analysisData?.validation?.value_column ?? 'value';
+    const dc = resultQuery.data.request.date_column ?? analysisData?.validation?.date_column ?? 'date';
+    const vc = resultQuery.data.request.target_column ?? analysisData?.validation?.value_column ?? 'value';
     const out: Array<{ date: string; value: number }> = [];
     for (const r of fileDataQuery.data.rows) {
       const rawDate = r[dc];
@@ -471,7 +470,7 @@ export function ResultsPage(): ReactNode {
                       forecast_accuracy: btMetrics.forecast_accuracy ?? r.metrics.test_forecast_accuracy ?? r.metrics.forecast_accuracy ?? null,
                     };
                   })}
-                  bestModel={selectedCategory ? firstModelKey(activeResults ?? {}) : resultQuery.data.ensemble ? 'ensemble' : resultQuery.data.request.models[0] ?? null}
+                  bestModel={selectedCategory ? firstModelKey(activeResults ?? {}) : resultQuery.data.best_model ?? (resultQuery.data.ensemble ? 'ensemble' : null)}
                 />
               )}
               {tab === 2 && resultQuery.data && (
@@ -651,8 +650,9 @@ function ForecastRow({
 
 function ModelMetricsCard({ result, testMetrics }: { result: ModelResult; testMetrics?: { mae: number | null; rmse: number | null; mape: number | null } | null }): ReactNode {
   const m = result.metrics;
-  const accuracy = m?.forecast_accuracy ?? null;
-  const grade = m?.accuracy_grade ?? null;
+  const bt = result.backtest_metrics ?? {};
+  const accuracy = bt.forecast_accuracy ?? m?.test_forecast_accuracy ?? m?.forecast_accuracy ?? null;
+  const grade = bt.accuracy_grade ?? m?.test_accuracy_grade ?? m?.accuracy_grade ?? null;
   const testAccuracy = m?.test_forecast_accuracy ?? null;
   const accuracyTone: 'success' | 'info' | 'warning' | 'error' =
     !accuracy ? 'info'
@@ -672,14 +672,29 @@ function ModelMetricsCard({ result, testMetrics }: { result: ModelResult; testMe
           </Typography>
           <MetricRow label="MAE" value={m.mae} />
           <MetricRow label="RMSE" value={m.rmse} />
+          <MetricRow label="MAPE (error)" value={m.mape} fmt="pct" />
+          <MetricRow label="R²" value={m.r2} />
           {accuracy != null && (
             <>
               <MetricRow label="Forecast accuracy" value={accuracy} fmt="pct" tone={accuracyTone} />
               {grade && <MetricRow label="Grade" value={grade} fmt="str" />}
             </>
           )}
-          <MetricRow label="MAPE (error)" value={m.mape} fmt="pct" />
-          <MetricRow label="R²" value={m.r2} />
+          {bt.mae != null && (
+            <>
+              <Divider sx={{ my: 0.5 }} />
+              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+                Backtest metrics (actual vs forecast comparison)
+              </Typography>
+              <MetricRow label="Backtest MAE" value={bt.mae} />
+              <MetricRow label="Backtest RMSE" value={bt.rmse} />
+              {bt.mape != null && <MetricRow label="Backtest MAPE" value={bt.mape} fmt="pct" />}
+              {bt.forecast_accuracy != null && (
+                <MetricRow label="Backtest accuracy" value={bt.forecast_accuracy} fmt="pct" tone={accuracyTone} />
+              )}
+              {bt.r2 != null && <MetricRow label="Backtest R²" value={bt.r2} />}
+            </>
+          )}
           {testMetrics && testMetrics.mae != null && (
             <>
               <Divider sx={{ my: 0.5 }} />

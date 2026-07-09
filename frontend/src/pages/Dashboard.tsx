@@ -64,8 +64,8 @@ export function Dashboard(): ReactNode {
       to: '/upload',
       title: 'Upload data',
       description: hasSales
-        ? `${filesByType.sales ?? 0} sales file${filesByType.sales === 1 ? '' : 's'} loaded`
-        : 'Start by uploading your sales history CSV',
+        ? `${filesByType.sales ?? 0} business metrics file${filesByType.sales === 1 ? '' : 's'} loaded`
+        : 'Start by uploading your business metrics CSV',
       icon: <CloudUploadIcon />,
       cta: hasSales ? 'Manage files' : 'Upload data',
       ready: true,
@@ -75,7 +75,7 @@ export function Dashboard(): ReactNode {
       title: 'Explore your data',
       description: hasAnalysis
         ? 'Visualize trends, seasonality, and outliers'
-        : 'Upload + analyze sales data first',
+        : 'Upload + analyze business data first',
       icon: <InsightsIcon />,
       cta: hasAnalysis ? 'Open explorer' : 'Locked',
       ready: hasAnalysis,
@@ -147,7 +147,7 @@ export function Dashboard(): ReactNode {
                   ? 'Run a forecast to continue'
                   : hasSales
                     ? 'Explore or run a forecast'
-                    : 'Upload sales data to begin'
+                    : 'Upload business data to begin'
             }
             tone={hasForecast ? 'success' : hasAnalysis ? 'primary' : 'warning'}
           />
@@ -189,7 +189,7 @@ export function Dashboard(): ReactNode {
                     ? `${formatNumber(analysisData?.data_characteristics.length ?? 0)} observations analyzed. Choose models and run the forecast.`
                     : hasSales
                       ? 'Inspect patterns in the Explore page or jump to the Forecast page to configure a run.'
-                      : 'Get started by uploading a sales history CSV. You can add other data sources (media, holidays, etc.) on the same page.'}
+                      : 'Get started by uploading a business metrics CSV. You can add other data sources (media, holidays, etc.) on the same page.'}
               </Typography>
             </Box>
             <Stack direction="row" spacing={1.5}>
@@ -415,7 +415,7 @@ export function Dashboard(): ReactNode {
           <Stack direction="row" spacing={2} alignItems="center">
             <CircularProgress size={20} />
             <Typography variant="body2" color="text.secondary">
-              No sales data loaded yet. Head to the{' '}
+              No business data loaded yet. Head to the{' '}
               <Box component={RouterLink} to="/upload" sx={{ color: 'primary.main', fontWeight: 600, textDecoration: 'none' }}>
                 Data
               </Box>{' '}

@@ -151,10 +151,10 @@ export function DataExplorePage(): ReactNode {
         <Card sx={{ p: 4, textAlign: 'center' }}>
           <InsightsIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
           <Typography variant="h5" gutterBottom>
-            No sales data uploaded yet
+            No business data uploaded yet
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-            Upload a sales CSV to unlock interactive exploration.
+            Upload a business data CSV to unlock interactive exploration.
           </Typography>
           <Button variant="contained" onClick={() => navigate('/upload')}>
             Go to upload
@@ -176,7 +176,7 @@ export function DataExplorePage(): ReactNode {
           <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
             {analyzeMut.isPending
               ? 'Computing characteristics and model recommendations.'
-              : 'Run an analysis on your sales file to view interactive charts.'}
+              : 'Run an analysis on your data file to view interactive charts.'}
           </Typography>
           {analyzeMut.isPending && <CircularProgress />}
           {!analyzeMut.isPending && (
@@ -210,7 +210,7 @@ export function DataExplorePage(): ReactNode {
   return (
     <PageContainer
       title="Explore data"
-      subtitle="Interactive diagnostics for your sales history."
+      subtitle="Interactive diagnostics for your business data."
       actions={
         <Stack direction="row" spacing={1.5}>
           <Button

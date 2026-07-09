@@ -258,7 +258,7 @@ export function ForecastPage(): ReactNode {
       <PageContainer title="Forecast">
         <Card sx={{ p: 4, textAlign: 'center' }}>
           <Alert severity="info" sx={{ mb: 2 }}>
-            No sales analysis available. Upload data and run analysis first.
+            No data analysis available. Upload data and run analysis first.
           </Alert>
           <Button variant="contained" onClick={() => navigate('/upload')}>
             Go to upload

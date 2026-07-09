@@ -96,7 +96,7 @@ export function ModelsPage(): ReactNode {
     tags: string;
   }) => {
     if (!salesFile) {
-      setError('Upload a sales file first');
+      setError('Upload business data first');
       return
     }
     setError(null);
@@ -194,7 +194,7 @@ export function ModelsPage(): ReactNode {
 
       {!salesFile && (
         <Alert severity="info" sx={{ mb: 3 }}>
-          Upload a sales file to enable training new models.
+          Upload business data to enable training new models.
         </Alert>
       )}
 
