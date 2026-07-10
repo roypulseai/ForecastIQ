@@ -574,7 +574,28 @@ class ForecasterService:
                 except Exception as e:
                     logger.warning("Full-data refit failed for %s (using train-only forecast): %s", m, e)
 
-        # ---- 2c) Optionally save the best model to the registry ----
+        # ---- 2c) Factor contribution analysis: isolate each external factor's uplift ----
+        factor_contributions: Dict[str, Any] = {}
+        if per_model and exog_data:
+            try:
+                best_key_for_factors = min(
+                    [k for k, v in per_model.items() if not v.get("error")],
+                    key=lambda k: per_model[k].get("metrics", {}).get("test_mae")
+                    or per_model[k].get("metrics", {}).get("mae")
+                    or float("inf"),
+                    default=None,
+                )
+                if best_key_for_factors:
+                    fc_model = self.selector.get_model(best_key_for_factors, params)
+                    fc_model.fit(sales_df, date_col, value_col, exog_data=exog_data or {})
+                    baseline_fc = fc_model.get_baseline(horizon, exog_data=exog_data)
+                    factor_contributions = _compute_factor_contributions(
+                        fc_model, exog_data, horizon, baseline_fc,
+                    )
+            except Exception as e:
+                logger.warning("Factor contribution analysis failed: %s", e)
+
+        # ---- 2d) Optionally save the best model to the registry ----
         saved_model_meta: Optional[Dict[str, Any]] = None
         if save_model and per_model:
             try:
@@ -922,6 +943,7 @@ class ForecasterService:
             "ensemble": ensemble_result,
             "summary": summary,
             "external_factor_analysis": external,
+            "factor_contributions": factor_contributions,
             "downsample_info": downsample_info,
             "test_metrics": test_metrics_per_model,
             "saved_model": saved_model_meta,
@@ -1438,6 +1460,35 @@ def _build_summary(
         "avg_daily_forecast": total_fc / max(1, len(fc)),
         "horizon": horizon,
     }
+
+
+def _compute_factor_contributions(
+    best_model: Optional[BaseForecaster],
+    exog_data: Optional[Dict[str, pd.DataFrame]],
+    horizon: int,
+    baseline_forecast: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    if best_model is None or not exog_data or not baseline_forecast:
+        return {}
+    contributions: Dict[str, Any] = {}
+    baseline_vals = [f["forecast"] for f in baseline_forecast]
+    factor_names = [k for k in exog_data if k in ("media_plan", "promotions", "holidays", "events", "weather", "competitor", "economic")]
+    for name in factor_names:
+        try:
+            single_exog = {name: exog_data[name]}
+            fc = best_model.forecast(horizon, exog_data=single_exog)
+            fc_vals = [f["forecast"] for f in fc]
+            per_step = [float(fc_vals[i] - baseline_vals[i]) for i in range(horizon)]
+            total_contribution = float(sum(per_step))
+            contributions[name] = {
+                "total_contribution": total_contribution,
+                "average_contribution": total_contribution / horizon if horizon > 0 else 0.0,
+                "per_step": per_step,
+                "direction": "positive" if total_contribution > 0 else "negative",
+            }
+        except Exception as e:
+            logger.debug("Factor contribution for %s failed: %s", name, e)
+    return contributions
 
 
 def _build_external_analysis(

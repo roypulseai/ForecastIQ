@@ -38,7 +38,12 @@ import { useFileData, useFiles } from '../hooks/useFiles';
 import { useStore } from '../store/appStore';
 import { getErrorMessage } from '../services/api';
 import { formatDate } from '../utils/format';
-import type { AnalysisResponse, ExternalFactorAnalysis, ForecastListItem, LagAnalysisResult, ModelResult } from '../types';
+import type { AnalysisResponse, DecompositionResult, ExternalFactorAnalysis, FactorContribution, ForecastListItem, LagAnalysisResult, ModelResult } from '../types';
+import { FeatureImportanceChart } from '../components/results/FeatureImportanceChart';
+import { FactorContributions } from '../components/results/FactorContributions';
+import { DecompositionChart } from '../components/results/DecompositionChart';
+import { ModelComponentsChart } from '../components/results/ModelComponentsChart';
+import { WhatIfPanel } from '../components/results/WhatIfPanel';
 
 export function ResultsPage(): ReactNode {
   const navigate = useNavigate();
@@ -588,6 +593,10 @@ export function ResultsPage(): ReactNode {
                 <InsightsDetail
                   analysisData={analysisData}
                   externalAnalysis={resultQuery.data.external_factor_analysis}
+                  factorContributions={resultQuery.data.factor_contributions}
+                  decomposition={resultQuery.data.decomposition}
+                  activeResults={activeResults}
+                  forecastId={resultQuery.data.forecast_id}
                 />
               )}
             </CardContent>
@@ -606,13 +615,42 @@ function firstModelKey(results: Record<string, ModelResult>): string {
 function InsightsDetail({
   analysisData,
   externalAnalysis,
+  factorContributions,
+  decomposition,
+  activeResults,
+  forecastId,
 }: {
   analysisData: AnalysisResponse | null;
   externalAnalysis?: ExternalFactorAnalysis | null;
+  factorContributions?: Record<string, FactorContribution> | null;
+  decomposition?: DecompositionResult | null;
+  activeResults?: Record<string, ModelResult> | null;
+  forecastId?: string;
 }): ReactNode {
   const insights = analysisData?.data_characteristics?.insights;
   const pdq = analysisData?.data_characteristics?.pdq_recommendation;
   const lagAnalysis = externalAnalysis?.lag_analysis;
+
+  const featureImportance = useMemo(() => {
+    if (!activeResults) return null;
+    const mlModels = Object.entries(activeResults).filter(
+      ([, r]) => r.feature_importance && Object.keys(r.feature_importance!).length > 0,
+    );
+    if (mlModels.length === 0) return null;
+    return mlModels;
+  }, [activeResults]);
+
+  const bestModelComponents = useMemo(() => {
+    if (!activeResults) return null;
+    return Object.entries(activeResults).find(
+      ([, r]) => r.components && (Array.isArray(r.components.trend) || Array.isArray(r.components.yearly)),
+    )?.[1]?.components ?? null;
+  }, [activeResults]);
+
+  const exogFactorKeys = useMemo(() => {
+    if (!lagAnalysis) return [];
+    return Object.keys(lagAnalysis);
+  }, [lagAnalysis]);
 
   return (
     <Stack spacing={2.5}>
@@ -664,11 +702,41 @@ function InsightsDetail({
         </Box>
       )}
 
+      {/* Feature importance (ML models only) */}
+      {featureImportance && featureImportance.map(([modelName, result]) => (
+        <FeatureImportanceChart
+          key={modelName}
+          featureImportance={result.feature_importance}
+          modelName={result.model_name}
+        />
+      ))}
+
+      {/* Model components (Prophet decomposition) */}
+      {bestModelComponents && (
+        <ModelComponentsChart components={bestModelComponents} />
+      )}
+
+      {/* Time series decomposition (STL) */}
+      {decomposition && (
+        <DecompositionChart decomposition={decomposition} />
+      )}
+
+      {/* Factor contribution analysis */}
+      {factorContributions && Object.keys(factorContributions).length > 0 && (
+        <FactorContributions
+          contributions={factorContributions}
+          totalUplift={analysisData?.data_characteristics?.mean}
+        />
+      )}
+
       {/* Lag analysis for external factors */}
       {lagAnalysis && Object.keys(lagAnalysis).length > 0 && (
         <Box>
           <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
-            External factor lag analysis
+            External factor correlation analysis
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+            Optimal lag periods and correlation strengths between sales and each external factor
           </Typography>
           <Stack spacing={1}>
             {Object.entries(lagAnalysis).map(([key, lag]: [string, LagAnalysisResult]) => (
@@ -686,7 +754,12 @@ function InsightsDetail({
         </Box>
       )}
 
-      {!insights && !pdq && !lagAnalysis && (
+      {/* What-if scenario analysis */}
+      {forecastId && exogFactorKeys.length > 0 && (
+        <WhatIfPanel forecastId={forecastId} factorKeys={exogFactorKeys} />
+      )}
+
+      {!insights && !pdq && !lagAnalysis && !featureImportance && !factorContributions && !decomposition && (
         <Typography variant="body2" color="text.secondary">
           No insights available yet. Run a data analysis on the Upload page to populate data pattern insights and ARIMA recommendations.
         </Typography>

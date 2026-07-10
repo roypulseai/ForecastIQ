@@ -18,6 +18,13 @@ from .base import BaseForecaster
 warnings.filterwarnings("ignore")
 logger = logging.getLogger(__name__)
 
+try:
+    import shap
+    _SHAP_AVAILABLE = True
+except ImportError:
+    _SHAP_AVAILABLE = False
+    shap = None
+
 
 def _add_calendar(df: pd.DataFrame, date_col: str) -> pd.DataFrame:
     d = pd.to_datetime(df[date_col], errors="coerce")
@@ -122,6 +129,9 @@ class LightGBMForecaster(BaseForecaster):
         self.min_child_samples = min_child_samples
         self.lags = lags or [1, 2, 3, 7, 14]
         self.roll_windows = roll_windows or [7, 14, 28]
+        self._shap_values: Optional[List[Dict[str, Any]]] = None
+        self._shap_base_value: Optional[float] = None
+        self._shap_explainer: Any = None
 
     def _build_features(
         self,
@@ -189,6 +199,22 @@ class LightGBMForecaster(BaseForecaster):
             self._fitted_model.fit(X.values, y)
         except Exception as e:
             raise RuntimeError(f"LightGBM fit failed: {e}")
+
+        try:
+            if _SHAP_AVAILABLE:
+                self._shap_explainer = shap.TreeExplainer(self._fitted_model)
+                shap_vals = self._shap_explainer.shap_values(X.values)
+                self._shap_base_value = float(self._shap_explainer.expected_value)
+                self._shap_training_importance = {
+                    self._feature_cols[i]: float(np.abs(shap_vals[:, i]).mean())
+                    for i in range(len(self._feature_cols))
+                }
+            else:
+                self._shap_training_importance = {}
+        except Exception as e:
+            logger.debug("SHAP explainer init failed: %s", e)
+            self._shap_explainer = None
+            self._shap_training_importance = {}
         return self
 
     def _make_future_frame(self, horizon: int, exog_data: Optional[Dict[str, pd.DataFrame]], include_external: bool) -> pd.DataFrame:
@@ -232,15 +258,35 @@ class LightGBMForecaster(BaseForecaster):
         except Exception as e:
             logger.warning("LightGBM predict failed: %s", e)
             preds = np.array([float(self._train_df[self._value_col].iloc[-1])] * horizon)
-        return [
-            {
+
+        shap_per_step: Optional[List[Dict[str, float]]] = None
+        if _SHAP_AVAILABLE and self._shap_explainer is not None:
+            try:
+                shap_vals = self._shap_explainer.shap_values(Xf)
+                shap_per_step = [
+                    {self._feature_cols[i]: self._safe_float(shap_vals[j, i])
+                     for i in range(len(self._feature_cols))}
+                    for j in range(len(preds))
+                ]
+            except Exception as e:
+                logger.debug("SHAP forecast computation failed: %s", e)
+
+        self._shap_values = shap_per_step
+
+        results = []
+        for i, (d, p) in enumerate(zip(fut[self._date_col], preds)):
+            entry: Dict[str, Any] = {
                 "date": self._format_date(d),
                 "forecast": self._safe_float(max(0.0, p)),
                 "lower_ci": self._safe_float(max(0.0, p * 0.85)),
                 "upper_ci": self._safe_float(p * 1.15),
             }
-            for d, p in zip(fut[self._date_col], preds)
-        ]
+            if shap_per_step is not None:
+                entry["shap"] = shap_per_step[i]
+                if self._shap_base_value is not None:
+                    entry["shap_base"] = self._shap_base_value
+            results.append(entry)
+        return results
 
     def get_baseline(
         self,
@@ -278,3 +324,13 @@ class LightGBMForecaster(BaseForecaster):
             return {n: self._safe_float(v) for n, v in zip(self._feature_cols, imp)}
         except Exception:
             return {}
+
+    def get_shap_importance(self) -> Dict[str, Any]:
+        shap_values = getattr(self, '_shap_values', None)
+        shap_base = getattr(self, '_shap_base_value', None)
+        shap_train = getattr(self, '_shap_training_importance', {})
+        return {
+            "training_importance": shap_train,
+            "per_step": shap_values,
+            "base_value": shap_base,
+        }

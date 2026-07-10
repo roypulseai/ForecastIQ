@@ -76,6 +76,9 @@ class BaseForecaster(ABC):
     def get_metrics(self) -> Dict[str, float]:
         return {}
 
+    def get_shap_importance(self) -> Dict[str, Any]:
+        return {"training_importance": {}, "per_step": None, "base_value": None}
+
     # ----------------------------------------------------------- utilities
     @staticmethod
     def _format_date(d: Any) -> str:

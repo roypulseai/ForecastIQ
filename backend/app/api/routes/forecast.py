@@ -33,6 +33,7 @@ from ...schemas.forecast import (
 from ...services.auto_events import AutoEventDetector
 from ...services.data_processor import DataProcessor, _infer_column_types
 from ...services.forecaster import ForecasterService
+from ...services.model_selector import ModelSelector
 
 logger = logging.getLogger(__name__)
 
@@ -337,3 +338,124 @@ async def delete_forecast(forecast_id: str) -> Dict[str, Any]:
     if not ok:
         raise HTTPException(status_code=404, detail="Forecast not found")
     return {"message": "Forecast deleted", "forecast_id": forecast_id}
+
+
+@router.post("/forecast/{forecast_id}/what-if")
+async def what_if_forecast(
+    forecast_id: str,
+    factor_adjustments: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Run a what-if scenario by adjusting external factor values.
+
+    Body example:
+    ```json
+    {
+      "media_plan": {"media_spend_multiplier": 1.5},
+      "promotions": {"discount_multiplier": 2.0}
+    }
+    ```
+
+    This loads the original forecast's data, modifies the external factors
+    per the adjustments, re-fits the best model, and returns the scenario
+    forecast alongside the original for comparison.
+    """
+    rec = storage.get_forecast(forecast_id)
+    if not rec:
+        raise HTTPException(status_code=404, detail="Forecast not found")
+
+    request_dict = rec.get("request", {})
+    data_file_id = rec.get("data_file_id")
+    if not data_file_id:
+        raise HTTPException(status_code=400, detail="No data file associated with this forecast")
+
+    sales_df = storage.get_dataframe(data_file_id)
+    if sales_df is None or sales_df.empty:
+        raise HTTPException(status_code=400, detail="Sales data not found")
+
+    date_col = request_dict.get("date_column", "date")
+    value_col = request_dict.get("target_column", "value")
+    horizon = int(request_dict.get("horizon", 30))
+    best_model_key = rec.get("best_model") or "prophet"
+    models = request_dict.get("models") or ["prophet"]
+    if best_model_key not in models:
+        models = [best_model_key]
+    params = request_dict.get("parameters") or {}
+
+    # Rebuild original exog data from storage (same logic as _gather_exog)
+    from pydantic import BaseModel
+
+    class _FakeRequest(BaseModel):
+        include_media_plan: bool = False
+        include_promotions: bool = False
+        include_holidays: bool = False
+        include_events: bool = False
+        include_weather: bool = False
+        include_competitor: bool = False
+        include_economic: bool = False
+        auto_detect_events: bool = False
+        auto_event_country: Optional[str] = None
+        auto_event_regions: Optional[List[str]] = None
+        country: Optional[str] = None
+        date_column: str = "date"
+        target_column: str = "value"
+
+    fake_req = _FakeRequest(**{
+        k: request_dict.get(k, False)
+        for k in ("include_media_plan", "include_promotions", "include_holidays",
+                  "include_events", "include_weather", "include_competitor",
+                  "include_economic", "auto_detect_events", "auto_event_country",
+                  "auto_event_regions", "country", "date_column", "target_column")
+    })
+    exog_data = _gather_exog(fake_req, sales_df=sales_df, date_col=date_col, value_col=value_col)  # type: ignore[arg-type]
+
+    # Apply factor adjustments
+    for factor, adjustments in factor_adjustments.items():
+        if factor not in exog_data or exog_data[factor] is None:
+            continue
+        df = exog_data[factor].copy()
+        numeric_cols = [c for c in df.columns if c != "date" and pd.api.types.is_numeric_dtype(df[c])]
+        for col in numeric_cols:
+            multiplier_key = f"{col}_multiplier"
+            if multiplier_key in adjustments:
+                mult = float(adjustments[multiplier_key])
+                df[col] = pd.to_numeric(df[col], errors="coerce") * mult
+            add_key = f"{col}_add"
+            if add_key in adjustments:
+                add_val = float(adjustments[add_key])
+                df[col] = pd.to_numeric(df[col], errors="coerce") + add_val
+            set_key = f"{col}_set"
+            if set_key in adjustments:
+                df[col] = float(adjustments[set_key])
+        exog_data[factor] = df
+
+    # Fit the best model with modified exog
+    selector = ModelSelector()
+    try:
+        model = selector.get_model(best_model_key, params)
+        model.fit(sales_df, date_col, value_col, exog_data=exog_data or {})
+        forecast = model.forecast(horizon, exog_data=exog_data)
+        baseline = model.get_baseline(horizon, exog_data=exog_data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"What-if model failed: {e}")
+
+    # Get original forecast for comparison (from saved result)
+    original_forecast: List[Dict[str, Any]] = []
+    original_baseline: List[Dict[str, Any]] = []
+    if rec.get("results") and best_model_key in rec["results"]:
+        original_forecast = rec["results"][best_model_key].get("forecast_values", [])
+        original_baseline = rec["results"][best_model_key].get("baseline_values", [])
+    elif rec.get("ensemble"):
+        original_forecast = rec["ensemble"].get("forecast_values", [])
+        original_baseline = rec["ensemble"].get("baseline_values", [])
+
+    return {
+        "forecast_id": forecast_id,
+        "best_model": best_model_key,
+        "horizon": horizon,
+        "original_forecast": original_forecast,
+        "scenario_forecast": forecast,
+        "original_baseline": original_baseline,
+        "scenario_baseline": baseline,
+        "factors_adjusted": list(factor_adjustments.keys()),
+        "adjustments": factor_adjustments,
+    }

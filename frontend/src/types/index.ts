@@ -375,8 +375,8 @@ export interface ForecastValue {
   baseline?: number | null;
   uplift?: number | null;
   category?: string;
-  // Extra fields from multi-category forecasting (e.g. store, sku)
-  [key: string]: string | number | null | undefined;
+  shap?: Record<string, number> | null;
+  shap_base?: number | null;
 }
 
 export interface ModelRanking {
@@ -424,6 +424,13 @@ export interface EnsembleResult {
   individual_results: ModelResult[];
 }
 
+export interface FactorContribution {
+  total_contribution: number;
+  average_contribution: number;
+  per_step: number[];
+  direction: 'positive' | 'negative';
+}
+
 export interface LagAnalysisResult {
   lag: number;
   correlation?: number | null;
@@ -439,6 +446,23 @@ export interface ExternalFactorAnalysis {
   weather_impact?: Record<string, unknown> | null;
   price_elasticity?: number | null;
   lag_analysis?: Record<string, LagAnalysisResult>;
+  factor_contributions?: Record<string, FactorContribution>;
+}
+
+export interface WhatIfRequest {
+  [factor: string]: Record<string, number>;
+}
+
+export interface WhatIfResponse {
+  forecast_id: string;
+  best_model: string;
+  horizon: number;
+  original_forecast: ForecastValue[];
+  scenario_forecast: ForecastValue[];
+  original_baseline: ForecastValue[] | null;
+  scenario_baseline: ForecastValue[];
+  factors_adjusted: string[];
+  adjustments: Record<string, Record<string, number>>;
 }
 
 export interface ForecastSummary {
@@ -467,6 +491,7 @@ export interface ForecastDetail {
   results: Record<string, ModelResult>;
   ensemble?: EnsembleResult | null;
   external_factor_analysis?: ExternalFactorAnalysis | null;
+  factor_contributions?: Record<string, FactorContribution> | null;
   summary?: ForecastSummary | null;
   test_metrics?: Record<string, { mae: number | null; rmse: number | null; mape: number | null; test_rows?: number }>;
   saved_model?: SavedModelMeta | null;

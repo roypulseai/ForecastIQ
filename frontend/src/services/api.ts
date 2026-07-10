@@ -19,6 +19,8 @@ import type {
   TrainRequest,
   TrainResult,
   UploadedFile,
+  WhatIfRequest,
+  WhatIfResponse,
 } from '../types';
 
 export const api = axios.create({
@@ -67,6 +69,7 @@ export const apiClient = {
     fileId: string,
     limit = 5000,
     offset = 0,
+    aggregate = false,
   ): Promise<{
     file_id: string;
     columns: string[];
@@ -75,9 +78,10 @@ export const apiClient = {
     returned_rows: number;
     offset: number;
     limit: number;
+    aggregated?: boolean;
   }> {
     const res = await api.get(`/upload/files/${fileId}/data`, {
-      params: { limit, offset },
+      params: { limit, offset, aggregate },
     });
     return res.data;
   },
@@ -174,6 +178,11 @@ export const apiClient = {
 
   async trainAndSave(request: TrainRequest): Promise<TrainResult> {
     const res = await api.post<TrainResult>('/models/train', request);
+    return res.data;
+  },
+
+  async whatIf(forecastId: string, adjustments: WhatIfRequest): Promise<WhatIfResponse> {
+    const res = await api.post<WhatIfResponse>(`/forecast/${forecastId}/what-if`, adjustments);
     return res.data;
   },
 

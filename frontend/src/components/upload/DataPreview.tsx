@@ -1,8 +1,10 @@
+import { useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import {
   Box,
   Chip,
   IconButton,
+  LinearProgress,
   Paper,
   Stack,
   Table,
@@ -17,6 +19,7 @@ import {
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import DownloadIcon from '@mui/icons-material/Download';
 import StorageIcon from '@mui/icons-material/Storage';
+import { apiClient } from '../../services/api';
 import { formatBytes, formatNumber } from '../../utils/format';
 import { FILE_TYPE_LABELS, type UploadedFile } from '../../types';
 
@@ -35,6 +38,12 @@ export function DataPreview({
   showDownloadTemplate = false,
   onDownloadTemplate,
 }: DataPreviewProps): ReactNode {
+  const { data: previewData, isFetching: previewLoading } = useQuery({
+    queryKey: ['filePreview', file.file_id],
+    queryFn: () => apiClient.getFileData(file.file_id, 20),
+    staleTime: 60_000,
+    enabled: file.columns.length > 0,
+  });
   return (
     <Paper sx={{ overflow: 'hidden' }}>
       <Box
@@ -140,13 +149,29 @@ export function DataPreview({
             </TableRow>
           </TableHead>
           <TableBody>
-            <TableRow>
-              {file.columns.map((col) => (
-                <TableCell key={`${file.file_id}-type-${col}`} sx={{ color: 'text.secondary' }}>
-                  <em>Preview shown after upload</em>
+            {previewLoading ? (
+              <TableRow>
+                <TableCell colSpan={file.columns.length}>
+                  <LinearProgress />
                 </TableCell>
-              ))}
-            </TableRow>
+              </TableRow>
+            ) : previewData?.rows?.length ? (
+              previewData.rows.map((row, rowIdx) => (
+                <TableRow key={rowIdx}>
+                  {file.columns.map((col) => (
+                    <TableCell key={`${file.file_id}-row-${rowIdx}-${col}`}>
+                      {String(row[col] ?? '')}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))
+            ) : (
+              <TableRow>
+                <TableCell colSpan={file.columns.length} sx={{ color: 'text.secondary' }}>
+                  <em>No preview available</em>
+                </TableCell>
+              </TableRow>
+            )}
           </TableBody>
         </Table>
       </TableContainer>

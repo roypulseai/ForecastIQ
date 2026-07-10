@@ -57,7 +57,13 @@ export function DataExplorePage(): ReactNode {
     [uploadedFiles],
   );
   const fileIdToUse = salesFile?.file_id;
-  const fileDataQuery = useFileData(fileIdToUse, 50000);
+
+  // Fetch date-level aggregated data for charting (the backend groups by
+  // date and sums numeric columns, so even 100k transaction rows become at
+  // most a few thousand date-level points).  Use a high limit so all dates
+  // are returned.
+  const salesFileRowCount = salesFile?.row_count ?? 0;
+  const fileDataQuery = useFileData(fileIdToUse, Math.min(salesFileRowCount || 50000, 50000), 0, true);
 
   // If we have a file but no analysis, kick one off automatically.
   useEffect(() => {
@@ -200,7 +206,6 @@ export function DataExplorePage(): ReactNode {
 
   const data = analysisData;
   const totalRowsLoaded = dates.length;
-  const totalRowsAvailable = fileDataQuery.data?.total_rows ?? data.validation.row_count;
 
   const dateRange: [string, string] | null =
     data.data_characteristics.min_date && data.data_characteristics.max_date
@@ -263,7 +268,7 @@ export function DataExplorePage(): ReactNode {
                   <Typography variant="h5">{salesFile.filename}</Typography>
                   <Typography variant="body2" color="text.secondary">
                     {data.validation.date_column} / {data.validation.value_column} ·{' '}
-                    {formatNumber(totalRowsLoaded)} of {formatNumber(totalRowsAvailable)} observations loaded
+                    {formatNumber(totalRowsLoaded)} observations
                   </Typography>
                 </Box>
               </Stack>

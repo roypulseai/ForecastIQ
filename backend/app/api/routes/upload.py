@@ -7,6 +7,8 @@ import tempfile
 import uuid
 from typing import Any, Dict, List, Optional
 
+import pandas as pd
+
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 
 from ...core.config import settings
@@ -152,11 +154,17 @@ async def get_file_data(
     file_id: str,
     limit: int = Query(5000, ge=1, le=50000, description="Max rows to return"),
     offset: int = Query(0, ge=0, description="Rows to skip"),
+    aggregate: bool = Query(False, description="Group by date and sum numeric columns"),
 ) -> Dict[str, Any]:
     """Return the actual rows of a file for visualization / exploration.
 
     Defaults to 5000 rows max to keep responses fast. Use offset/limit
     pagination for larger files.
+
+    When aggregate=True, rows are grouped by the date column and all
+    numeric columns are summed — producing one row per unique date.
+    This is ideal for charting where entity-level breakdowns
+    (region, product, etc.) would otherwise produce thousands of rows.
     """
     entry = storage.get_file(file_id)
     if not entry:
@@ -164,7 +172,25 @@ async def get_file_data(
     df = storage.get_dataframe(file_id)
     if df is None or df.empty:
         raise HTTPException(status_code=404, detail="File data is empty or missing")
-    total = len(df)
+
+    if aggregate:
+        # Find the date column (stored as 'date' after normalization)
+        date_col = "date"
+        if date_col not in df.columns:
+            # Fallback to first column with date-like name or datetime dtype
+            for c in df.columns:
+                if "date" in c.lower() or pd.api.types.is_datetime64_any_dtype(df[c]):
+                    date_col = c
+                    break
+        if date_col in df.columns:
+            num_cols = [c for c in df.columns if c != date_col and pd.api.types.is_numeric_dtype(df[c])]
+            if num_cols:
+                df = df.groupby(date_col, as_index=False, sort=True)[num_cols].sum()
+            else:
+                df = df[[date_col]].drop_duplicates().sort_values(date_col)
+        limit = int(len(df)) if limit > len(df) else limit
+
+    total = int(len(df))
     # Apply pagination
     page = df.iloc[offset:offset + limit]
     # Records: list of {col: value} dicts with numpy -> python conversion
@@ -173,7 +199,8 @@ async def get_file_data(
         records.append({c: to_python(row[c]) for c in page.columns})
     return to_python({
         "file_id": file_id,
-        "columns": [str(c) for c in df.columns],
+        "aggregated": aggregate,
+        "columns": [str(c) for c in page.columns],
         "rows": records,
         "total_rows": int(total),
         "returned_rows": int(len(records)),
