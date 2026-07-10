@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Alert,
   Autocomplete,
   Box,
@@ -25,11 +28,12 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import { PageContainer } from '../components/layout/PageContainer';
-import { ModelSelector } from '../components/forecast/ModelSelector';
+import { ALL_MODELS, ModelSelector } from '../components/forecast/ModelSelector';
 import { ParametersPanel } from '../components/forecast/ParametersPanel';
 import { ExternalFactors } from '../components/forecast/ExternalFactors';
 import { AggregationPanel } from '../components/forecast/AggregationPanel';
@@ -797,7 +801,7 @@ export function ForecastPage(): ReactNode {
                     performance.
                   </Typography>
                   <ModelSelector
-                    models={request.models}
+                    models={ALL_MODELS}
                     selected={request.ensemble_models ?? []}
                     onChange={(m) => update('ensemble_models', m)}
                   />
@@ -806,32 +810,34 @@ export function ForecastPage(): ReactNode {
             </CardContent>
           </Card>
 
-          <Card sx={{ mb: 3 }}>
-            <CardContent>
-              <Stack
-                direction="row"
-                alignItems="center"
-                justifyContent="space-between"
-                sx={{ mb: 1 }}
-              >
-                <Typography variant="h5">3. External factors</Typography>
+          <Accordion
+            defaultExpanded={uploadedFiles.length > 0}
+            sx={{ mb: 3, '&:before': { display: 'none' } }}
+          >
+            <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+              <Stack direction="row" alignItems="center" spacing={1}>
+                <Typography variant="h5">External factors</Typography>
                 <Chip
                   label={`${uploadedFiles.length} file${uploadedFiles.length === 1 ? '' : 's'} loaded`}
                   size="small"
                   variant="outlined"
                 />
               </Stack>
+            </AccordionSummary>
+            <AccordionDetails>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                 Enable to feed additional signals to models that support exogenous regressors (SARIMAX, LightGBM, XGBoost).
               </Typography>
               <ExternalFactors files={uploadedFiles} values={external} onChange={setExternal} />
-            </CardContent>
-          </Card>
+            </AccordionDetails>
+          </Accordion>
 
           {/* Business context card */}
-          <Card sx={{ mb: 3 }}>
-            <CardContent>
-              <Typography variant="h5" sx={{ mb: 1 }}>3b. Business context</Typography>
+          <Accordion sx={{ mb: 3, '&:before': { display: 'none' } }}>
+            <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+              <Typography variant="h5">Business context</Typography>
+            </AccordionSummary>
+            <AccordionDetails>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                 Helps the system recommend the right models and defaults for your industry and growth stage.
               </Typography>
@@ -865,32 +871,28 @@ export function ForecastPage(): ReactNode {
                   </TextField>
                 </Grid>
               </Grid>
-            </CardContent>
-          </Card>
+            </AccordionDetails>
+          </Accordion>
 
-          <Card sx={{ mb: 3 }}>
-            <CardContent>
-              <Stack
-                direction="row"
-                alignItems="center"
-                justifyContent="space-between"
-                sx={{ mb: 1 }}
-              >
-                <Typography variant="h5">4. Advanced</Typography>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={useAdvanced}
-                      onChange={(_, c) => setUseAdvanced(c)}
-                    />
-                  }
-                  label="Customize parameters"
-                />
-              </Stack>
+          <Accordion sx={{ mb: 3, '&:before': { display: 'none' } }}>
+            <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+              <Typography variant="h5">Advanced</Typography>
+            </AccordionSummary>
+            <AccordionDetails>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={useAdvanced}
+                    onChange={(_, c) => setUseAdvanced(c)}
+                  />
+                }
+                label="Customize model parameters"
+                sx={{ mb: 2 }}
+              />
               {useAdvanced ? (
                 <ParametersPanel models={request.models} value={request.parameters ?? {}} onChange={updateParam} />
               ) : (
-                <Typography variant="body2" color="text.secondary">
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                   Defaults work for most use cases. Toggle on to fine-tune individual model hyperparameters.
                 </Typography>
               )}
@@ -912,8 +914,8 @@ export function ForecastPage(): ReactNode {
                   />
                 </Box>
               )}
-            </CardContent>
-          </Card>
+            </AccordionDetails>
+          </Accordion>
         </Grid>
 
         <Grid item xs={12} lg={4}>

@@ -81,6 +81,24 @@ class BaseForecaster(ABC):
 
     # ----------------------------------------------------------- utilities
     @staticmethod
+    def _infer_frequency(df: pd.DataFrame, date_col: str, default: str = "D") -> str:
+        """Infer the most common frequency from the date column."""
+        dates = pd.to_datetime(df[date_col].dropna(), errors="coerce").dropna().sort_values()
+        if len(dates) < 3:
+            return default
+        deltas = dates.diff().dropna()
+        if deltas.empty:
+            return default
+        most_common = deltas.mode()
+        if most_common.empty:
+            return default
+        delta = most_common.iloc[0]
+        try:
+            return pd.tseries.frequencies.to_offset(delta).freqstr
+        except Exception:
+            return default
+
+    @staticmethod
     def _format_date(d: Any) -> str:
         """Format any date / timestamp value as YYYY-MM-DD string."""
         if d is None:

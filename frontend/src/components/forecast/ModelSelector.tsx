@@ -12,7 +12,7 @@ interface ModelSelectorProps {
   disabled?: boolean;
 }
 
-const ALL_MODELS: ModelType[] = [
+export const ALL_MODELS: ModelType[] = [
   'arima',
   'sarimax',
   'prophet',

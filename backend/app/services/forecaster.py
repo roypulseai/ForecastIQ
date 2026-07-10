@@ -357,6 +357,10 @@ class ForecasterService:
         if progress_cb:
             progress_cb(0.05, "Data prepared")
 
+        # Compute split/data stats for downstream use (tuning, seasonality)
+        has_split = train_df is not None and test_df is not None
+        n_unique_dates = int(sales_df[date_col].nunique())
+
         # ---- 0) Optional hyperparameter tuning ----
         # Runs adaptive two-round search with expanding-window CV for each model.
         # Tuned parameters are merged into the user-supplied params.

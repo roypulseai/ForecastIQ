@@ -31,6 +31,8 @@ import { FILE_TYPE_DESCRIPTIONS, FILE_TYPE_LABELS, FILE_TYPES, type FileType, ty
 import { downloadBlob } from '../utils/csv';
 import { useState } from 'react';
 import { formatDate, formatNumber } from '../utils/format';
+import { ConfirmDialog } from '../components/common/ConfirmDialog';
+import { useToast } from '../components/common/ToastProvider';
 
 export function DataUploadPage(): ReactNode {
   const navigate = useNavigate();
@@ -38,6 +40,7 @@ export function DataUploadPage(): ReactNode {
   const analysisData = useStore((s) => s.analysisData);
   const salesFileId = useStore((s) => s.salesFileId);
   const setAnalysisData = useStore((s) => s.setAnalysisData);
+  const { showToast } = useToast();
 
   const filesQuery = useFiles();
   const uploadMut = useUploadFile();
@@ -45,6 +48,7 @@ export function DataUploadPage(): ReactNode {
   const analyzeMut = useAnalyze();
   const [activeUpload, setActiveUpload] = useState<FileType | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmDeleteFile, setConfirmDeleteFile] = useState<UploadedFile | null>(null);
 
   useEffect(() => {
     if (!filesQuery.data) return;
@@ -61,6 +65,7 @@ export function DataUploadPage(): ReactNode {
     setActiveUpload(fileType);
     try {
       const uploaded = await uploadMut.mutateAsync({ fileType, file });
+      showToast(`${file.name} uploaded successfully`);
       if (fileType === 'sales' && !analysisData) {
         try {
           await analyzeMut.mutateAsync(uploaded.file_id);
@@ -90,6 +95,7 @@ export function DataUploadPage(): ReactNode {
     setError(null);
     try {
       await deleteMut.mutateAsync(file.file_id);
+      showToast(`${file.filename} deleted`, 'info');
     } catch (e) {
       setError(getErrorMessage(e));
     }
@@ -356,11 +362,7 @@ export function DataUploadPage(): ReactNode {
                       <IconButton
                         size="small"
                         color="error"
-                        onClick={() => {
-                          if (window.confirm(`Delete "${f.filename}"?`)) {
-                            handleDelete(f);
-                          }
-                        }}
+                        onClick={() => setConfirmDeleteFile(f)}
                         aria-label={`Delete ${f.filename}`}
                       >
                         <DeleteOutlineIcon fontSize="small" />
@@ -372,6 +374,17 @@ export function DataUploadPage(): ReactNode {
           )}
         </Grid>
       </Grid>
+
+      <ConfirmDialog
+        open={confirmDeleteFile != null}
+        title="Delete file"
+        message={`Delete "${confirmDeleteFile?.filename}"?`}
+        onConfirm={() => {
+          if (confirmDeleteFile) handleDelete(confirmDeleteFile);
+          setConfirmDeleteFile(null);
+        }}
+        onCancel={() => setConfirmDeleteFile(null)}
+      />
     </PageContainer>
   );
 }

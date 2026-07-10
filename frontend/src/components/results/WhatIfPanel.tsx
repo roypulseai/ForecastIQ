@@ -64,7 +64,7 @@ export function WhatIfPanel({ forecastId, factorKeys }: WhatIfPanelProps): React
       for (const key of factorKeys) {
         const mult = adjustments[key];
         if (mult !== 1.0) {
-          payload[key] = { media_spend_multiplier: mult, discount_multiplier: mult };
+          payload[key] = { multiplier: mult };
         }
       }
       const res = await apiClient.whatIf(forecastId, payload);

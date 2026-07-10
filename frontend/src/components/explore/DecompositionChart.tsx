@@ -96,6 +96,16 @@ export function DecompositionChart({
     }));
   }, [dates, values, period]);
 
+  if (dates.length === 0) {
+    return (
+      <Card>
+        <CardContent sx={{ textAlign: 'center', py: 6 }}>
+          <Typography variant="body2" color="text.secondary">No decomposition data available</Typography>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <Card>
       <CardContent>

@@ -28,6 +28,8 @@ import AddIcon from '@mui/icons-material/Add';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import { PageContainer } from '../components/layout/PageContainer';
+import { ConfirmDialog } from '../components/common/ConfirmDialog';
+import { useToast } from '../components/common/ToastProvider';
 import { useCreateApiKey, useDeleteApiKey, useListApiKeys, useUpdateApiKey, useListApiKeyTiers } from '../hooks/useApiKeys';
 import { getErrorMessage } from '../services/api';
 import { formatDate } from '../utils/format';
@@ -39,11 +41,13 @@ export function ApiKeysPage(): ReactNode {
   const createMut = useCreateApiKey();
   const updateMut = useUpdateApiKey();
   const deleteMut = useDeleteApiKey();
+  const { showToast } = useToast();
   const [createOpen, setCreateOpen] = useState(false);
   const [newlyCreated, setNewlyCreated] = useState<{ plain_key: string; prefix: string; warning: string } | null>(null);
   const [editTarget, setEditTarget] = useState<ApiKeyRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [confirmRevokeKey, setConfirmRevokeKey] = useState<ApiKeyRecord | null>(null);
 
   const items = useMemo(() => list.data?.items ?? [], [list.data]);
 
@@ -65,9 +69,9 @@ export function ApiKeysPage(): ReactNode {
   };
 
   const handleRevoke = async (key: ApiKeyRecord) => {
-    if (!window.confirm(`Revoke API key "${key.name}"? This cannot be undone.`)) return;
     try {
       await deleteMut.mutateAsync(key.key_id);
+      showToast(`API key "${key.name}" revoked`, 'info');
     } catch (e) {
       setError(getErrorMessage(e));
     }
@@ -197,7 +201,7 @@ export function ApiKeysPage(): ReactNode {
                       <IconButton
                         size="small"
                         color="error"
-                        onClick={() => handleRevoke(k)}
+                        onClick={() => setConfirmRevokeKey(k)}
                         disabled={k.revoked}
                         aria-label={`Revoke key ${k.name}`}
                       >
@@ -289,6 +293,17 @@ export function ApiKeysPage(): ReactNode {
         onClose={() => setCopied(false)}
         message="Copied to clipboard"
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      />
+
+      <ConfirmDialog
+        open={confirmRevokeKey != null}
+        title="Revoke API key"
+        message={`Revoke API key "${confirmRevokeKey?.name}"? This cannot be undone.`}
+        onConfirm={() => {
+          if (confirmRevokeKey) handleRevoke(confirmRevokeKey);
+          setConfirmRevokeKey(null);
+        }}
+        onCancel={() => setConfirmRevokeKey(null)}
       />
     </PageContainer>
   );

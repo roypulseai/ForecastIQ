@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Link as RouterLink, useNavigate } from 'react-router-dom';
+import { Link as RouterLink, useNavigate, useSearchParams } from 'react-router-dom';
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Alert,
   Box,
   Button,
@@ -22,6 +25,7 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import AssessmentIcon from '@mui/icons-material/Assessment';
@@ -44,6 +48,8 @@ import { FactorContributions } from '../components/results/FactorContributions';
 import { DecompositionChart } from '../components/results/DecompositionChart';
 import { ModelComponentsChart } from '../components/results/ModelComponentsChart';
 import { WhatIfPanel } from '../components/results/WhatIfPanel';
+import { ConfirmDialog } from '../components/common/ConfirmDialog';
+import { useToast } from '../components/common/ToastProvider';
 
 export function ResultsPage(): ReactNode {
   const navigate = useNavigate();
@@ -56,12 +62,18 @@ export function ResultsPage(): ReactNode {
   const resultQuery = useForecastResult(currentForecastId);
   const deleteMut = useDeleteForecast();
   const analyzeMut = useAnalyze();
-  const [tab, setTab] = useState(0);
-  const [selectedModel, setSelectedModel] = useState<string>('__ensemble__');
-  const [selectedCategory, setSelectedCategory] = useState<string>('');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = parseInt(searchParams.get('tab') ?? '0', 10);
+  const selectedModel = searchParams.get('model') ?? '__ensemble__';
+  const selectedCategory = searchParams.get('category') ?? '';
+  const setTab = (v: number) => setSearchParams((prev) => { prev.set('tab', String(v)); return prev; }, { replace: true });
+  const setSelectedModel = (v: string) => setSearchParams((prev) => { prev.set('model', v); return prev; }, { replace: true });
+  const setSelectedCategory = (v: string) => setSearchParams((prev) => { prev.set('category', v); return prev; }, { replace: true });
   const [showBaseline, setShowBaseline] = useState<boolean>(true);
   const [showActuals, setShowActuals] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [confirmDeleteForecast, setConfirmDeleteForecast] = useState(false);
+  const { showToast } = useToast();
   const analysisData = useStore((s) => s.analysisData);
 
   // Find the sales file used by the current forecast.
@@ -306,17 +318,7 @@ export function ResultsPage(): ReactNode {
             <Tooltip title="Delete">
               <IconButton
                 color="error"
-                onClick={async () => {
-                  if (!currentForecastId) return;
-                  if (!window.confirm('Delete this forecast?')) return;
-                  try {
-                    await deleteMut.mutateAsync(currentForecastId);
-                    setCurrentForecastId(null);
-                    setError(null);
-                  } catch (e) {
-                    setError(getErrorMessage(e));
-                  }
-                }}
+                onClick={() => setConfirmDeleteForecast(true)}
                 aria-label="Delete forecast"
               >
                 <DeleteOutlineIcon />
@@ -603,6 +605,26 @@ export function ResultsPage(): ReactNode {
           </Card>
         </>
       )}
+
+      <ConfirmDialog
+        open={confirmDeleteForecast}
+        title="Delete forecast"
+        message="Delete this forecast?"
+        onConfirm={async () => {
+          if (!currentForecastId) return;
+          try {
+            await deleteMut.mutateAsync(currentForecastId);
+            setCurrentForecastId(null);
+            setError(null);
+            showToast('Forecast deleted', 'info');
+          } catch (e) {
+            setError(getErrorMessage(e));
+          } finally {
+            setConfirmDeleteForecast(false);
+          }
+        }}
+        onCancel={() => setConfirmDeleteForecast(false)}
+      />
     </PageContainer>
   );
 }
@@ -652,31 +674,47 @@ function InsightsDetail({
     return Object.keys(lagAnalysis);
   }, [lagAnalysis]);
 
+  const totalUplift = useMemo(() => {
+    if (!activeResults) return null;
+    // Compute total uplift from the first available model's forecast vs baseline
+    const firstResult = Object.values(activeResults)[0];
+    if (!firstResult?.forecast_values) return null;
+    const forecastSum = firstResult.forecast_values.reduce((s, v) => s + (v.forecast ?? 0), 0);
+    if (firstResult.baseline_values) {
+      const baselineSum = firstResult.baseline_values.reduce((s, v) => s + (v.forecast ?? 0), 0);
+      return forecastSum - baselineSum;
+    }
+    // Fallback: compare forecast vs last historical value
+    return forecastSum;
+  }, [activeResults]);
+
   return (
     <Stack spacing={2.5}>
       {/* Data pattern insights */}
       {insights && insights.length > 0 && (
-        <Box>
-          <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
-            Data pattern insights
-          </Typography>
-          <Stack spacing={1}>
-            {insights.map((ins, i) => (
-              <Alert key={i} severity={ins.type === 'warning' ? 'warning' : ins.type === 'success' ? 'success' : 'info'} sx={{ py: 0.5 }}>
-                {ins.text}
-              </Alert>
-            ))}
-          </Stack>
-        </Box>
+        <Accordion defaultExpanded sx={{ '&:before': { display: 'none' } }}>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Data pattern insights</Typography>
+          </AccordionSummary>
+          <AccordionDetails>
+            <Stack spacing={1}>
+              {insights.map((ins, i) => (
+                <Alert key={i} severity={ins.type === 'warning' ? 'warning' : ins.type === 'success' ? 'success' : 'info'} sx={{ py: 0.5 }}>
+                  {ins.text}
+                </Alert>
+              ))}
+            </Stack>
+          </AccordionDetails>
+        </Accordion>
       )}
 
       {/* PDQ recommendation */}
       {pdq && (
-        <Box>
-          <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
-            Recommended ARIMA parameters
-          </Typography>
-          <Card variant="outlined" sx={{ p: 1.5 }}>
+        <Accordion sx={{ '&:before': { display: 'none' } }}>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Recommended ARIMA parameters</Typography>
+          </AccordionSummary>
+          <AccordionDetails>
             <Stack spacing={0.5}>
               <Typography variant="body2">
                 Order (p,d,q): <Chip label={`p=${pdq.order.p}`} size="small" sx={{ mx: 0.25 }} />
@@ -698,65 +736,106 @@ function InsightsDetail({
                 </Typography>
               )}
             </Stack>
-          </Card>
-        </Box>
+          </AccordionDetails>
+        </Accordion>
       )}
 
       {/* Feature importance (ML models only) */}
-      {featureImportance && featureImportance.map(([modelName, result]) => (
-        <FeatureImportanceChart
-          key={modelName}
-          featureImportance={result.feature_importance}
-          modelName={result.model_name}
-        />
-      ))}
+      {featureImportance && featureImportance.length > 0 && (
+        <Accordion sx={{ '&:before': { display: 'none' } }}>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Feature importance</Typography>
+          </AccordionSummary>
+          <AccordionDetails>
+            <Stack spacing={2}>
+              {featureImportance.map(([modelName, result]) => (
+                <FeatureImportanceChart
+                  key={modelName}
+                  featureImportance={result.feature_importance}
+                  modelName={result.model_name}
+                />
+              ))}
+            </Stack>
+          </AccordionDetails>
+        </Accordion>
+      )}
 
       {/* Model components (Prophet decomposition) */}
       {bestModelComponents && (
-        <ModelComponentsChart components={bestModelComponents} />
+        <Accordion sx={{ '&:before': { display: 'none' } }}>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Model components</Typography>
+          </AccordionSummary>
+          <AccordionDetails>
+            <ModelComponentsChart components={bestModelComponents} />
+          </AccordionDetails>
+        </Accordion>
       )}
 
       {/* Time series decomposition (STL) */}
       {decomposition && (
-        <DecompositionChart decomposition={decomposition} />
+        <Accordion sx={{ '&:before': { display: 'none' } }}>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Time series decomposition</Typography>
+          </AccordionSummary>
+          <AccordionDetails>
+            <DecompositionChart decomposition={decomposition} />
+          </AccordionDetails>
+        </Accordion>
       )}
 
       {/* Factor contribution analysis */}
       {factorContributions && Object.keys(factorContributions).length > 0 && (
-        <FactorContributions
-          contributions={factorContributions}
-          totalUplift={analysisData?.data_characteristics?.mean}
-        />
+        <Accordion defaultExpanded sx={{ '&:before': { display: 'none' } }}>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>External factor contributions</Typography>
+          </AccordionSummary>
+          <AccordionDetails>
+            <FactorContributions
+              contributions={factorContributions}
+              totalUplift={totalUplift}
+            />
+          </AccordionDetails>
+        </Accordion>
       )}
 
       {/* Lag analysis for external factors */}
       {lagAnalysis && Object.keys(lagAnalysis).length > 0 && (
-        <Box>
-          <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
-            External factor correlation analysis
-          </Typography>
-          <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
-            Optimal lag periods and correlation strengths between sales and each external factor
-          </Typography>
-          <Stack spacing={1}>
-            {Object.entries(lagAnalysis).map(([key, lag]: [string, LagAnalysisResult]) => (
-              <Alert key={key} severity={lag.correlation && lag.correlation > 0.3 ? 'info' : 'warning'} sx={{ py: 0.5 }}>
-                <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-                  <Chip label={key} size="small" color="primary" variant="outlined" />
-                  <Typography variant="body2">
-                    Lag: <strong>{lag.lag}</strong> period{lag.lag !== 1 ? 's' : ''} · Correlation: {lag.correlation?.toFixed(3) ?? 'N/A'}
-                    {lag.strength && <Chip label={lag.strength} size="small" color={lag.strength === 'strong' ? 'success' : lag.strength === 'moderate' ? 'info' : 'default'} variant="outlined" sx={{ ml: 0.5, height: 18, fontSize: 10 }} />}
-                  </Typography>
-                </Stack>
-              </Alert>
-            ))}
-          </Stack>
-        </Box>
+        <Accordion sx={{ '&:before': { display: 'none' } }}>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>External factor correlation analysis</Typography>
+          </AccordionSummary>
+          <AccordionDetails>
+            <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+              Optimal lag periods and correlation strengths between sales and each external factor
+            </Typography>
+            <Stack spacing={1}>
+              {Object.entries(lagAnalysis).map(([key, lag]: [string, LagAnalysisResult]) => (
+                <Alert key={key} severity={lag.correlation && lag.correlation > 0.3 ? 'info' : 'warning'} sx={{ py: 0.5 }}>
+                  <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                    <Chip label={key} size="small" color="primary" variant="outlined" />
+                    <Typography variant="body2">
+                      Lag: <strong>{lag.lag}</strong> period{lag.lag !== 1 ? 's' : ''} · Correlation: {lag.correlation?.toFixed(3) ?? 'N/A'}
+                      {lag.strength && <Chip label={lag.strength} size="small" color={lag.strength === 'strong' ? 'success' : lag.strength === 'moderate' ? 'info' : 'default'} variant="outlined" sx={{ ml: 0.5, height: 18, fontSize: 10 }} />}
+                    </Typography>
+                  </Stack>
+                </Alert>
+              ))}
+            </Stack>
+          </AccordionDetails>
+        </Accordion>
       )}
 
       {/* What-if scenario analysis */}
       {forecastId && exogFactorKeys.length > 0 && (
-        <WhatIfPanel forecastId={forecastId} factorKeys={exogFactorKeys} />
+        <Accordion defaultExpanded sx={{ '&:before': { display: 'none' } }}>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>What-if scenario analysis</Typography>
+          </AccordionSummary>
+          <AccordionDetails>
+            <WhatIfPanel forecastId={forecastId} factorKeys={exogFactorKeys} />
+          </AccordionDetails>
+        </Accordion>
       )}
 
       {!insights && !pdq && !lagAnalysis && !featureImportance && !factorContributions && !decomposition && (

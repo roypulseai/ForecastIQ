@@ -43,6 +43,8 @@ import {
 import { useFiles } from '../hooks/useFiles';
 import { getErrorMessage } from '../services/api';
 import { formatDate, formatNumber } from '../utils/format';
+import { ConfirmDialog } from '../components/common/ConfirmDialog';
+import { useToast } from '../components/common/ToastProvider';
 import { MODEL_LABELS, type SavedModelMeta } from '../types';
 
 const ALL_MODEL_TYPES = ['arima', 'sarimax', 'prophet', 'lightgbm', 'xgboost', 'wma', 'ets', 'theta', 'stl'] as const;
@@ -66,6 +68,8 @@ export function ModelsPage(): ReactNode {
     model_id: string;
     forecast_values: Array<{ date: string; forecast: number; lower_ci: number; upper_ci: number; baseline?: number | null; uplift?: number | null }>;
   } | null>(null);
+  const { showToast } = useToast();
+  const [confirmDeleteModel, setConfirmDeleteModel] = useState<string | null>(null);
 
   const salesFile = useMemo(
     () => filesQuery.data?.find((f) => f.type === 'sales') ?? null,
@@ -141,9 +145,9 @@ export function ModelsPage(): ReactNode {
   };
 
   const handleDelete = async (id: string) => {
-    if (!window.confirm('Delete this saved model? This cannot be undone.')) return;
     try {
       await deleteMut.mutateAsync(id);
+      showToast('Model deleted', 'info');
     } catch (e) {
       setError(getErrorMessage(e));
     }
@@ -267,7 +271,7 @@ export function ModelsPage(): ReactNode {
             <Grid key={m.model_id} item xs={12} md={6} lg={4}>
               <ModelCard
                 model={m}
-                onDelete={() => handleDelete(m.model_id)}
+                onDelete={() => setConfirmDeleteModel(m.model_id)}
                 onEdit={() => setEditTarget(m)}
                 onForecast={() => setForecastTarget(m)}
               />
@@ -320,6 +324,17 @@ export function ModelsPage(): ReactNode {
           result={forecastResult}
         />
       )}
+
+      <ConfirmDialog
+        open={confirmDeleteModel != null}
+        title="Delete saved model"
+        message="Delete this saved model? This cannot be undone."
+        onConfirm={() => {
+          if (confirmDeleteModel) handleDelete(confirmDeleteModel);
+          setConfirmDeleteModel(null);
+        }}
+        onCancel={() => setConfirmDeleteModel(null)}
+      />
     </PageContainer>
   );
 }

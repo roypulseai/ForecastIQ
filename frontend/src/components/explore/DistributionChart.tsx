@@ -65,6 +65,16 @@ export function DistributionChart({
   const data = useMemo(() => buildHistogram(values, bins), [values, bins]);
   const maxCount = useMemo(() => data.reduce((m, b) => Math.max(m, b.count), 0), [data]);
 
+  if (values.length === 0) {
+    return (
+      <Card sx={{ height: '100%' }}>
+        <CardContent sx={{ textAlign: 'center', py: 6 }}>
+          <Typography variant="body2" color="text.secondary">No distribution data available</Typography>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <Card>
       <CardContent>

@@ -153,11 +153,11 @@ def _parse_date_column(df: pd.DataFrame, col: str) -> pd.Series:
     s = df[col]
     if pd.api.types.is_datetime64_any_dtype(s):
         return s
-    # Try ISO / common formats
-    try:
-        return pd.to_datetime(s, errors="coerce", format="mixed", utc=False)
-    except (ValueError, TypeError):
-        return pd.to_datetime(s, errors="coerce", infer_datetime_format=True)
+    # Try ISO / common formats; fall back to inferred format
+    result = pd.to_datetime(s, errors="coerce", format="mixed", utc=False)
+    if result.isna().all():
+        result = pd.to_datetime(s, errors="coerce", infer_datetime_format=True)
+    return result
 
 
 def _coerce_numeric(s: pd.Series) -> pd.Series:
@@ -321,6 +321,8 @@ class DataProcessor:
             )
 
         # Drop rows where date failed to parse
+        if bad_dates > 0:
+            logger.warning("Dropped %d rows with unparseable dates in %s data", bad_dates, file_type)
         df = df.dropna(subset=[spec.standard_date])
 
         # --- drop the original date column (we standardized to 'date')
@@ -401,6 +403,9 @@ class DataProcessor:
             mapping[value_col] = "value"
         else:
             df["value"] = _coerce_numeric(df["value"])
+        nan_count = df["value"].isna().sum()
+        if nan_count > 0:
+            logger.warning("Filled %d missing sales values with 0.0 — this may bias the forecast downward", nan_count)
         df["value"] = df["value"].fillna(0.0)
         return df, mapping
 

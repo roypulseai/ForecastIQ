@@ -3,6 +3,7 @@ import { Box } from '@mui/material';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AppNavbar } from './components/layout/AppNavbar';
 import { ErrorBoundary } from './components/layout/ErrorBoundary';
+import { ToastProvider } from './components/common/ToastProvider';
 import { Dashboard } from './pages/Dashboard';
 import { DataUploadPage } from './pages/DataUpload';
 import { DataExplorePage } from './pages/DataExplore';
@@ -23,17 +24,19 @@ function App(): ReactNode {
         }}
       >
         <ErrorBoundary>
-          <Routes>
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
-            <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/upload" element={<DataUploadPage />} />
-            <Route path="/explore" element={<DataExplorePage />} />
-            <Route path="/forecast" element={<ForecastPage />} />
-            <Route path="/results" element={<ResultsPage />} />
-            <Route path="/models" element={<ModelsPage />} />
-            <Route path="/api-keys" element={<ApiKeysPage />} />
-            <Route path="*" element={<Navigate to="/dashboard" replace />} />
-          </Routes>
+          <ToastProvider>
+            <Routes>
+              <Route path="/" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/upload" element={<DataUploadPage />} />
+              <Route path="/explore" element={<DataExplorePage />} />
+              <Route path="/forecast" element={<ForecastPage />} />
+              <Route path="/results" element={<ResultsPage />} />
+              <Route path="/models" element={<ModelsPage />} />
+              <Route path="/api-keys" element={<ApiKeysPage />} />
+              <Route path="*" element={<Navigate to="/dashboard" replace />} />
+            </Routes>
+          </ToastProvider>
         </ErrorBoundary>
       </Box>
     </Box>

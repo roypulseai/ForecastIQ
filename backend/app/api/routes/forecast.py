@@ -414,7 +414,11 @@ async def what_if_forecast(
             continue
         df = exog_data[factor].copy()
         numeric_cols = [c for c in df.columns if c != "date" and pd.api.types.is_numeric_dtype(df[c])]
+        # 'multiplier' (without column prefix) applies to ALL numeric columns
+        global_mult = adjustments.get("multiplier")
         for col in numeric_cols:
+            if global_mult is not None:
+                df[col] = pd.to_numeric(df[col], errors="coerce") * float(global_mult)
             multiplier_key = f"{col}_multiplier"
             if multiplier_key in adjustments:
                 mult = float(adjustments[multiplier_key])
@@ -428,34 +432,32 @@ async def what_if_forecast(
                 df[col] = float(adjustments[set_key])
         exog_data[factor] = df
 
-    # Fit the best model with modified exog
+    # Fit the best model once on ORIGINAL exog, then forecast with both
+    # original and modified exog. This ensures model parameters (trend,
+    # coefficients, seasonality) stay identical — only the future exog values
+    # change, giving a clean scenario-vs-original comparison.
+    original_exog = {k: v.copy() for k, v in exog_data.items() if v is not None}
     selector = ModelSelector()
     try:
         model = selector.get_model(best_model_key, params)
-        model.fit(sales_df, date_col, value_col, exog_data=exog_data or {})
-        forecast = model.forecast(horizon, exog_data=exog_data)
-        baseline = model.get_baseline(horizon, exog_data=exog_data)
+        model.fit(sales_df, date_col, value_col, exog_data=original_exog)
+        scenario_forecast = model.forecast(horizon, exog_data=exog_data)
+        scenario_baseline = model.get_baseline(horizon, exog_data=exog_data)
+        # Re-forecast with original exog on the same fitted model for an
+        # apples-to-apples comparison
+        original_forecast = model.forecast(horizon, exog_data=original_exog)
+        original_baseline = model.get_baseline(horizon, exog_data=original_exog)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"What-if model failed: {e}")
-
-    # Get original forecast for comparison (from saved result)
-    original_forecast: List[Dict[str, Any]] = []
-    original_baseline: List[Dict[str, Any]] = []
-    if rec.get("results") and best_model_key in rec["results"]:
-        original_forecast = rec["results"][best_model_key].get("forecast_values", [])
-        original_baseline = rec["results"][best_model_key].get("baseline_values", [])
-    elif rec.get("ensemble"):
-        original_forecast = rec["ensemble"].get("forecast_values", [])
-        original_baseline = rec["ensemble"].get("baseline_values", [])
 
     return {
         "forecast_id": forecast_id,
         "best_model": best_model_key,
         "horizon": horizon,
         "original_forecast": original_forecast,
-        "scenario_forecast": forecast,
+        "scenario_forecast": scenario_forecast,
         "original_baseline": original_baseline,
-        "scenario_baseline": baseline,
+        "scenario_baseline": scenario_baseline,
         "factors_adjusted": list(factor_adjustments.keys()),
         "adjustments": factor_adjustments,
     }
