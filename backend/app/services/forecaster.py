@@ -371,7 +371,7 @@ class ForecasterService:
                     result = tune_model(
                         cv_df, date_col, value_col, m,
                         n_iter=30, n_folds=max(3, min(7, int(n_unique_dates * 0.1))),
-                        exog_data=exog_data,
+                        exog_data=exog_data, frequency=request.get("frequency", "D"),
                     )
                     if result.get("tuned") and result["best_params"]:
                         tuning_results[m] = result
@@ -453,7 +453,8 @@ class ForecasterService:
             for m in models:
                 try:
                     cv_results[m] = self.selector.cross_validate(
-                        _cv_input(m), date_col, value_col, m, params, horizon=min(7, horizon)
+                        _cv_input(m), date_col, value_col, m, params, horizon=min(7, horizon),
+                        frequency=request.get("frequency", "D"),
                     )
                 except Exception as e:
                     logger.warning("CV error for %s: %s", m, e)
@@ -864,7 +865,7 @@ class ForecasterService:
                     try:
                         cat_cv = self.selector.cross_validate(
                             cat_df, date_col, value_col, m, params,
-                            min(7, horizon),
+                            min(7, horizon), frequency=request.get("frequency", "D"),
                         )
                         cat_cv_results[cat_val][m] = cat_cv
                     except Exception as e:
@@ -1099,7 +1100,7 @@ class ForecasterService:
                 try:
                     cv = self.selector.cross_validate(
                         train_df, date_col, value_col, mtype, params,
-                        horizon=min(7, test_horizon),
+                        horizon=min(7, test_horizon), frequency=request.get("frequency", "D"),
                     )
                     eval_metrics.cv_mae = cv.get("mae")
                     eval_metrics.cv_rmse = cv.get("rmse")

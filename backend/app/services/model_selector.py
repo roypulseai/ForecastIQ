@@ -553,6 +553,7 @@ class ModelSelector:
         params: Optional[Dict[str, Any]] = None,
         horizon: int = 7,
         n_folds: int = 5,
+        frequency: str = "D",
     ) -> Dict[str, Any]:
         """Expanding-window time-series cross-validation.
 
@@ -589,7 +590,7 @@ class ModelSelector:
                 continue
             try:
                 model = self.get_model(model_type, params)
-                model.fit(train, date_col, value_col)
+                model.fit(train, date_col, value_col, frequency=frequency)
                 preds = model.forecast(len(test))
                 pred_values = np.array([self._safe_float(p.get("forecast", 0.0)) for p in preds])
                 actuals = test[value_col].astype(float).values

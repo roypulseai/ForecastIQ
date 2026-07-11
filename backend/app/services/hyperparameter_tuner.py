@@ -228,7 +228,7 @@ def _adaptive_search_round(
         for train_df, test_df in folds:
             try:
                 model = selector.get_model(model_type, _to_model_params(model_type, candidate_params))
-                model.fit(train_df, date_col, value_col, exog_data=exog_data)
+                model.fit(train_df, date_col, value_col, exog_data=exog_data, frequency=frequency)
                 preds = model.forecast(len(test_df), exog_data=exog_data)
                 pred_values = np.array([_safe_float(p.get("forecast", 0.0)) for p in preds])
                 actual_values = test_df[value_col].astype(float).values
@@ -258,6 +258,7 @@ def tune_model(
     min_train_size: int = 30,
     random_seed: int = 42,
     exog_data: Optional[Dict[str, pd.DataFrame]] = None,
+    frequency: str = "D",
 ) -> Dict[str, Any]:
     """Run two-round adaptive search with time-series CV for a single model type.
 
