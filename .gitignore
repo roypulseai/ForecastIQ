@@ -23,5 +23,6 @@ data/
 *.swp
 *.swo
 *.pid
+*.bak
 backend.log
 frontend.log

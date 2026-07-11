@@ -70,7 +70,8 @@ class ETSForecaster(BaseForecaster):
             raise ValueError("ETS requires at least 5 data points")
         self._train_df = ts.reset_index()
         self._last_date = ts.index[-1]
-        self._frequency = _infer_freq(ts)
+        freq = kwargs.get("frequency")
+        self._frequency = freq if freq else _infer_freq(ts)
 
         # Try multiple combinations — many short series fail with
         # multiplicative seasonal components.

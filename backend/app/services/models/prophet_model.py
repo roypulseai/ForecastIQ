@@ -131,7 +131,7 @@ class ProphetForecaster(BaseForecaster):
         prophet_df = _align_external(base, exog_data)
         self._train_df = prophet_df.copy()
         self._last_date = prophet_df["ds"].iloc[-1]
-        self._frequency = self._infer_frequency(df, date_col)
+        self._frequency = kwargs.get("frequency") or self._infer_frequency(df, date_col)
 
         try:
             self._fitted_model = Prophet(

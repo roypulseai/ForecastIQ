@@ -156,6 +156,7 @@ def _fit_and_forecast_one(
     value_col: str,
     horizon: int,
     exog_data: Optional[Dict[str, pd.DataFrame]],
+    frequency: str = "D",
 ) -> Tuple[str, Optional[BaseForecaster], List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any], Dict[str, Any], Dict[str, Any], Optional[str]]:
     """Worker function: fit one model + forecast + baseline. Returns a tuple
     that's easy to assemble into the per_model dict. Defined at module level
@@ -163,7 +164,7 @@ def _fit_and_forecast_one(
     try:
         selector = ModelSelector()
         model = selector.get_model(model_type, params)
-        model.fit(sales_df, date_col, value_col, exog_data=exog_data or {})
+        model.fit(sales_df, date_col, value_col, exog_data=exog_data or {}, frequency=frequency)
         forecast = model.forecast(horizon, exog_data=exog_data)
         baseline = model.get_baseline(horizon, exog_data=exog_data)
         attach_uplift(forecast, baseline)
@@ -481,7 +482,7 @@ class ForecasterService:
                     ex.submit(
                         _fit_and_forecast_one,
                         m, params, _fit_input(m), date_col, value_col,
-                        horizon, exog_data,
+                        horizon, exog_data, request.get("frequency", "D"),
                     ): m
                     for m in models
                 }
@@ -499,7 +500,7 @@ class ForecasterService:
         else:
             for m in models:
                 result = _fit_and_forecast_one(
-                    m, params, _fit_input(m), date_col, value_col, horizon, exog_data
+                    m, params, _fit_input(m), date_col, value_col, horizon, exog_data, request.get("frequency", "D")
                 )
                 per_model[m] = _assemble_model_result(m, result, cv_results)
                 completed += 1
@@ -554,7 +555,7 @@ class ForecasterService:
                     continue
                 try:
                     full_model = self.selector.get_model(m, params)
-                    full_model.fit(sales_df, date_col, value_col, exog_data=exog_data or {})
+                    full_model.fit(sales_df, date_col, value_col, exog_data=exog_data or {}, frequency=request.get("frequency", "D"))
                     full_fc = full_model.forecast(horizon, exog_data=exog_data)
                     full_base = full_model.get_baseline(horizon, exog_data=exog_data)
                     attach_uplift(full_fc, full_base)
@@ -587,7 +588,7 @@ class ForecasterService:
                 )
                 if best_key_for_factors:
                     fc_model = self.selector.get_model(best_key_for_factors, params)
-                    fc_model.fit(sales_df, date_col, value_col, exog_data=exog_data or {})
+                    fc_model.fit(sales_df, date_col, value_col, exog_data=exog_data or {}, frequency=request.get("frequency", "D"))
                     baseline_fc = fc_model.get_baseline(horizon, exog_data=exog_data)
                     factor_contributions = _compute_factor_contributions(
                         fc_model, exog_data, horizon, baseline_fc,
@@ -610,7 +611,7 @@ class ForecasterService:
                     # Re-fit the best model on FULL data so the saved model
                     # is the most up-to-date version.
                     best_model_instance = self.selector.get_model(best_key, params)
-                    best_model_instance.fit(sales_df, date_col, value_col, exog_data=exog_data or {})
+                    best_model_instance.fit(sales_df, date_col, value_col, exog_data=exog_data or {}, frequency=request.get("frequency", "D"))
                     best_metrics = test_metrics_per_model.get(best_key, {})
                     cv = cv_results.get(best_key, {})
                     registry_metrics = ModelMetrics(
@@ -684,7 +685,7 @@ class ForecasterService:
                     def _refit(m: str) -> Tuple[str, Optional[BaseForecaster]]:
                         try:
                             inst = self.selector.get_model(m, params)
-                            inst.fit(sales_df, date_col, value_col, exog_data=exog_data or {})
+                            inst.fit(sales_df, date_col, value_col, exog_data=exog_data or {}, frequency=request.get("frequency", "D"))
                             return m, inst
                         except Exception as e:
                             logger.warning("Ensemble member %s re-fit failed: %s", m, e)
@@ -812,7 +813,7 @@ class ForecasterService:
                     continue
                 try:
                     bt_model = self.selector.get_model(m_name, params)
-                    bt_model.fit(backtest_df, date_col, value_col, exog_data=exog_data or {})
+                    bt_model.fit(backtest_df, date_col, value_col, exog_data=exog_data or {}, frequency=request.get("frequency", "D"))
                     bt_fc = bt_model.forecast(overlap_n, exog_data=exog_data)
                     pm["backtest_forecast_values"] = bt_fc
                     bt_metrics = _compute_backtest_metrics(bt_fc, backtest_actuals, date_col, value_col)
@@ -828,7 +829,7 @@ class ForecasterService:
                     for m_name in ensemble_result.get("models_used", []):
                         try:
                             inst = self.selector.get_model(m_name, params)
-                            inst.fit(backtest_df, date_col, value_col, exog_data=exog_data or {})
+                            inst.fit(backtest_df, date_col, value_col, exog_data=exog_data or {}, frequency=request.get("frequency", "D"))
                             bt_members.append(inst)
                         except Exception:
                             pass
@@ -879,7 +880,7 @@ class ForecasterService:
                     for m in models:
                         fut = ex.submit(
                             _fit_and_forecast_one,
-                            m, params, cat_df, date_col, value_col, horizon, exog_data,
+                            m, params, cat_df, date_col, value_col, horizon, exog_data, request.get("frequency", "D"),
                         )
                         cat_futures[fut] = (cat_val, m)
 
@@ -946,7 +947,7 @@ class ForecasterService:
                             continue
                         try:
                             bt_model = self.selector.get_model(m_name, params)
-                            bt_model.fit(cat_bt_df, date_col, value_col, exog_data=exog_data or {})
+                            bt_model.fit(cat_bt_df, date_col, value_col, exog_data=exog_data or {}, frequency=request.get("frequency", "D"))
                             bt_fc = bt_model.forecast(overlap_n, exog_data=exog_data)
                             pm["backtest_forecast_values"] = bt_fc
                             bt_metrics = _compute_backtest_metrics(
@@ -1071,7 +1072,7 @@ class ForecasterService:
             try:
                 model = self.selector.get_model(mtype, params)
                 # Fit on TRAIN only (data-science best practice)
-                model.fit(train_df, date_col, value_col, exog_data=exog_data or {})
+                model.fit(train_df, date_col, value_col, exog_data=exog_data or {}, frequency=request.get("frequency", "D"))
 
                 # Predict on the test set to evaluate
                 test_horizon = len(test_df)

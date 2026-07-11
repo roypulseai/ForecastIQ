@@ -63,7 +63,7 @@ class AutoMLForecaster(BaseForecaster):
     ) -> "AutoMLForecaster":
         self._date_col = date_col
         self._value_col = value_col
-        self._frequency = self._infer_frequency(df, date_col)
+        self._frequency = kwargs.get("frequency") or self._infer_frequency(df, date_col)
         dates_sorted = pd.to_datetime(df[date_col].dropna(), errors="coerce").sort_values()
         self._last_date = dates_sorted.iloc[-1] if len(dates_sorted) else None
         exog_data: Optional[Dict[str, pd.DataFrame]] = kwargs.get("exog_data")

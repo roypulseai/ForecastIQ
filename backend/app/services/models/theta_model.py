@@ -64,7 +64,8 @@ class ThetaForecaster(BaseForecaster):
             raise ValueError("Theta requires at least 4 data points")
         self._train_df = ts.reset_index()
         self._last_date = ts.index[-1]
-        self._frequency = _infer_freq(ts)
+        freq = kwargs.get("frequency")
+        self._frequency = freq if freq else _infer_freq(ts)
 
         period = min(self.period, max(2, len(ts) // 2))
         last_err: Optional[Exception] = None

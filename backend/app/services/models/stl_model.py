@@ -76,7 +76,8 @@ class STLForecaster(BaseForecaster):
             raise ValueError("STL requires at least 4 data points")
         self._train_df = ts.reset_index()
         self._last_date = ts.index[-1]
-        self._frequency = _infer_freq(ts)
+        freq = kwargs.get("frequency")
+        self._frequency = freq if freq else _infer_freq(ts)
 
         try:
             stl = STLDecomposition(ts, period=self.period, robust=self.robust)

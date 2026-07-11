@@ -72,7 +72,8 @@ class ARIMAForecaster(BaseForecaster):
         ts = _prepare_ts(df, date_col, value_col)
         self._train_df = ts.reset_index()
         self._last_date = ts.index[-1] if len(ts) else None
-        self._frequency = _infer_freq(ts)
+        freq = kwargs.get("frequency")
+        self._frequency = freq if freq else _infer_freq(ts)
 
         if len(ts) < 5:
             raise ValueError("ARIMA requires at least 5 data points")
@@ -215,7 +216,8 @@ class SARIMAXForecaster(BaseForecaster):
         ts = _prepare_ts(df, date_col, value_col)
         self._train_df = ts.reset_index()
         self._last_date = ts.index[-1] if len(ts) else None
-        self._frequency = _infer_freq(ts)
+        freq = kwargs.get("frequency")
+        self._frequency = freq if freq else _infer_freq(ts)
 
         if len(ts) < 10:
             raise ValueError("SARIMAX requires at least 10 data points")

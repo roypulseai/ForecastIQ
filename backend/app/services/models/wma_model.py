@@ -54,7 +54,7 @@ class WMAForecaster(BaseForecaster):
         ts = ts.set_index(date_col)[value_col].astype(float)
         self._last_values = ts
         self._last_date = ts.index[-1] if len(ts) else None
-        self._frequency = self._infer_frequency(df, date_col)
+        self._frequency = kwargs.get("frequency") or self._infer_frequency(df, date_col)
 
         self._historical_mean = float(ts.mean()) if len(ts) else 0.0
 

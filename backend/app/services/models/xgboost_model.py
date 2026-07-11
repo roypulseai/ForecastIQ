@@ -97,7 +97,7 @@ class XGBoostForecaster(BaseForecaster):
 
         self._date_col = date_col
         self._value_col = value_col
-        self._frequency = self._infer_frequency(df, date_col)
+        self._frequency = kwargs.get("frequency") or self._infer_frequency(df, date_col)
         exog_data = kwargs.get("exog_data")
         self._exog_lookup = _prep_exog_lookup(exog_data)
 
