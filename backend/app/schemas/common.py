@@ -59,6 +59,7 @@ class ModelType(str, Enum):
     THETA = "theta"
     STL = "stl"
     ENSEMBLE = "ensemble"
+    AUTOML = "automl"
 
 
 class BusinessType(str, Enum):
