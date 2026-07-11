@@ -11,24 +11,51 @@ interface ExportButtonProps {
   detail: ForecastDetail;
   values: ForecastValue[];
   modelName: string;
+  backtestValues?: ForecastValue[] | null;
+  actuals?: Array<{ date: string; value: number }>;
 }
 
-export function ExportButton({ detail, values, modelName }: ExportButtonProps): ReactNode {
+export function ExportButton({ detail, values, modelName, backtestValues, actuals }: ExportButtonProps): ReactNode {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+
+  const actualByDate = new Map<string, number>();
+  if (actuals) for (const a of actuals) actualByDate.set(a.date, a.value);
 
   const open = (e: React.MouseEvent<HTMLElement>) => setAnchor(e.currentTarget);
   const close = () => setAnchor(null);
 
   const exportCsv = () => {
-    const cols = ['date', 'forecast', 'lower_ci', 'upper_ci', 'baseline', 'uplift'];
-    const rows = values.map((v) => ({
-      date: v.date,
-      forecast: v.forecast,
-      lower_ci: v.lower_ci,
-      upper_ci: v.upper_ci,
-      baseline: v.baseline ?? '',
-      uplift: v.uplift ?? '',
-    }));
+    const cols = ['date', 'type', 'forecast', 'actual', 'error', 'lower_ci', 'upper_ci', 'baseline', 'uplift'];
+    const rows: Array<Record<string, string | number>> = [];
+    if (backtestValues) {
+      for (const v of backtestValues) {
+        const actual = actualByDate.get(v.date);
+        rows.push({
+          date: v.date,
+          type: 'backtest',
+          forecast: v.forecast,
+          actual: actual ?? '',
+          error: actual !== undefined ? +(actual - v.forecast).toFixed(4) : '',
+          lower_ci: v.lower_ci,
+          upper_ci: v.upper_ci,
+          baseline: v.baseline ?? '',
+          uplift: v.uplift ?? '',
+        });
+      }
+    }
+    for (const v of values) {
+      rows.push({
+        date: v.date,
+        type: 'forecast',
+        forecast: v.forecast,
+        actual: '',
+        error: '',
+        lower_ci: v.lower_ci,
+        upper_ci: v.upper_ci,
+        baseline: v.baseline ?? '',
+        uplift: v.uplift ?? '',
+      });
+    }
     const csv = toCsv(rows, cols);
     const safeName = modelName.replace(/[^a-z0-9_-]/gi, '_');
     downloadBlob(csv, `${detail.name.replace(/\s+/g, '_')}_${safeName}.csv`);
@@ -42,6 +69,7 @@ export function ExportButton({ detail, values, modelName }: ExportButtonProps): 
       model: modelName,
       created_at: detail.created_at,
       values,
+      backtest_values: backtestValues ?? [],
     };
     const safeName = detail.name.replace(/\s+/g, '_');
     downloadJson(payload, `${safeName}_${modelName}.json`);

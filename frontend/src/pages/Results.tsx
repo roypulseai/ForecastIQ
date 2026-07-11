@@ -233,6 +233,15 @@ export function ResultsPage(): ReactNode {
     return found?.forecast_values ?? [];
   }, [resultQuery.data, activeResults, selectedModel, selectedCategory]);
 
+  const activeBacktestValues = useMemo(() => {
+    if (!resultQuery.data || !activeResults) return null;
+    if (selectedModel === '__ensemble__') return null;
+    const found = Object.values(activeResults).find(
+      (r) => r.model_name === selectedModel,
+    );
+    return found?.backtest_forecast_values ?? null;
+  }, [activeResults, selectedModel]);
+
   const activeModelLabel = useMemo(() => {
     if (selectedModel === '__ensemble__') return 'Ensemble';
     return selectedModel;
@@ -335,6 +344,8 @@ export function ResultsPage(): ReactNode {
               detail={resultQuery.data}
               values={activeValues}
               modelName={activeModelLabel}
+              backtestValues={activeBacktestValues}
+              actuals={actuals}
             />
           )}
         </Stack>
@@ -582,6 +593,8 @@ export function ResultsPage(): ReactNode {
                   ]}
                   selectedModel={selectedModel}
                   onModelChange={setSelectedModel}
+                  backtestValues={activeBacktestValues}
+                  actuals={actuals}
                 />
               )}
               {tab === 3 && (

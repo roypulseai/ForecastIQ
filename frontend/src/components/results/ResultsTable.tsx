@@ -11,12 +11,18 @@ interface ResultsTableProps {
   selectedModel?: string;
   onModelChange?: (model: string) => void;
   height?: number;
+  backtestValues?: ForecastValue[] | null;
+  actuals?: Array<{ date: string; value: number }>;
 }
 
 export function ResultsTable({
-  values, modelName, modelOptions, selectedModel, onModelChange, height = 520,
+  values, modelName, modelOptions, selectedModel, onModelChange, height = 520, backtestValues, actuals,
 }: ResultsTableProps): ReactNode {
-  // Detect category columns from the first value's extra keys beyond known fields.
+  const actualByDate = useMemo(() => {
+    const m = new Map<string, number>();
+    if (actuals) for (const a of actuals) m.set(a.date, a.value);
+    return m;
+  }, [actuals]);
   const knownFields = new Set(['date', 'forecast', 'lower_ci', 'upper_ci', 'baseline', 'uplift', 'category']);
   const sample = values[0];
   const extraFields = sample
@@ -24,17 +30,27 @@ export function ResultsTable({
     : [];
   const hasCategory = extraFields.length > 0 || (values.length > 0 && values.some((v) => v.category));
 
-  const rows = useMemo(
-    () =>
-      values.map((v, idx) => ({
-        ...v, // carry through extra fields (store, sku, etc.)
-        id: `${modelName}-${idx}-${v.date}${v.category ? '-' + v.category : ''}`,
-        model: modelName,
-        baseline: v.baseline ?? null,
-        uplift: v.uplift ?? null,
-      })),
-    [values, modelName],
-  );
+  const rows = useMemo(() => {
+    const forecastRows = values.map((v, idx) => ({
+      ...v,
+      id: `${modelName}-${idx}-${v.date}${v.category ? '-' + v.category : ''}`,
+      model: modelName,
+      baseline: v.baseline ?? null,
+      uplift: v.uplift ?? null,
+    }));
+    const btRows = (backtestValues ?? []).map((v, idx) => ({
+      ...v,
+      id: `bt-${modelName}-${idx}-${v.date}`,
+      model: `${modelName} (backtest)`,
+      baseline: v.baseline ?? null,
+      uplift: v.uplift ?? null,
+      actual: actualByDate.get(v.date) ?? null,
+      residual: actualByDate.has(v.date)
+        ? (actualByDate.get(v.date) as number) - v.forecast
+        : null,
+    }));
+    return [...btRows, ...forecastRows];
+  }, [values, modelName, backtestValues, actualByDate]);
 
   const columns: GridColDef[] = useMemo(
     () => [
@@ -70,6 +86,24 @@ export function ResultsTable({
         minWidth: 120,
         valueFormatter: (params: { value: number | null | undefined }) =>
           formatNumber(params.value, 2),
+      },
+      {
+        field: 'actual',
+        headerName: 'Actual',
+        type: 'number',
+        flex: 1,
+        minWidth: 100,
+        valueFormatter: (params: { value: number | null | undefined }) =>
+          params.value === null || params.value === undefined ? '\u2014' : formatNumber(params.value, 2),
+      },
+      {
+        field: 'residual',
+        headerName: 'Error',
+        type: 'number',
+        flex: 1,
+        minWidth: 100,
+        valueFormatter: (params: { value: number | null | undefined }) =>
+          params.value === null || params.value === undefined ? '\u2014' : formatNumber(params.value, 2),
       },
       {
         field: 'lower_ci',
