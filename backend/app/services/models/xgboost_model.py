@@ -1,7 +1,7 @@
-"""XGBoost forecaster.
+"""XGBoost forecaster with optimized incremental forecast loop.
 
-Same architecture as LightGBM but using XGBoost. Lag/rolling features are
-computed on the VALUE column (not date), which was the original bug.
+Same architecture as LightGBM but using XGBoost. Shares the incremental
+step-feature helpers from lightgbm_model.
 """
 from __future__ import annotations
 
@@ -13,7 +13,13 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseForecaster
-from .lightgbm_model import _add_calendar, _add_lag_rolling, _merge_exog
+from .lightgbm_model import (
+    _add_calendar,
+    _add_lag_rolling,
+    _merge_exog,
+    _prep_exog_lookup,
+    _step_features,
+)
 
 warnings.filterwarnings("ignore")
 logger = logging.getLogger(__name__)
@@ -24,6 +30,8 @@ try:
 except ImportError:
     _SHAP_AVAILABLE = False
     shap = None
+
+_MAX_LAG = 28
 
 
 class XGBoostForecaster(BaseForecaster):
@@ -56,6 +64,8 @@ class XGBoostForecaster(BaseForecaster):
         self._shap_values: Optional[List[Dict[str, Any]]] = None
         self._shap_base_value: Optional[float] = None
         self._shap_explainer: Any = None
+        self._exog_lookup: Optional[Dict[str, Dict[str, float]]] = None
+        self._train_values: Optional[np.ndarray] = None
 
     def _build_features(
         self,
@@ -89,6 +99,8 @@ class XGBoostForecaster(BaseForecaster):
         self._value_col = value_col
         self._frequency = self._infer_frequency(df, date_col)
         exog_data = kwargs.get("exog_data")
+        self._exog_lookup = _prep_exog_lookup(exog_data)
+
         feat = self._build_features(df, date_col, value_col, exog_data, include_external=True)
         feat = feat.dropna(subset=[value_col])
         if len(feat) < 10:
@@ -96,9 +108,9 @@ class XGBoostForecaster(BaseForecaster):
 
         self._last_date = feat[date_col].iloc[-1]
         self._train_df = feat.copy()
+        self._train_values = feat[value_col].values.astype(float).copy()
         all_feature_cols = [c for c in feat.columns
                             if c not in (date_col, value_col)]
-        # Filter to numeric columns only
         self._feature_cols = [
             c for c in all_feature_cols
             if pd.api.types.is_numeric_dtype(feat[c])
@@ -138,44 +150,13 @@ class XGBoostForecaster(BaseForecaster):
             self._shap_training_importance = {}
         return self
 
-    def _make_future_frame(
-        self, horizon: int, exog_data: Optional[Dict[str, pd.DataFrame]],
-        include_external: bool,
-    ) -> pd.DataFrame:
-        if self._train_df is None:
-            raise ValueError("Model not fitted")
-        last_date = self._last_date
-        freq = self._frequency or "D"
-        try:
-            future_idx = pd.date_range(
-                start=last_date + pd.tseries.frequencies.to_offset(freq),
-                periods=horizon, freq=freq,
-            )
-        except Exception:
-            future_idx = pd.date_range(start=last_date + pd.Timedelta(days=1),
-                                       periods=horizon, freq="D")
-        hist = self._train_df[[self._date_col, self._value_col]].copy()
-        fut = pd.DataFrame({self._date_col: future_idx,
-                            self._value_col: [np.nan] * horizon})
-        full = pd.concat([hist, fut], ignore_index=True)
-        full = full.sort_values(self._date_col).reset_index(drop=True)
-        full = self._build_features(full, self._date_col, self._value_col,
-                                    exog_data=exog_data,
-                                    include_external=include_external)
-        full = full[full[self._date_col] > last_date].reset_index(drop=True)
-        return full
-
-    def forecast(
+    def _iter_forecast(
         self,
         horizon: int,
-        exog_data: Optional[Dict[str, pd.DataFrame]] = None,
-        **kwargs: Any,
+        exog_data: Optional[Dict[str, pd.DataFrame]],
+        include_external: bool,
+        compute_shap: bool,
     ) -> List[Dict[str, Any]]:
-        if self._fitted_model is None:
-            raise ValueError("Model not fitted")
-
-        compute_shap = kwargs.get("compute_shap", False)
-
         freq = self._frequency or "D"
         try:
             future_dates = pd.date_range(
@@ -187,34 +168,35 @@ class XGBoostForecaster(BaseForecaster):
                 start=self._last_date + pd.Timedelta(days=1), periods=horizon, freq="D",
             )
 
-        preds = []
+        need = max(max(self.lags or [1]), max(self.roll_windows or [1]), _MAX_LAG)
+        recent_vals = (self._train_values[-need:].tolist()
+                       if self._train_values is not None and len(self._train_values) >= need
+                       else (self._train_values.tolist() if self._train_values is not None else []))
+
+        from collections import deque
+        recent = deque(recent_vals, maxlen=need + horizon)
+
+        preds: List[float] = []
         shap_per_step: Optional[List[Dict[str, float]]] = None
         if compute_shap and _SHAP_AVAILABLE and self._shap_explainer is not None:
             shap_per_step = []
 
-        roll_df = self._train_df[[self._date_col, self._value_col]].copy()
-
         for step_idx, fut_date in enumerate(future_dates):
-            step_df = pd.DataFrame({self._date_col: [fut_date], self._value_col: [np.nan]})
-            full = pd.concat([roll_df, step_df], ignore_index=True)
-            full = full.sort_values(self._date_col).reset_index(drop=True)
-            full = self._build_features(full, self._date_col, self._value_col,
-                                        exog_data=exog_data, include_external=True)
-            row = full[full[self._date_col] == fut_date]
-            if row.empty:
-                preds.append(float(roll_df[self._value_col].iloc[-1]))
-                continue
-            for c in self._feature_cols:
-                if c not in row.columns:
-                    row[c] = 0.0
-            X_step = row[self._feature_cols].astype(float).fillna(0.0).values
+            X_step = _step_features(
+                fut_date, list(recent),
+                self.lags, self.roll_windows,
+                self._exog_lookup if include_external else None,
+                self._feature_cols,
+            ).reshape(1, -1)
+
             try:
                 p = float(self._fitted_model.predict(X_step)[0])
             except Exception as e:
                 logger.warning("XGBoost step predict failed at step %d: %s", step_idx, e)
-                p = float(roll_df[self._value_col].iloc[-1])
+                p = float(recent[-1]) if recent else 0.0
             p = max(0.0, p)
             preds.append(p)
+            recent.append(p)
 
             if shap_per_step is not None:
                 try:
@@ -225,11 +207,6 @@ class XGBoostForecaster(BaseForecaster):
                 except Exception as e:
                     logger.debug("SHAP step failed at step %d: %s", step_idx, e)
                     shap_per_step.append({})
-
-            roll_df = pd.concat([
-                roll_df,
-                pd.DataFrame({self._date_col: [fut_date], self._value_col: [p]})
-            ], ignore_index=True)
 
         self._shap_values = shap_per_step
 
@@ -248,6 +225,17 @@ class XGBoostForecaster(BaseForecaster):
             results.append(entry)
         return results
 
+    def forecast(
+        self,
+        horizon: int,
+        exog_data: Optional[Dict[str, pd.DataFrame]] = None,
+        **kwargs: Any,
+    ) -> List[Dict[str, Any]]:
+        if self._fitted_model is None:
+            raise ValueError("Model not fitted")
+        compute_shap = kwargs.get("compute_shap", False)
+        return self._iter_forecast(horizon, exog_data, include_external=True, compute_shap=compute_shap)
+
     def get_baseline(
         self,
         horizon: int,
@@ -256,51 +244,7 @@ class XGBoostForecaster(BaseForecaster):
     ) -> List[Dict[str, Any]]:
         if self._fitted_model is None:
             raise ValueError("Model not fitted")
-        freq = self._frequency or "D"
-        try:
-            future_dates = pd.date_range(
-                start=self._last_date + pd.tseries.frequencies.to_offset(freq),
-                periods=horizon, freq=freq,
-            )
-        except Exception:
-            future_dates = pd.date_range(
-                start=self._last_date + pd.Timedelta(days=1), periods=horizon, freq="D",
-            )
-        preds = []
-        roll_df = self._train_df[[self._date_col, self._value_col]].copy()
-        for fut_date in future_dates:
-            step_df = pd.DataFrame({self._date_col: [fut_date], self._value_col: [np.nan]})
-            full = pd.concat([roll_df, step_df], ignore_index=True)
-            full = full.sort_values(self._date_col).reset_index(drop=True)
-            full = self._build_features(full, self._date_col, self._value_col,
-                                        exog_data=None, include_external=False)
-            row = full[full[self._date_col] == fut_date]
-            if row.empty:
-                preds.append(float(roll_df[self._value_col].iloc[-1]))
-                continue
-            for c in self._feature_cols:
-                if c not in row.columns:
-                    row[c] = 0.0
-            X_step = row[self._feature_cols].astype(float).fillna(0.0).values
-            try:
-                p = float(self._fitted_model.predict(X_step)[0])
-            except Exception:
-                p = float(roll_df[self._value_col].iloc[-1])
-            p = max(0.0, p)
-            preds.append(p)
-            roll_df = pd.concat([
-                roll_df,
-                pd.DataFrame({self._date_col: [fut_date], self._value_col: [p]})
-            ], ignore_index=True)
-        return [
-            {
-                "date": self._format_date(d),
-                "forecast": self._safe_float(p),
-                "lower_ci": self._safe_float(max(0.0, p * 0.85)),
-                "upper_ci": self._safe_float(p * 1.15),
-            }
-            for d, p in zip(future_dates, preds)
-        ]
+        return self._iter_forecast(horizon, exog_data, include_external=False, compute_shap=False)
 
     def get_feature_importance(self) -> Dict[str, float]:
         if self._fitted_model is None:

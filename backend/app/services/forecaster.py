@@ -243,10 +243,10 @@ class ForecasterService:
             * Models are fit + forecasted in parallel via a thread pool.
             * Ensemble members reuse the CV results to avoid re-computation.
         """
-        # Defensive copy — we may mutate sales_df (e.g. add composite key col)
-        sales_df = sales_df.copy()
         date_col = request.get("date_column", "date")
         value_col = request.get("target_column", "value")
+        # Delay defensive copy — only clone if we need to mutate (category cols)
+        _sales_df_original = sales_df
         horizon = int(request.get("horizon", 30))
         models = request.get("models") or ["prophet"]
         params = request.get("parameters") or {}
@@ -275,17 +275,16 @@ class ForecasterService:
         COMPOSITE_SEP = " ||| "
 
         if category_columns:
+            # Defensive copy now that we need to mutate
+            sales_df = _sales_df_original.copy()
             # Create a composite key column from all category columns
             composite_key_col = "_composite_cat_key"
             sales_df[composite_key_col] = (
-                sales_df[category_columns].astype(str).apply(
-                    lambda r: COMPOSITE_SEP.join(r.values), axis=1
-                )
+                sales_df[category_columns].astype(str).agg(COMPOSITE_SEP.join, axis=1)
             )
             # Build the mapping from composite key → individual column values
-            for _, row in sales_df[category_columns + [composite_key_col]].drop_duplicates(
-                subset=[composite_key_col]
-            ).iterrows():
+            uniq = sales_df[category_columns + [composite_key_col]].drop_duplicates(subset=[composite_key_col])
+            for _, row in uniq.iterrows():
                 key = row[composite_key_col]
                 category_column_values[key] = {c: str(row[c]) for c in category_columns}
 
@@ -915,16 +914,11 @@ class ForecasterService:
                 cat_actuals: List[Dict[str, Any]] = []
                 cat_src = category_filtered.get(cat_val)
                 if cat_src is not None and date_col in cat_src.columns and value_col in cat_src.columns:
-                    for _, row in cat_src.iterrows():
-                        d = row[date_col]
-                        v = row[value_col]
-                        try:
-                            if pd.notna(d) and pd.notna(v):
-                                cat_actuals.append({"date": str(d)[:10], "value": float(v)})
-                        except Exception:
-                            pass
-                    if cat_actuals:
-                        cat_actuals.sort(key=lambda x: x["date"])
+                    src = cat_src[[date_col, value_col]].dropna().copy()
+                    src[date_col] = src[date_col].astype(str).str[:10]
+                    src[value_col] = pd.to_numeric(src[value_col], errors="coerce")
+                    cat_actuals = src.rename(columns={date_col: "date", value_col: "value"}).to_dict("records")
+                    cat_actuals.sort(key=lambda x: x["date"])
                 category_forecasts[cat_val] = {
                     "results": per_model,
                     "summary": cat_summary,
@@ -968,19 +962,10 @@ class ForecasterService:
         # the file separately or guess column names for the chart.
         historical: List[Dict[str, Any]] = []
         if date_col in sales_df.columns and value_col in sales_df.columns:
-            for _, row in sales_df.iterrows():
-                d = row[date_col]
-                v = row[value_col]
-                try:
-                    if pd.notna(d) and pd.notna(v):
-                        historical.append({
-                            "date": str(d)[:10],
-                            "value": float(v),
-                        })
-                except Exception:
-                    pass
-        if historical:
-            historical.sort(key=lambda x: x["date"])
+            src = sales_df[[date_col, value_col]].dropna().copy()
+            src[date_col] = src[date_col].astype(str).str[:10]
+            src[value_col] = pd.to_numeric(src[value_col], errors="coerce")
+            historical = src.rename(columns={date_col: "date", value_col: "value"}).to_dict("records")
 
         result: Dict[str, Any] = {
             "name": request.get("name", "Forecast"),
@@ -1442,9 +1427,12 @@ def _compute_backtest_metrics(
         return {}
     try:
         actuals: Dict[str, float] = {}
-        for _, row in actuals_df.iterrows():
-            d = pd.Timestamp(row[date_col]).strftime("%Y-%m-%d")
-            actuals[d] = float(row[value_col])
+        for d_str, v in zip(actuals_df[date_col], actuals_df[value_col]):
+            try:
+                if pd.notna(d_str) and pd.notna(v):
+                    actuals[pd.Timestamp(d_str).strftime("%Y-%m-%d")] = float(v)
+            except Exception:
+                pass
         pred_vals: List[float] = []
         actual_vals: List[float] = []
         for fv in forecast_values:

@@ -1,13 +1,13 @@
-"""LightGBM forecaster.
+"""LightGBM forecaster with optimized incremental forecast loop.
 
-Builds lag / rolling / calendar features from the value column (NOT the
-date column), then trains a regression model. Supports external regressors
-(promotions, media, holidays, events, weather, competitor, economic).
+Builds lag / rolling / calendar features from the value column, then trains
+a regression model. Supports external regressors.
 """
 from __future__ import annotations
 
 import logging
 import warnings
+from collections import deque
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -24,6 +24,8 @@ try:
 except ImportError:
     _SHAP_AVAILABLE = False
     shap = None
+
+_MAX_LAG = 28  # maximum lag window we need for rolling computations
 
 
 def _add_calendar(df: pd.DataFrame, date_col: str) -> pd.DataFrame:
@@ -43,7 +45,6 @@ def _add_calendar(df: pd.DataFrame, date_col: str) -> pd.DataFrame:
 def _add_lag_rolling(
     df: pd.DataFrame, value_col: str, lags: List[int], windows: List[int]
 ) -> pd.DataFrame:
-    """Lag and rolling features computed on the VALUE column."""
     for lag in lags:
         df[f"lag_{lag}"] = df[value_col].shift(lag)
     for w in windows:
@@ -55,16 +56,14 @@ def _add_lag_rolling(
     return df
 
 
-def _merge_exog(
-    df: pd.DataFrame, date_col: str, exog_data: Optional[Dict[str, pd.DataFrame]]
-) -> pd.DataFrame:
-    """Merge external regressors on date.  Only NUMERIC columns are kept
-    so the result is safe to feed into a regression model."""
+def _prep_exog_lookup(
+    exog_data: Optional[Dict[str, pd.DataFrame]],
+) -> Optional[Dict[str, Dict[str, float]]]:
+    """Pre-aggregate exog sources into {date_str: {col: value}} lookups,
+    avoiding repeated DataFrame merges during the forecast loop."""
     if not exog_data:
-        return df
-    out = df.copy()
-    out[date_col] = pd.to_datetime(out[date_col], errors="coerce")
-    # Exogenous data sources: only numeric columns are kept
+        return None
+    lookup: Dict[str, Dict[str, float]] = {}
     source_specs = [
         ("promotions", ["discount"], "sum"),
         ("media_plan", ["media_spend", "reach", "impressions"], "sum"),
@@ -83,7 +82,6 @@ def _merge_exog(
         sub = sub.dropna(subset=["date"])
         if sub.empty:
             continue
-        # Determine which columns to merge (numeric only)
         if key == "economic":
             cols_to_use = [c for c in sub.columns
                            if c != "date" and pd.api.types.is_numeric_dtype(sub[c])]
@@ -92,16 +90,100 @@ def _merge_exog(
                            if c in sub.columns and pd.api.types.is_numeric_dtype(sub[c])]
         if not cols_to_use:
             continue
-        # Aggregate duplicate dates — numeric only, so single agg function
         sub_agg = sub.groupby("date")[cols_to_use].agg(agg_func).reset_index()
-        sub_agg = sub_agg.rename(columns={"date": date_col})
-        out = out.merge(sub_agg, on=date_col, how="left")
-    # Fill NaNs introduced by merges
-    numeric_cols = [c for c in out.columns
-                    if c != date_col and pd.api.types.is_numeric_dtype(out[c])]
-    for c in numeric_cols:
-        out[c] = out[c].fillna(0.0)
-    return out
+        for _, row in sub_agg.iterrows():
+            d = str(pd.Timestamp(row["date"]).strftime("%Y-%m-%d"))
+            if d not in lookup:
+                lookup[d] = {}
+            for col in cols_to_use:
+                v = row[col]
+                lookup[d][f"{key}_{col}"] = float(v) if pd.notna(v) else 0.0
+    return lookup if lookup else None
+
+
+def _step_features(
+    date_val: pd.Timestamp,
+    recent_vals: List[float],
+    lags: List[int],
+    roll_windows: List[int],
+    exog_lookup: Optional[Dict[str, Dict[str, float]]] = None,
+    feature_cols: Optional[List[str]] = None,
+) -> np.ndarray:
+    """Compute a single feature row for one forecast step.
+
+    Returns a 1D numpy array aligned to *feature_cols* (or in natural order
+    if feature_cols is None).
+    """
+    d = pd.Timestamp(date_val)
+    feats: Dict[str, float] = {
+        "dayofweek": float(d.dayofweek),
+        "dayofmonth": float(d.day),
+        "month": float(d.month),
+        "quarter": float(d.quarter),
+        "year": float(d.year),
+        "is_weekend": 1.0 if d.dayofweek in (5, 6) else 0.0,
+        "is_month_start": 1.0 if d.is_month_start else 0.0,
+        "is_month_end": 1.0 if d.is_month_end else 0.0,
+    }
+    try:
+        feats["weekofyear"] = float(d.isocalendar().week)
+    except Exception:
+        feats["weekofyear"] = 0.0
+
+    vals = np.array(recent_vals, dtype=float)
+    for lag in lags:
+        feats[f"lag_{lag}"] = float(vals[-lag]) if len(vals) >= lag else 0.0
+    for w in roll_windows:
+        if len(vals) >= w:
+            window = vals[-w:]
+            feats[f"rolling_mean_{w}"] = float(window.mean())
+            feats[f"rolling_std_{w}"] = float(window.std()) if len(window) > 1 else 0.0
+            feats[f"rolling_min_{w}"] = float(window.min())
+            feats[f"rolling_max_{w}"] = float(window.max())
+        else:
+            feats[f"rolling_mean_{w}"] = float(vals.mean()) if len(vals) > 0 else 0.0
+            feats[f"rolling_std_{w}"] = float(vals.std()) if len(vals) > 1 else 0.0
+            feats[f"rolling_min_{w}"] = float(vals.min()) if len(vals) > 0 else 0.0
+            feats[f"rolling_max_{w}"] = float(vals.max()) if len(vals) > 0 else 0.0
+
+    # Exog lookup
+    if exog_lookup:
+        d_str = d.strftime("%Y-%m-%d")
+        ex_row = exog_lookup.get(d_str)
+        if ex_row:
+            feats.update(ex_row)
+
+    # Build array in feature_cols order if given
+    if feature_cols:
+        return np.array([feats.get(c, 0.0) for c in feature_cols], dtype=float)
+    return np.array(list(feats.values()), dtype=float)
+
+
+def _merge_exog(
+    df: pd.DataFrame, date_col: str, exog_data: Optional[Dict[str, pd.DataFrame]]
+) -> pd.DataFrame:
+    """Merge external regressors on date.  Only NUMERIC columns are kept
+    so the result is safe to feed into a regression model."""
+    if not exog_data:
+        return df
+
+    exog_lookup = _prep_exog_lookup(exog_data)
+    if not exog_lookup:
+        return df
+
+    df_out = df.copy()
+    d_col = pd.to_datetime(df_out[date_col], errors="coerce")
+    # Use the lookup instead of per-source merges
+    all_exog_cols: set = set()
+    for row_idx in range(len(df_out)):
+        d_str = str(d_col.iloc[row_idx].strftime("%Y-%m-%d")) if pd.notna(d_col.iloc[row_idx]) else None
+        if d_str and d_str in exog_lookup:
+            for col, val in exog_lookup[d_str].items():
+                df_out.at[row_idx, col] = val
+                all_exog_cols.add(col)
+    for c in all_exog_cols:
+        df_out[c] = pd.to_numeric(df_out[c], errors="coerce").fillna(0.0)
+    return df_out
 
 
 class LightGBMForecaster(BaseForecaster):
@@ -132,6 +214,9 @@ class LightGBMForecaster(BaseForecaster):
         self._shap_values: Optional[List[Dict[str, Any]]] = None
         self._shap_base_value: Optional[float] = None
         self._shap_explainer: Any = None
+        # Incremental forecast state
+        self._exog_lookup: Optional[Dict[str, Dict[str, float]]] = None
+        self._train_values: Optional[np.ndarray] = None
 
     def _build_features(
         self,
@@ -168,22 +253,21 @@ class LightGBMForecaster(BaseForecaster):
         self._value_col = value_col
         self._frequency = self._infer_frequency(df, date_col)
         exog_data = kwargs.get("exog_data")
+        self._exog_lookup = _prep_exog_lookup(exog_data)
+
         feat = self._build_features(df, date_col, value_col, exog_data, include_external=True)
-        # Drop rows with NaN in target (first max(lag, window) rows after lag/rolling)
         feat = feat.dropna(subset=[value_col])
         if len(feat) < 10:
             raise ValueError("LightGBM requires at least 10 rows after feature creation")
 
         self._last_date = feat[date_col].iloc[-1]
         self._train_df = feat.copy()
+        self._train_values = feat[value_col].values.astype(float).copy()
         all_feature_cols = self._determine_feature_cols(feat, date_col, value_col)
-        # Filter to numeric columns only (defensive — _merge_exog already
-        # restricts to numeric, but external callers may add other columns)
         self._feature_cols = [
             c for c in all_feature_cols
             if pd.api.types.is_numeric_dtype(feat[c])
         ]
-        # Fill any remaining NaN with 0
         X = feat[self._feature_cols].astype(float).fillna(0.0)
         y = feat[value_col].astype(float).values
 
@@ -218,43 +302,17 @@ class LightGBMForecaster(BaseForecaster):
             self._shap_training_importance = {}
         return self
 
-    def _make_future_frame(self, horizon: int, exog_data: Optional[Dict[str, pd.DataFrame]], include_external: bool) -> pd.DataFrame:
-        # Build a frame that contains history + future dates for feature continuity
-        if self._train_df is None:
-            raise ValueError("Model not fitted")
-        last_date = self._last_date
-        freq = self._frequency or "D"
-        try:
-            future_idx = pd.date_range(
-                start=last_date + pd.tseries.frequencies.to_offset(freq),
-                periods=horizon, freq=freq,
-            )
-        except Exception:
-            future_idx = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=horizon, freq="D")
-        hist = self._train_df[[self._date_col, self._value_col]].copy()
-        fut = pd.DataFrame({self._date_col: future_idx, self._value_col: [np.nan] * horizon})
-        full = pd.concat([hist, fut], ignore_index=True)
-        full = full.sort_values(self._date_col).reset_index(drop=True)
-        full = self._build_features(full, self._date_col, self._value_col,
-                                    exog_data=exog_data, include_external=include_external)
-        # Take only the future rows
-        full = full[full[self._date_col] > last_date].reset_index(drop=True)
-        return full
-
-    def forecast(
+    def _iter_forecast(
         self,
         horizon: int,
-        exog_data: Optional[Dict[str, pd.DataFrame]] = None,
-        **kwargs: Any,
+        exog_data: Optional[Dict[str, pd.DataFrame]],
+        include_external: bool,
+        compute_shap: bool,
     ) -> List[Dict[str, Any]]:
-        if self._fitted_model is None:
-            raise ValueError("Model not fitted")
+        """Iterative 1-step-ahead forecast using array-based features.
 
-        compute_shap = kwargs.get("compute_shap", False)
-
-        # Iterative 1-step-ahead prediction to avoid cascading NaN in lag features.
-        # Each step's prediction is injected as the value for the next step,
-        # so lag/rolling features always reference real (predicted) values.
+        Avoids DataFrame concat + sort + full feature rebuild at every step.
+        """
         freq = self._frequency or "D"
         try:
             future_dates = pd.date_range(
@@ -266,36 +324,34 @@ class LightGBMForecaster(BaseForecaster):
                 start=self._last_date + pd.Timedelta(days=1), periods=horizon, freq="D",
             )
 
-        preds = []
+        # Keep a deque of recent values so lag/rolling features can be
+        # computed incrementally without copying/growing a DataFrame.
+        need = max(max(self.lags or [1]), max(self.roll_windows or [1]), _MAX_LAG)
+        recent = deque(self._train_values[-need:].tolist() if self._train_values is not None and len(self._train_values) >= need
+                       else (self._train_values.tolist() if self._train_values is not None else []),
+                       maxlen=need + horizon)
+
+        preds: List[float] = []
         shap_per_step: Optional[List[Dict[str, float]]] = None
         if compute_shap and _SHAP_AVAILABLE and self._shap_explainer is not None:
             shap_per_step = []
 
-        # Start with the training history so lag features can be built
-        roll_df = self._train_df[[self._date_col, self._value_col]].copy()
-
         for step_idx, fut_date in enumerate(future_dates):
-            step_df = pd.DataFrame({self._date_col: [fut_date], self._value_col: [np.nan]})
-            full = pd.concat([roll_df, step_df], ignore_index=True)
-            full = full.sort_values(self._date_col).reset_index(drop=True)
-            full = self._build_features(full, self._date_col, self._value_col,
-                                        exog_data=exog_data, include_external=True)
-            # Feature row for this future date
-            row = full[full[self._date_col] == fut_date]
-            if row.empty:
-                preds.append(float(roll_df[self._value_col].iloc[-1]))
-                continue
-            for c in self._feature_cols:
-                if c not in row.columns:
-                    row[c] = 0.0
-            X_step = row[self._feature_cols].astype(float).fillna(0.0).values
+            X_step = _step_features(
+                fut_date, list(recent),
+                self.lags, self.roll_windows,
+                self._exog_lookup if include_external else None,
+                self._feature_cols,
+            ).reshape(1, -1)
+
             try:
                 p = float(self._fitted_model.predict(X_step)[0])
             except Exception as e:
                 logger.warning("LightGBM step predict failed at step %d: %s", step_idx, e)
-                p = float(roll_df[self._value_col].iloc[-1])
+                p = float(recent[-1]) if recent else 0.0
             p = max(0.0, p)
             preds.append(p)
+            recent.append(p)
 
             if shap_per_step is not None:
                 try:
@@ -306,12 +362,6 @@ class LightGBMForecaster(BaseForecaster):
                 except Exception as e:
                     logger.debug("SHAP step failed at step %d: %s", step_idx, e)
                     shap_per_step.append({})
-
-            # Append prediction to rolling history so next step's lags are correct
-            roll_df = pd.concat([
-                roll_df,
-                pd.DataFrame({self._date_col: [fut_date], self._value_col: [p]})
-            ], ignore_index=True)
 
         self._shap_values = shap_per_step
 
@@ -330,6 +380,17 @@ class LightGBMForecaster(BaseForecaster):
             results.append(entry)
         return results
 
+    def forecast(
+        self,
+        horizon: int,
+        exog_data: Optional[Dict[str, pd.DataFrame]] = None,
+        **kwargs: Any,
+    ) -> List[Dict[str, Any]]:
+        if self._fitted_model is None:
+            raise ValueError("Model not fitted")
+        compute_shap = kwargs.get("compute_shap", False)
+        return self._iter_forecast(horizon, exog_data, include_external=True, compute_shap=compute_shap)
+
     def get_baseline(
         self,
         horizon: int,
@@ -338,52 +399,7 @@ class LightGBMForecaster(BaseForecaster):
     ) -> List[Dict[str, Any]]:
         if self._fitted_model is None:
             raise ValueError("Model not fitted")
-        # Use iterative prediction (same approach as forecast) but without external regressors
-        freq = self._frequency or "D"
-        try:
-            future_dates = pd.date_range(
-                start=self._last_date + pd.tseries.frequencies.to_offset(freq),
-                periods=horizon, freq=freq,
-            )
-        except Exception:
-            future_dates = pd.date_range(
-                start=self._last_date + pd.Timedelta(days=1), periods=horizon, freq="D",
-            )
-        preds = []
-        roll_df = self._train_df[[self._date_col, self._value_col]].copy()
-        for fut_date in future_dates:
-            step_df = pd.DataFrame({self._date_col: [fut_date], self._value_col: [np.nan]})
-            full = pd.concat([roll_df, step_df], ignore_index=True)
-            full = full.sort_values(self._date_col).reset_index(drop=True)
-            full = self._build_features(full, self._date_col, self._value_col,
-                                        exog_data=None, include_external=False)
-            row = full[full[self._date_col] == fut_date]
-            if row.empty:
-                preds.append(float(roll_df[self._value_col].iloc[-1]))
-                continue
-            for c in self._feature_cols:
-                if c not in row.columns:
-                    row[c] = 0.0
-            X_step = row[self._feature_cols].astype(float).fillna(0.0).values
-            try:
-                p = float(self._fitted_model.predict(X_step)[0])
-            except Exception:
-                p = float(roll_df[self._value_col].iloc[-1])
-            p = max(0.0, p)
-            preds.append(p)
-            roll_df = pd.concat([
-                roll_df,
-                pd.DataFrame({self._date_col: [fut_date], self._value_col: [p]})
-            ], ignore_index=True)
-        return [
-            {
-                "date": self._format_date(d),
-                "forecast": self._safe_float(p),
-                "lower_ci": self._safe_float(max(0.0, p * 0.85)),
-                "upper_ci": self._safe_float(p * 1.15),
-            }
-            for d, p in zip(future_dates, preds)
-        ]
+        return self._iter_forecast(horizon, exog_data, include_external=False, compute_shap=False)
 
     def get_feature_importance(self) -> Dict[str, float]:
         if self._fitted_model is None:
