@@ -40,11 +40,14 @@ api.interceptors.response.use(
 );
 
 export const apiClient = {
-  async uploadFile(fileType: string, file: File): Promise<UploadedFile> {
+  async uploadFile(fileType: string, file: File, onProgress?: (pct: number) => void): Promise<UploadedFile> {
     const formData = new FormData();
     formData.append('file', file);
     const res = await api.post<UploadedFile>(`/upload/${fileType}`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: (evt) => {
+        if (onProgress && evt.total) onProgress(Math.round((evt.loaded / evt.total) * 100));
+      },
     });
     return res.data;
   },

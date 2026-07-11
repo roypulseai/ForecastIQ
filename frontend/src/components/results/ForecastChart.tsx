@@ -101,7 +101,23 @@ export function ForecastChart({
   const backtestValues: ForecastValue[] | undefined = getModelData(
     (r) => r.backtest_forecast_values ?? undefined,
     (e) => e.backtest_forecast_values ?? undefined,
-  ) ?? undefined;
+  ) ?? (categoryResults && !isEnsemble && selectedModel && detail.results[selectedModel]
+    ? (detail.results[selectedModel].backtest_forecast_values ?? undefined)
+    : undefined);
+
+  const boundary = detail.backtest_end_date
+    ? normalizeDate(detail.backtest_end_date)
+    : (actuals.length > 0
+        ? normalizeDate(actuals[actuals.length - 1].date)
+        : (backtestValues && backtestValues.length > 0
+            ? normalizeDate(backtestValues[backtestValues.length - 1].date)
+            : null));
+
+  // Use backend-provided backtest dates when available (most reliable).
+  // Fall back to computing from actuals only if backend didn't provide dates.
+  const hasBacktest = detail.auto_backtest
+    || (detail.request.backtest_overlap != null && detail.request.backtest_overlap > 0)
+    || (detail.backtest_start_date != null && detail.backtest_end_date != null);
 
   const data: ChartPoint[] = useMemo(() => {
     const byDate = new Map<string, ChartPoint>();
@@ -124,6 +140,7 @@ export function ForecastChart({
     for (const v of forecastValues) {
       const date = normalizeDate(v.date);
       if (!date) continue;
+      if (boundary && date <= boundary) continue;
       const existing = byDate.get(date);
       byDate.set(date, {
         date,
@@ -178,21 +195,8 @@ export function ForecastChart({
     }
 
     return Array.from(byDate.values()).sort((a, b) => (a.date < b.date ? -1 : 1));
-  }, [actuals, showActuals, showBaseline, forecastValues, baselineValues, backtestValues]);
+  }, [actuals, showActuals, showBaseline, forecastValues, baselineValues, backtestValues, boundary]);
 
-  const boundary = detail.backtest_end_date
-    ? normalizeDate(detail.backtest_end_date)
-    : (actuals.length > 0
-        ? normalizeDate(actuals[actuals.length - 1].date)
-        : (backtestValues && backtestValues.length > 0
-            ? normalizeDate(backtestValues[backtestValues.length - 1].date)
-            : null));
-
-  // Use backend-provided backtest dates when available (most reliable).
-  // Fall back to computing from actuals only if backend didn't provide dates.
-  const hasBacktest = detail.auto_backtest
-    || (detail.request.backtest_overlap != null && detail.request.backtest_overlap > 0)
-    || (detail.backtest_start_date != null && detail.backtest_end_date != null);
   const backtestStartDate = detail.backtest_start_date
     ? normalizeDate(detail.backtest_start_date)
     : (hasBacktest && boundary ? (() => {

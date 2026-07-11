@@ -42,7 +42,7 @@ service = ForecasterService()
 # Allowed model class names for upload validation
 ALLOWED_MODEL_TYPES = {
     "arima", "sarimax", "prophet", "lightgbm", "xgboost",
-    "wma", "ets", "theta", "stl",
+    "wma", "ets", "theta", "stl", "automl",
 }
 
 
@@ -257,115 +257,6 @@ async def upload_model(
     with `POST /models/{id}/forecast`.
     """
     return await _upload_model_impl(file, name, notes, tags)
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="Missing filename")
-    if not (file.filename.endswith(".pkl") or file.filename.endswith(".joblib")):
-        raise HTTPException(
-            status_code=400,
-            detail="Model file must be .pkl or .joblib",
-        )
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=400, detail="Empty file")
-    if len(content) > 200 * 1024 * 1024:  # 200MB cap
-        raise HTTPException(status_code=413, detail="Model file too large (max 200MB)")
-
-    # Try to deserialize. We import lazily to avoid loading the heavy
-    # ML deps for a metadata-only call.
-    import joblib
-    import pickle
-
-    payload: Optional[Dict[str, Any]] = None
-    framework = "joblib"
-    try:
-        bio = io.BytesIO(content)
-        payload = joblib.load(bio)
-    except Exception:
-        try:
-            bio = io.BytesIO(content)
-            payload = pickle.load(bio)
-            framework = "pickle"
-        except Exception as e:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Could not deserialize model file. "
-                    "It must be a pickle/joblib blob produced by ForecastIQ. "
-                    f"Underlying error: {e}"
-                ),
-            )
-
-    if not isinstance(payload, dict) or "class_name" not in payload:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Model file is not a ForecastIQ artifact. "
-                "Expected a dict with 'class_name' and 'state' keys."
-            ),
-        )
-
-    model_type = payload.get("state", {}).get("name") or payload.get("class_name")
-    if not model_type:
-        raise HTTPException(status_code=400, detail="Model artifact missing 'name'")
-    model_type = str(model_type).lower()
-    # Some classes have a different registry key than their display name
-    if model_type not in ALLOWED_MODEL_TYPES:
-        # Best-effort mapping
-        aliases = {"arimaforecaster": "arima", "sarimaxforecaster": "sarimax"}
-        model_type = aliases.get(model_type, model_type)
-    if model_type not in ALLOWED_MODEL_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported model type '{model_type}'. Allowed: {sorted(ALLOWED_MODEL_TYPES)}",
-        )
-
-    # Reconstruct the model to verify it works
-    try:
-        loaded = get_model_registry().load  # function
-        # Save the raw blob to disk first
-        registry = get_model_registry()
-        mid = registry._new_id()  # type: ignore[attr-defined]
-        blob_path = registry.models_dir / f"{mid}.pkl"
-        blob_path.write_bytes(content)
-        sha = registry._hash_bytes(content)  # type: ignore[attr-defined]
-        from datetime import datetime
-        from ...services.models.registry import (
-            ModelArtifactMeta, ModelFramework, ModelMetrics, TrainingConfig,
-        )
-        now = datetime.utcnow().isoformat() + "Z"
-        state = payload.get("state", {})
-        training_cfg = TrainingConfig(
-            date_column=state.get("_date_col", "date"),
-            value_column=state.get("_value_col", "value"),
-            frequency=state.get("_frequency", "D"),
-            hyperparameters=state.get("params", {}),
-        )
-        meta = ModelArtifactMeta(
-            model_id=mid,
-            name=name or file.filename.replace(".pkl", "").replace(".joblib", ""),
-            model_type=model_type,
-            framework=ModelFramework(framework),
-            created_at=now,
-            updated_at=now,
-            file_size=len(content),
-            sha256=sha,
-            metrics=ModelMetrics(),
-            training=training_cfg,
-            tags=[t.strip() for t in (tags or "").split(",") if t.strip()],
-            notes=notes,
-        )
-        meta_path = registry.models_dir / f"{mid}.meta.json"
-        registry._write_json(meta_path, meta.to_dict())  # type: ignore[attr-defined]
-        index = registry._read_json(registry._index_path)  # type: ignore[attr-defined]
-        index[mid] = meta.to_dict()
-        registry._write_index(index)  # type: ignore[attr-defined]
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Failed to register uploaded model")
-        raise HTTPException(status_code=500, detail=f"Failed to register uploaded model: {e}")
-
-    return to_python(_to_public(meta))
 
 
 # -----------------------------------------------------------------------------

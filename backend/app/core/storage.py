@@ -7,6 +7,7 @@ losing state across restarts.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import threading
@@ -19,6 +20,8 @@ import pandas as pd
 
 from .config import settings
 from .utils import to_python
+
+logger = logging.getLogger(__name__)
 
 
 class FileMetadataStore:
@@ -96,7 +99,8 @@ class FileMetadataStore:
             dataset_path = self.datasets_dir / f"{file_id_safe}.parquet"
             try:
                 df.to_parquet(dataset_path, index=False)
-            except Exception:
+            except Exception as e:
+                logger.warning("Parquet write failed, falling back to CSV: %s", e)
                 dataset_path = self.datasets_dir / f"{file_id_safe}.csv"
                 df.to_csv(dataset_path, index=False)
 
@@ -149,7 +153,8 @@ class FileMetadataStore:
                 df = pd.read_csv(path)
             self._df_cache[file_id] = df
             return df
-        except Exception:
+        except Exception as e:
+            logger.warning("Failed to read dataset for file '%s': %s", file_id, e)
             return None
 
     def delete_file(self, file_id: str) -> bool:
@@ -165,7 +170,8 @@ class FileMetadataStore:
             if p:
                 try:
                     Path(p).unlink(missing_ok=True)
-                except Exception:
+                except Exception as e:
+                    logger.warning("Failed to delete file '%s': %s", p, e)
                     pass
         return True
 
@@ -233,6 +239,6 @@ class FileMetadataStore:
         path = self.results_dir / f"{forecast_id}.json"
         try:
             path.unlink(missing_ok=True)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to delete forecast file '%s': %s", path, e)
         return True

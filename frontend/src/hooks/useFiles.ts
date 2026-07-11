@@ -44,8 +44,8 @@ export function useUploadFile() {
   const qc = useQueryClient();
   const addFile = useStore((s) => s.addUploadedFile);
   return useMutation({
-    mutationFn: async ({ fileType, file }: { fileType: FileType; file: File }) => {
-      const uploaded = await apiClient.uploadFile(fileType, file);
+    mutationFn: async ({ fileType, file, onProgress }: { fileType: FileType; file: File; onProgress?: (pct: number) => void }) => {
+      const uploaded = await apiClient.uploadFile(fileType, file, onProgress);
       addFile(uploaded);
       return uploaded as UploadedFile;
     },

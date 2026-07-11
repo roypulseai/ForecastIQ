@@ -113,7 +113,8 @@ def detect_frequency(df: pd.DataFrame, date_col: str) -> Optional[int]:
             # Monthly data
             return 12
         return None
-    except Exception:
+    except Exception as e:
+        logger.warning("Frequency detection failed: %s", e)
         return None
 
 
@@ -208,6 +209,7 @@ def _adaptive_search_round(
     model_type: str,
     space: Dict[str, List[Any]],
     folds: List[Tuple[pd.DataFrame, pd.DataFrame]],
+    exog_data: Optional[Dict[str, pd.DataFrame]] = None,
 ) -> Tuple[Dict[str, Any], List[Dict[str, float]], float]:
     """Single round of random search: sample candidates, evaluate on folds,
     return the best params, fold scores, and mean MAE."""
@@ -226,8 +228,8 @@ def _adaptive_search_round(
         for train_df, test_df in folds:
             try:
                 model = selector.get_model(model_type, _to_model_params(model_type, candidate_params))
-                model.fit(train_df, date_col, value_col)
-                preds = model.forecast(len(test_df))
+                model.fit(train_df, date_col, value_col, exog_data=exog_data)
+                preds = model.forecast(len(test_df), exog_data=exog_data)
                 pred_values = np.array([_safe_float(p.get("forecast", 0.0)) for p in preds])
                 actual_values = test_df[value_col].astype(float).values
                 metrics = _compute_metrics(actual_values, pred_values)
@@ -255,6 +257,7 @@ def tune_model(
     n_folds: int = 5,
     min_train_size: int = 30,
     random_seed: int = 42,
+    exog_data: Optional[Dict[str, pd.DataFrame]] = None,
 ) -> Dict[str, Any]:
     """Run two-round adaptive search with time-series CV for a single model type.
 
@@ -285,7 +288,7 @@ def tune_model(
     # ---- Round 1: broad exploration ----
     random.seed(random_seed)
     best_params, best_fold_scores, best_mae = _adaptive_search_round(
-        selector, model_type, space, folds,
+        selector, model_type, space, folds, exog_data=exog_data,
     )
 
     if not best_fold_scores or len(best_fold_scores) < 2:
@@ -313,7 +316,7 @@ def tune_model(
 
     if any(len(v) < len(space.get(k, [])) for k, v in narrowed_space.items() if k in space):
         ref_params, ref_fold_scores, ref_mae = _adaptive_search_round(
-            selector, model_type, narrowed_space, folds,
+            selector, model_type, narrowed_space, folds, exog_data=exog_data,
         )
         if ref_fold_scores and ref_mae < best_mae:
             best_params = ref_params

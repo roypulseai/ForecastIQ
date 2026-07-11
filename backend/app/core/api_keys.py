@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import secrets
 import threading
@@ -38,6 +39,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .config import settings
+
+logger = logging.getLogger(__name__)
 
 # In-process rate limiter: { (key_id, minute_bucket): count }
 _RATE_LIMIT_BUCKET: Dict[str, int] = {}
@@ -95,9 +98,9 @@ class ApiKeyRecord:
                 exp = datetime.fromisoformat(self.expires_at.rstrip("Z"))
                 if datetime.utcnow() > exp:
                     return False
-            except Exception:
-                pass
-        return True
+            except Exception as e:
+                logger.warning("Failed to parse expiry date '%s': %s", self.expires_at, e)
+            return True
 
 
 class ApiKeyStore:
@@ -277,7 +280,8 @@ def check_rate_limit(record: ApiKeyRecord) -> tuple[bool, int, int]:
                     bucket_min = int(k.split(":", 1)[1])
                     if bucket_min < cutoff:
                         _RATE_LIMIT_BUCKET.pop(k, None)
-                except Exception:
+                except Exception as e:
+                    logger.warning("Rate limiter GC failed to parse bucket key '%s': %s", k, e)
                     _RATE_LIMIT_BUCKET.pop(k, None)
         current = _RATE_LIMIT_BUCKET.get(bucket_key, 0)
         if current >= limit:

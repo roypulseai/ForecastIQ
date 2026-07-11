@@ -207,11 +207,7 @@ class ForecasterService:
         def _task() -> Dict[str, Any]:
             return self.run(
                 sales_df, request, exog_data=exog_data,
-                progress_cb=lambda p, m: jm._jobs.__setitem__(
-                    jm._jobs.get(list(jm._jobs.keys())[-1], type("X", (), {"progress": 0.0, "message": ""})()).job_id
-                    if False else "",
-                    None,
-                ) if False else None,
+                progress_cb=None,
             )
 
         # Use a simpler progress callback that finds the job by request id
@@ -312,10 +308,10 @@ class ForecasterService:
                 category_columns = []  # too few rows, fall back to flat
 
         # ---- Pre-step: optional train/test split for ML models ----
-        # Train/test split only applies to ML models (xgboost, lightgbm).
-        # Time-series models (ARIMA, SARIMAX, Prophet, ETS, WMA, Theta, STL)
-        # always train on 100% of the data.
-        ml_models = {"xgboost", "lightgbm"}
+        # Train/test split only applies to ML-capable models (xgboost,
+        # lightgbm, automl). Time-series models (ARIMA, SARIMAX, Prophet,
+        # ETS, WMA, Theta, STL) always train on 100% of the data.
+        ml_models = {"xgboost", "lightgbm", "automl"}
         has_ml = any(m in ml_models for m in models)
         test_df: Optional[pd.DataFrame] = None
         train_df: Optional[pd.DataFrame] = None
@@ -375,6 +371,7 @@ class ForecasterService:
                     result = tune_model(
                         cv_df, date_col, value_col, m,
                         n_iter=30, n_folds=max(3, min(7, int(n_unique_dates * 0.1))),
+                        exog_data=exog_data,
                     )
                     if result.get("tuned") and result["best_params"]:
                         tuning_results[m] = result
@@ -467,9 +464,9 @@ class ForecasterService:
 
         # ---- 2) Fit + forecast each model in parallel ----
         per_model: Dict[str, Dict[str, Any]] = {}
-        # When a train/test split is in effect, ML models (xgboost, lightgbm)
-        # use the training portion for fitting. Time-series models always
-        # train on 100% of the data.
+        # When a train/test split is in effect, ML-capable models (xgboost,
+        # lightgbm, automl) use the training portion for fitting.
+        # Time-series models always train on 100% of the data.
         has_split = train_df is not None
         fit_workers = min(len(models), MAX_PARALLEL_WORKERS)
         completed = 0
@@ -913,10 +910,57 @@ class ForecasterService:
                         for col, val in category_column_values.get(cat_val, {}).items():
                             fv[col] = val
                 cat_summary = _build_summary(per_model, None, horizon)
+                # Embed per-category historical actuals so the frontend chart
+                # shows category-specific data instead of aggregate.
+                cat_actuals: List[Dict[str, Any]] = []
+                cat_src = category_filtered.get(cat_val)
+                if cat_src is not None and date_col in cat_src.columns and value_col in cat_src.columns:
+                    for _, row in cat_src.iterrows():
+                        d = row[date_col]
+                        v = row[value_col]
+                        try:
+                            if pd.notna(d) and pd.notna(v):
+                                cat_actuals.append({"date": str(d)[:10], "value": float(v)})
+                        except Exception:
+                            pass
+                    if cat_actuals:
+                        cat_actuals.sort(key=lambda x: x["date"])
                 category_forecasts[cat_val] = {
                     "results": per_model,
                     "summary": cat_summary,
+                    "historical_actuals": cat_actuals,
                 }
+
+            # ---- 6b) Per-category backtest forecasts ----
+            # Re-fit each model on truncated category data and forecast the
+            # backtest window so the chart shows a forecast overlay in the
+            # backtest zone for each category.
+            if overlap_n > 0:
+                for cat_val in category_values:
+                    cat_df = category_filtered.get(cat_val)
+                    if cat_df is None or len(cat_df) < 20 or cat_val not in category_forecasts:
+                        continue
+                    cat_unique_dates = sorted(cat_df[date_col].unique())
+                    if len(cat_unique_dates) <= overlap_n + 5:
+                        continue
+                    cat_split_date = cat_unique_dates[-overlap_n]
+                    cat_bt_df = cat_df[cat_df[date_col] < cat_split_date].copy()
+                    cat_bt_actuals = cat_df[cat_df[date_col] >= cat_split_date].copy()
+                    cat_per_model = category_forecasts[cat_val].get("results", {})
+                    for m_name, pm in cat_per_model.items():
+                        if pm.get("error"):
+                            continue
+                        try:
+                            bt_model = self.selector.get_model(m_name, params)
+                            bt_model.fit(cat_bt_df, date_col, value_col, exog_data=exog_data or {})
+                            bt_fc = bt_model.forecast(overlap_n, exog_data=exog_data)
+                            pm["backtest_forecast_values"] = bt_fc
+                            bt_metrics = _compute_backtest_metrics(
+                                bt_fc, cat_bt_actuals, date_col, value_col,
+                            )
+                            pm["backtest_metrics"] = bt_metrics
+                        except Exception as e:
+                            logger.warning("Category %s backtest for %s failed: %s", cat_val, m_name, e)
             if progress_cb:
                 progress_cb(0.95, "Category forecasts done")
 
@@ -1060,8 +1104,8 @@ class ForecasterService:
                     for k, v in train_metrics.items():
                         if v is not None and k not in eval_metrics.__dict__:
                             setattr(eval_metrics, k, float(v))
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("Failed to augment training metrics: %s", e)
                 eval_metrics.train_rows = len(train_df)
                 eval_metrics.test_rows = len(test_df)
 
@@ -1074,8 +1118,8 @@ class ForecasterService:
                     eval_metrics.cv_mae = cv.get("mae")
                     eval_metrics.cv_rmse = cv.get("rmse")
                     eval_metrics.cv_mape = cv.get("mape")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("CV metrics computation failed for %s: %s", mtype, e)
 
                 results.append({
                     "model_type": mtype,
@@ -1165,12 +1209,14 @@ class ForecasterService:
         try:
             baseline = model.get_baseline(horizon, exog_data=exog_data)
             attach_uplift(forecast, baseline)
-        except Exception:
+        except Exception as e:
+            logger.warning("Baseline computation failed for loaded model: %s", e)
             baseline = []
         # Components
         try:
             components = _safe_dict(model.get_components())
-        except Exception:
+        except Exception as e:
+            logger.warning("Components extraction failed for loaded model: %s", e)
             components = {}
 
         return to_python({
@@ -1189,7 +1235,8 @@ class ForecasterService:
         try:
             m = model.get_metrics() or {}
             return {k: float(v) for k, v in m.items() if v is not None}
-        except Exception:
+        except Exception as e:
+            logger.warning("Failed to extract model metrics: %s", e)
             return {}
 
 
@@ -1263,7 +1310,8 @@ def _safe_metrics(model: BaseForecaster) -> Dict[str, float]:
     try:
         m = model.get_metrics() or {}
         return {k: float(v) for k, v in m.items() if v is not None}
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to get safe metrics: %s", e)
         return {}
 
 
@@ -1320,7 +1368,8 @@ def _build_rankings(cv: Dict[str, Dict[str, float]]) -> List[Dict[str, Any]]:
         if mae is not None and not (isinstance(mae, float) and np.isnan(mae)):
             try:
                 score = float(1.0 / (float(mae) + 1.0))
-            except Exception:
+            except Exception as e:
+                logger.warning("Failed to compute ranking score: %s", e)
                 score = None
         forecast_accuracy = _compute_forecast_accuracy(mape)
         out.append({
@@ -1358,7 +1407,8 @@ def _build_rankings_from_test(
         if mae is not None and not (isinstance(mae, float) and np.isnan(mae)):
             try:
                 score = float(1.0 / (float(mae) + 1.0))
-            except Exception:
+            except Exception as e:
+                logger.warning("Failed to compute test ranking score: %s", e)
                 score = None
         forecast_accuracy = _compute_forecast_accuracy(mape)
         out.append({

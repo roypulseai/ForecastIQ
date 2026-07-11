@@ -13,6 +13,7 @@ interface ModelSelectorProps {
 }
 
 export const ALL_MODELS: ModelType[] = [
+  'automl',
   'arima',
   'sarimax',
   'prophet',

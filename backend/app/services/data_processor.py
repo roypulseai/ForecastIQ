@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import logging
 import os
-import warnings
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -30,7 +29,6 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-warnings.filterwarnings("ignore")
 logger = logging.getLogger(__name__)
 
 
@@ -143,7 +141,8 @@ def _find_date_column(df: pd.DataFrame, aliases: List[str]) -> Optional[str]:
         try:
             if pd.api.types.is_datetime64_any_dtype(df[c]):
                 return c
-        except Exception:
+        except Exception as e:
+            logger.warning("Failed to check datetime dtype for column '%s': %s", c, e)
             continue
     return None
 
@@ -199,7 +198,8 @@ def _infer_column_types(df: pd.DataFrame) -> Dict[str, str]:
                 nunique = df[c].nunique()
                 total = len(df)
                 normalized = _normalize_col(c)
-            except Exception:
+            except Exception as e:
+                logger.warning("Failed to infer type for column '%s': %s", c, e)
                 types[c] = "text"
                 continue
 
@@ -265,7 +265,8 @@ class DataProcessor:
             try:
                 # Use pyarrow engine if available for speed
                 return pd.read_csv(file_path, engine="pyarrow")
-            except Exception:
+            except Exception as e:
+                logger.warning("pyarrow CSV engine failed, falling back to default: %s", e)
                 return pd.read_csv(file_path)
         # Chunked read for large files
         chunks = pd.read_csv(file_path, chunksize=50_000)
@@ -667,7 +668,8 @@ class DataProcessor:
                             frequency = "M"
                         else:
                             frequency = "M"
-            except Exception:
+            except Exception as e:
+                logger.warning("Frequency detection failed: %s", e)
                 frequency = None
 
         extra_cols = [c for c in df.columns if c not in (date_col, value_col)]

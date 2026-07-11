@@ -76,31 +76,36 @@ export function ResultsPage(): ReactNode {
   const { showToast } = useToast();
   const analysisData = useStore((s) => s.analysisData);
 
-  // Find the sales file used by the current forecast.
+  // Find the sales file id used by the current forecast.
   // Prefer the global sales file, but fall back to the file_id stored in the
   // forecast result (so that fresh navigations always find the source data).
-  const salesFile = useMemo(() => {
-    const fromQuery = filesQuery.data?.find((f) => f.type === 'sales') ?? null;
-    if (fromQuery) return fromQuery;
-    const fromUploaded = uploadedFiles.find((f) => f.type === 'sales') ?? null;
-    if (fromUploaded) return fromUploaded;
+  const salesFileId = useMemo(() => {
+    const fromQuery = filesQuery.data?.find((f) => f.type === 'sales');
+    if (fromQuery) return fromQuery.file_id;
+    const fromUploaded = uploadedFiles.find((f) => f.type === 'sales');
+    if (fromUploaded) return fromUploaded.file_id;
     const forecastFileId = resultQuery.data?.data_file_id;
     if (forecastFileId) {
       const fromForecast =
-        filesQuery.data?.find((f) => f.file_id === forecastFileId) ?? null;
-      if (fromForecast) return fromForecast;
-      // Return a stub so the file-data query is enabled with the right id
-      return { file_id: forecastFileId } as any;
+        filesQuery.data?.find((f) => f.file_id === forecastFileId);
+      if (fromForecast) return fromForecast.file_id;
+      return forecastFileId;
     }
     return null;
   }, [filesQuery.data, uploadedFiles, resultQuery.data?.data_file_id]);
-  const fileDataQuery = useFileData(salesFile?.file_id, 5000);
+  const fileDataQuery = useFileData(salesFileId, 5000);
 
   // Compute historical actuals for the chart.
-  // Priority: 1) backend-embedded historical_actuals (most reliable),
-  //           2) fetch from file with column-name/type matching (fallback).
+  // Priority: 1) per-category actuals when a category is selected,
+  //           2) backend-embedded aggregate historical_actuals,
+  //           3) fetch from file with column-name/type matching (fallback).
   const actuals = useMemo(() => {
     if (!resultQuery.data) return [] as Array<{ date: string; value: number }>;
+
+    // When a category is selected, use its per-category historical actuals.
+    if (selectedCategory && resultQuery.data.category_forecasts?.[selectedCategory]?.historical_actuals?.length) {
+      return resultQuery.data.category_forecasts[selectedCategory].historical_actuals;
+    }
 
     // Fast path: use data the backend already extracted from the source file.
     if (resultQuery.data.historical_actuals?.length) {
@@ -529,7 +534,7 @@ export function ResultsPage(): ReactNode {
                         startIcon={<AssessmentIcon />}
                         disabled={analyzeMut.isPending}
                         onClick={() => {
-                          const fid = salesFile?.file_id ?? resultQuery.data?.data_file_id;
+                          const fid = salesFileId ?? resultQuery.data?.data_file_id;
                           if (fid) analyzeMut.mutate(fid);
                         }}
                       >
@@ -753,6 +758,7 @@ function InsightsDetail({
                   key={modelName}
                   featureImportance={result.feature_importance}
                   modelName={result.model_name}
+                  forecastValues={result.forecast_values}
                 />
               ))}
             </Stack>

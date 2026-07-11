@@ -148,5 +148,6 @@ def _current_count(record: ApiKeyRecord) -> int:
         bucket_key = f"{record.key_id}:{now_minute}"
         with _RATE_LOCK:
             return _RATE_LIMIT_BUCKET.get(bucket_key, 0)
-    except Exception:
+    except Exception as e:
+        logger.warning("Rate limit count retrieval failed: %s", e)
         return 0

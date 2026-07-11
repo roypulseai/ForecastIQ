@@ -1,6 +1,6 @@
 import { useCallback, type ReactNode } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { Box, CircularProgress, Stack, Typography } from '@mui/material';
+import { Box, CircularProgress, LinearProgress, Stack, Typography } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 import { alpha, useTheme } from '@mui/material/styles';
@@ -10,6 +10,7 @@ interface FileUploaderProps {
   label: string;
   description?: string;
   isLoading?: boolean;
+  progress?: number;
   disabled?: boolean;
   onFileSelected: (file: File) => void;
 }
@@ -19,6 +20,7 @@ export function FileUploader({
   label,
   description,
   isLoading = false,
+  progress,
   disabled = false,
   onFileSelected,
 }: FileUploaderProps): ReactNode {
@@ -108,6 +110,14 @@ export function FileUploader({
             </Typography>
           )}
         </Box>
+        {isLoading && progress != null && progress < 100 && (
+          <Box sx={{ width: '100%', maxWidth: 250 }}>
+            <LinearProgress variant="determinate" value={progress} sx={{ height: 6, borderRadius: 3 }} />
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
+              {progress}%
+            </Typography>
+          </Box>
+        )}
         <Typography variant="caption" color="text.secondary">
           Drag a file here or click to browse. CSV, XLS, XLSX (max 100 MB).
         </Typography>

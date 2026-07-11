@@ -14,6 +14,7 @@ from .models.lightgbm_model import LightGBMForecaster
 from .models.prophet_model import ProphetForecaster
 from .models.stl_model import STLForecaster
 from .models.theta_model import ThetaForecaster
+from .models.automl_model import AutoMLForecaster
 from .models.wma_model import WMAForecaster
 from .models.xgboost_model import XGBoostForecaster
 
@@ -33,6 +34,7 @@ class ModelSelector:
         "ets": ETSForecaster,
         "theta": ThetaForecaster,
         "stl": STLForecaster,
+        "automl": AutoMLForecaster,
     }
 
     def __init__(self) -> None:
@@ -171,21 +173,24 @@ class ModelSelector:
             return "none"
         try:
             ac7 = float(ts.autocorr(lag=7)) if not pd.isna(ts.autocorr(lag=7)) else 0.0
-        except Exception:
+        except Exception as e:
+            logger.warning("Autocorrelation lag-7 failed: %s", e)
             ac7 = 0.0
         if abs(ac7) > 0.5:
             return "weekly"
         if len(ts) > 30:
             try:
                 ac30 = float(ts.autocorr(lag=30)) if not pd.isna(ts.autocorr(lag=30)) else 0.0
-            except Exception:
+            except Exception as e:
+                logger.warning("Autocorrelation lag-30 failed: %s", e)
                 ac30 = 0.0
             if abs(ac30) > 0.5:
                 return "monthly"
         if len(ts) > 365:
             try:
                 ac365 = float(ts.autocorr(lag=365)) if not pd.isna(ts.autocorr(lag=365)) else 0.0
-            except Exception:
+            except Exception as e:
+                logger.warning("Autocorrelation lag-365 failed: %s", e)
                 ac365 = 0.0
             if abs(ac365) > 0.5:
                 return "yearly"
@@ -198,7 +203,8 @@ class ModelSelector:
             from statsmodels.tsa.stattools import adfuller
             result = adfuller(ts.dropna(), autolag="AIC")
             return bool(result[1] < 0.05)
-        except Exception:
+        except Exception as e:
+            logger.warning("Stationarity test failed, assuming stationary: %s", e)
             return True
 
     def _detect_outliers(self, ts: pd.Series) -> float:
@@ -633,5 +639,6 @@ class ModelSelector:
             if np.isnan(v) or np.isinf(v):
                 return default
             return v
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as e:
+            logger.warning("Safe float conversion failed for %r: %s", x, e)
             return default

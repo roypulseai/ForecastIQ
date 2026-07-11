@@ -47,7 +47,7 @@ import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { useToast } from '../components/common/ToastProvider';
 import { MODEL_LABELS, type SavedModelMeta } from '../types';
 
-const ALL_MODEL_TYPES = ['arima', 'sarimax', 'prophet', 'lightgbm', 'xgboost', 'wma', 'ets', 'theta', 'stl'] as const;
+const ALL_MODEL_TYPES = ['automl', 'arima', 'sarimax', 'prophet', 'lightgbm', 'xgboost', 'wma', 'ets', 'theta', 'stl'] as const;
 
 export function ModelsPage(): ReactNode {
   const modelsQuery = useSavedModels();

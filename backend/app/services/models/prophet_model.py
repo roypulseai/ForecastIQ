@@ -6,7 +6,6 @@ the user columns and pre-merge external regressors on 'ds'.
 from __future__ import annotations
 
 import logging
-import warnings
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -14,7 +13,6 @@ import pandas as pd
 
 from .base import BaseForecaster
 
-warnings.filterwarnings("ignore")
 logger = logging.getLogger(__name__)
 
 
@@ -42,52 +40,36 @@ def _align_external(
         return base
     out = base.copy()
     if "promotions" in exog_data and exog_data["promotions"] is not None and not exog_data["promotions"].empty:
-        p = exog_data["promotions"][["date"]].copy()
+        p = exog_data["promotions"][["date", "discount"]].copy()
+        p.columns = ["date", "promo_discount"]
         p["ds"] = pd.to_datetime(p["date"], errors="coerce")
         p = p.dropna(subset=["ds"]).drop(columns=["date"])
-        p["promo_discount"] = pd.to_numeric(
-            exog_data["promotions"].get("discount", pd.Series(dtype=float)),
-            errors="coerce",
-        ).fillna(0.0).values[:len(p)] if "discount" in exog_data["promotions"].columns else 0.0
-        if "promo_discount" not in p.columns:
-            p["promo_discount"] = 0.0
+        p["promo_discount"] = pd.to_numeric(p["promo_discount"], errors="coerce").fillna(0.0)
         p = p.groupby("ds", as_index=False)["promo_discount"].max()
         out = out.merge(p, on="ds", how="left")
     if "media_plan" in exog_data and exog_data["media_plan"] is not None and not exog_data["media_plan"].empty:
-        m = exog_data["media_plan"][["date"]].copy()
+        spend_col = "media_spend" if "media_spend" in exog_data["media_plan"].columns else "spend"
+        m = exog_data["media_plan"][["date", spend_col]].copy()
+        m.columns = ["date", "media_spend"]
         m["ds"] = pd.to_datetime(m["date"], errors="coerce")
         m = m.dropna(subset=["ds"]).drop(columns=["date"])
-        spend = exog_data["media_plan"].get("media_spend")
-        if spend is None:
-            spend = exog_data["media_plan"].get("spend", pd.Series(dtype=float))
-        m["media_spend"] = pd.to_numeric(spend, errors="coerce").fillna(0.0).values[:len(m)] \
-            if hasattr(spend, "__len__") else 0.0
-        if "media_spend" not in m.columns:
-            m["media_spend"] = 0.0
+        m["media_spend"] = pd.to_numeric(m["media_spend"], errors="coerce").fillna(0.0)
         m = m.groupby("ds", as_index=False)["media_spend"].sum()
         out = out.merge(m, on="ds", how="left")
     if "holidays" in exog_data and exog_data["holidays"] is not None and not exog_data["holidays"].empty:
-        h = exog_data["holidays"][["date"]].copy()
+        h = exog_data["holidays"][["date", "holiday_impact"]].copy()
+        h.columns = ["date", "holiday_impact"]
         h["ds"] = pd.to_datetime(h["date"], errors="coerce")
         h = h.dropna(subset=["ds"]).drop(columns=["date"])
-        h["holiday_impact"] = pd.to_numeric(
-            exog_data["holidays"].get("holiday_impact", pd.Series([1.0])),
-            errors="coerce",
-        ).fillna(1.0).values[:len(h)] if "holiday_impact" in exog_data["holidays"].columns else 1.0
-        if "holiday_impact" not in h.columns:
-            h["holiday_impact"] = 1.0
+        h["holiday_impact"] = pd.to_numeric(h["holiday_impact"], errors="coerce").fillna(1.0)
         h = h.groupby("ds", as_index=False)["holiday_impact"].max()
         out = out.merge(h, on="ds", how="left")
     if "events" in exog_data and exog_data["events"] is not None and not exog_data["events"].empty:
-        e = exog_data["events"][["date"]].copy()
+        e = exog_data["events"][["date", "event_impact"]].copy()
+        e.columns = ["date", "event_impact"]
         e["ds"] = pd.to_datetime(e["date"], errors="coerce")
         e = e.dropna(subset=["ds"]).drop(columns=["date"])
-        e["event_impact"] = pd.to_numeric(
-            exog_data["events"].get("event_impact", pd.Series([1.0])),
-            errors="coerce",
-        ).fillna(1.0).values[:len(e)] if "event_impact" in exog_data["events"].columns else 1.0
-        if "event_impact" not in e.columns:
-            e["event_impact"] = 1.0
+        e["event_impact"] = pd.to_numeric(e["event_impact"], errors="coerce").fillna(1.0)
         e = e.groupby("ds", as_index=False)["event_impact"].max()
         out = out.merge(e, on="ds", how="left")
     # Fill NAs
@@ -149,14 +131,7 @@ class ProphetForecaster(BaseForecaster):
         prophet_df = _align_external(base, exog_data)
         self._train_df = prophet_df.copy()
         self._last_date = prophet_df["ds"].iloc[-1]
-        # Infer frequency
-        diffs = prophet_df["ds"].diff().dropna()
-        if not diffs.empty and diffs.median() <= pd.Timedelta(days=1):
-            self._frequency = "D"
-        elif not diffs.empty and diffs.median() <= pd.Timedelta(days=7):
-            self._frequency = "W"
-        else:
-            self._frequency = "D"
+        self._frequency = self._infer_frequency(df, date_col)
 
         try:
             self._fitted_model = Prophet(

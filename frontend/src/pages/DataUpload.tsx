@@ -47,6 +47,7 @@ export function DataUploadPage(): ReactNode {
   const deleteMut = useDeleteFile();
   const analyzeMut = useAnalyze();
   const [activeUpload, setActiveUpload] = useState<FileType | null>(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [confirmDeleteFile, setConfirmDeleteFile] = useState<UploadedFile | null>(null);
 
@@ -63,20 +64,25 @@ export function DataUploadPage(): ReactNode {
   const handleFile = async (fileType: FileType, file: File) => {
     setError(null);
     setActiveUpload(fileType);
+    setUploadProgress(0);
     try {
-      const uploaded = await uploadMut.mutateAsync({ fileType, file });
+      const uploaded = await uploadMut.mutateAsync({
+        fileType, file,
+        onProgress: setUploadProgress,
+      });
       showToast(`${file.name} uploaded successfully`);
       if (fileType === 'sales' && !analysisData) {
         try {
           await analyzeMut.mutateAsync(uploaded.file_id);
         } catch (e) {
-          console.warn('Auto-analyze failed:', e);
+          showToast(`Analysis failed: ${getErrorMessage(e)}`, 'warning');
         }
       }
     } catch (e) {
       setError(getErrorMessage(e));
     } finally {
       setActiveUpload(null);
+      setUploadProgress(0);
     }
   };
 
@@ -182,6 +188,7 @@ export function DataUploadPage(): ReactNode {
                 label="Upload CSV"
                 description={FILE_TYPE_DESCRIPTIONS.sales}
                 isLoading={activeUpload === 'sales'}
+                progress={activeUpload === 'sales' ? uploadProgress : undefined}
                 onFileSelected={(f) => handleFile('sales', f)}
               />
               {salesFile && (
@@ -270,6 +277,7 @@ export function DataUploadPage(): ReactNode {
                       fileType={t}
                       label={`Upload ${FILE_TYPE_LABELS[t].toLowerCase()}`}
                       isLoading={activeUpload === t}
+                      progress={activeUpload === t ? uploadProgress : undefined}
                       onFileSelected={(f) => handleFile(t, f)}
                     />
                     {otherFiles

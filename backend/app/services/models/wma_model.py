@@ -54,13 +54,7 @@ class WMAForecaster(BaseForecaster):
         ts = ts.set_index(date_col)[value_col].astype(float)
         self._last_values = ts
         self._last_date = ts.index[-1] if len(ts) else None
-        diffs = ts.index.to_series().diff().dropna()
-        if not diffs.empty and diffs.median() <= pd.Timedelta(days=1):
-            self._frequency = "D"
-        elif not diffs.empty and diffs.median() <= pd.Timedelta(days=7):
-            self._frequency = "W"
-        else:
-            self._frequency = "D"
+        self._frequency = self._infer_frequency(df, date_col)
 
         self._historical_mean = float(ts.mean()) if len(ts) else 0.0
 

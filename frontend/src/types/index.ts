@@ -101,6 +101,7 @@ export interface AnalysisResponse {
 }
 
 export type ModelType =
+  | 'automl'
   | 'arima'
   | 'sarimax'
   | 'prophet'
@@ -113,6 +114,7 @@ export type ModelType =
   | 'ensemble';
 
 export const MODEL_TYPES: ModelType[] = [
+  'automl',
   'arima',
   'sarimax',
   'prophet',
@@ -125,6 +127,7 @@ export const MODEL_TYPES: ModelType[] = [
 ];
 
 export const MODEL_LABELS: Record<string, string> = {
+  automl: 'AutoML',
   arima: 'ARIMA',
   sarimax: 'SARIMAX',
   prophet: 'Prophet',
@@ -147,6 +150,7 @@ export const MODEL_DESCRIPTIONS: Record<string, string> = {
   ets: 'Exponential smoothing with trend + seasonality.',
   theta: 'Theta method. Reliable for trend-seasonal series.',
   stl: 'STL decomposition + ARIMA on deseasonalized series.',
+  automl: 'Analyses data patterns (seasonality, trend, exog) and auto-selects the optimal model architecture. May build hybrid models for complex data.',
   ensemble: 'Weighted average of the best-performing models.',
 };
 
@@ -509,6 +513,7 @@ export interface ForecastDetail {
   category_forecasts?: Record<string, {
     results: Record<string, ModelResult>;
     summary?: ForecastSummary | null;
+    historical_actuals?: Array<{ date: string; value: number }>;
   }>;
   category_column_values?: Record<string, Record<string, string>>;
   decomposition?: DecompositionResult | null;
