@@ -55,6 +55,9 @@ MAX_PARALLEL_WORKERS = max(2, min(os.cpu_count() or 4, int(os.environ.get("FOREC
 DOWNSAMPLE_THRESHOLD = 5000  # rows
 WEEKLY_AGG_SPAN_DAYS = 365 * 5
 
+# Calendar days per frequency period (for converting backtest_overlap from days → periods)
+_DAYS_PER_PERIOD = {"D": 1, "W": 7, "F": 14, "M": 30, "Q": 91, "Y": 365}
+
 
 class EnsembleForecaster:
     """Weighted-average ensemble of fitted forecasters."""
@@ -797,7 +800,11 @@ class ForecasterService:
             overlap_n = max(1, int(n_unique_dates * 0.2))
             logger.info("Auto-backtest: using last %d unique dates (~20%% of %d)", overlap_n, n_unique_dates)
         elif backtest_overlap > 0:
-            overlap_n = min(backtest_overlap, n_unique_dates - 5)
+            # backtest_overlap is in calendar days — convert to periods based on frequency
+            frequency = request.get("frequency", "D")
+            days_per = _DAYS_PER_PERIOD.get(frequency, 1)
+            overlap_periods = max(1, backtest_overlap // days_per)
+            overlap_n = min(overlap_periods, n_unique_dates - 5)
 
         if overlap_n > 0 and n_unique_dates > overlap_n + 5:
             # Date-based split: train on data before split_date, test on data after

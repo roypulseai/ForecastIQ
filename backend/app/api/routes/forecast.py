@@ -45,6 +45,7 @@ service = ForecasterService()
 
 # Frequency ordering — coarser granularity = higher rank
 _FREQ_RANK = {"D": 0, "W": 1, "F": 2, "M": 3, "Q": 4, "Y": 5}
+_DAYS_PER_PERIOD = {"D": 1, "W": 7, "F": 14, "M": 30, "Q": 91, "Y": 365}
 
 
 def _validate_frequency_against_data(
@@ -265,14 +266,17 @@ async def _create_forecast_impl(
     # Validate requested frequency against actual data granularity
     _validate_frequency_against_data(request.frequency.value, sales_df, request.date_column)
 
-    # Clamp backtest_overlap to 20% of unique dates
+    # Clamp backtest_overlap (calendar days) to 20% of unique date periods
     try:
         n_dates = int(sales_df["date"].nunique())
     except Exception:
         n_dates = len(sales_df)
-    max_backtest = max(0, int(n_dates * 0.2))
-    if request.backtest_overlap > max_backtest:
-        request.backtest_overlap = max_backtest
+    freq = request.frequency.value
+    days_per = _DAYS_PER_PERIOD.get(freq, 1)
+    max_periods = max(1, int(n_dates * 0.2))
+    max_days = max_periods * days_per
+    if request.backtest_overlap > max_days:
+        request.backtest_overlap = max_days
 
     try:
         request_dict = request.model_dump(mode="json")

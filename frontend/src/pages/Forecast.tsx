@@ -274,12 +274,18 @@ export function ForecastPage(): ReactNode {
 
   const recommendations = analysisData.model_recommendations.map((r) => r.model);
 
-  // Backtest overlap capped at 20% of unique dates
+  // Calendar days per frequency period (mirrors backend _DAYS_PER_PERIOD)
+  const PERIOD_DAYS: Record<string, number> = { D: 1, W: 7, F: 14, M: 30, Q: 91, Y: 365 };
+  const detectedFreq = analysisData?.validation?.frequency ?? 'D';
+  const daysPerPeriod = PERIOD_DAYS[detectedFreq] ?? 1;
+
+  // Backtest overlap capped at 20% of unique dates, expressed in calendar days
   const maxBacktestOverlap = useMemo(() => {
     const nDates = analysisData?.validation?.unique_dates;
     if (!nDates || nDates <= 0) return 0;
-    return Math.max(1, Math.floor(nDates * 0.2));
-  }, [analysisData]);
+    const maxPeriods = Math.max(1, Math.floor(nDates * 0.2));
+    return maxPeriods * daysPerPeriod;
+  }, [analysisData, daysPerPeriod]);
 
   const update = <K extends keyof ForecastRequest>(key: K, value: ForecastRequest[K]) =>
     setRequest((r) => ({ ...r, [key]: value }));
@@ -668,7 +674,7 @@ export function ForecastPage(): ReactNode {
                 <Grid item xs={12} sm={6}>
                   <Typography variant="body2" color="text.secondary" gutterBottom>
                     Backtest overlap (days)
-                    <Tooltip title="Number of recent actual days to overlay on the forecast chart for visual comparison. 0 = no overlap.">
+                    <Tooltip title="Number of calendar days to overlay on the forecast chart. Auto-converted to periods based on data frequency (e.g. 90 days on weekly data = 12 weeks). 0 = auto (20% of data).">
                       <InfoOutlinedIcon sx={{ fontSize: 14, ml: 0.5, verticalAlign: 'text-top', color: 'text.disabled' }} />
                     </Tooltip>
                   </Typography>
