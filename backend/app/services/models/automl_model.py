@@ -95,7 +95,7 @@ class AutoMLForecaster(BaseForecaster):
         # Build and fit the inner model
         self._inner_model = self._build_model(self._strategy, df, date_col, value_col, exog_data)
         if self._inner_model is not None:
-            self._inner_model.fit(df, date_col, value_col, exog_data=exog_data or {})
+            self._inner_model.fit(df, date_col, value_col, exog_data=exog_data or {}, frequency=self._frequency)
 
         # Build residual model if strategy calls for it
         if self._strategy == "prophet_xgb" and self._inner_model is not None:
@@ -364,7 +364,7 @@ class AutoMLForecaster(BaseForecaster):
             # Create a df with residuals as target
             res_df = df.copy()
             res_df[value_col] = residuals[:len(df)]
-            residual_model.fit(res_df, date_col, value_col, exog_data=exog_data or {})
+            residual_model.fit(res_df, date_col, value_col, exog_data=exog_data or {}, frequency=self._frequency)
             self._residual_model = residual_model
             logger.info("Fitted XGBoost residual correction model on %d points", len(residuals))
         except Exception as e:
