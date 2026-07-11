@@ -76,11 +76,11 @@ const DEFAULT_AGGREGATION: AggregationConfig = {
 
 const DEFAULT_PARAMETERS: ModelParameters = {};
 
-const initialRequest = (dateColumn: string, valueColumn: string): ForecastRequest => ({
+const initialRequest = (dateColumn: string, valueColumn: string, detectedFrequency?: string | null): ForecastRequest => ({
   name: 'Untitled forecast',
   target_column: valueColumn,
   date_column: dateColumn,
-  frequency: 'D',
+  frequency: (detectedFrequency as Frequency) ?? 'D',
   horizon: 30,
   models: ['prophet'],
   parameters: DEFAULT_PARAMETERS,
@@ -234,7 +234,7 @@ export function ForecastPage(): ReactNode {
   );
   // Category-eligible columns: categorical, region, or id type columns
   const categoryTypeSet = useMemo(() => new Set(['categorical', 'region', 'id']), []);
-  const [request, setRequest] = useState<ForecastRequest>(() => initialRequest(dateColumn, valueColumn));
+  const [request, setRequest] = useState<ForecastRequest>(() => initialRequest(dateColumn, valueColumn, analysisData?.validation?.frequency));
   const [external, setExternal] = useState<ExternalState>(initialExternal);
   const [useEnsemble, setUseEnsemble] = useState<boolean>(false);
   const [useAdvanced, setUseAdvanced] = useState<boolean>(false);

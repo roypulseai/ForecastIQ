@@ -21,6 +21,7 @@ from ...core.config import settings
 from ...core.jobs import get_job_manager
 from ...core.storage import FileMetadataStore
 from ...core.utils import to_python
+from ...schemas.common import ForecastFrequency
 from ...schemas.common import DataStatus
 from ...schemas.forecast import (
     ForecastDetail,
@@ -41,6 +42,57 @@ router = APIRouter()
 storage = FileMetadataStore()
 processor = DataProcessor()
 service = ForecasterService()
+
+# Frequency ordering — coarser granularity = higher rank
+_FREQ_RANK = {"D": 0, "W": 1, "F": 2, "M": 3, "Q": 4, "Y": 5}
+
+
+def _validate_frequency_against_data(
+    requested_freq: str,
+    sales_df: pd.DataFrame,
+    date_col: str,
+) -> None:
+    """Warn if the requested forecast frequency is finer than the data frequency.
+
+    E.g. weekly data cannot produce meaningful daily forecasts.  Raises
+    HTTPException 400 when the combination is invalid.
+    """
+    if not date_col or date_col not in sales_df.columns:
+        return
+    dates = pd.to_datetime(sales_df[date_col].dropna(), errors="coerce").dropna().sort_values()
+    if len(dates) < 3:
+        return
+    median_gap = dates.diff().dropna().median()
+    if median_gap is pd.NaT:
+        return
+
+    # Map median gap to a frequency label (same thresholds as data_processor)
+    if median_gap <= pd.Timedelta(days=3):
+        data_freq = "D"
+    elif median_gap <= pd.Timedelta(days=10):
+        data_freq = "W"
+    elif median_gap <= pd.Timedelta(days=20):
+        data_freq = "F"
+    elif median_gap <= pd.Timedelta(days=60):
+        data_freq = "M"
+    elif median_gap <= pd.Timedelta(days=180):
+        data_freq = "Q"
+    else:
+        data_freq = "Y"
+
+    data_rank = _FREQ_RANK.get(data_freq, 0)
+    req_rank = _FREQ_RANK.get(requested_freq, 0)
+
+    if req_rank < data_rank:
+        freq_labels = {"D": "daily", "W": "weekly", "F": "fortnightly", "M": "monthly", "Q": "quarterly", "Y": "yearly"}
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Cannot produce {freq_labels.get(requested_freq, requested_freq)} forecast from "
+                f"{freq_labels.get(data_freq, data_freq)} data (detected gap ≈ {median_gap.days} days). "
+                f"Change the frequency to '{data_freq}' or coarser."
+            ),
+        )
 
 
 def _gather_exog(
@@ -209,6 +261,9 @@ async def _create_forecast_impl(
     sales_df = storage.get_dataframe(sales_entry["file_id"])
     if sales_df is None or sales_df.empty:
         raise HTTPException(status_code=400, detail="Sales data is empty")
+
+    # Validate requested frequency against actual data granularity
+    _validate_frequency_against_data(request.frequency.value, sales_df, request.date_column)
 
     # Clamp backtest_overlap to 20% of unique dates
     try:

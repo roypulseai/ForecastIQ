@@ -651,7 +651,7 @@ class DataProcessor:
         if date_col and len(df) < 14:
             warnings.append("Series is short (<14 points) — forecasts may be unreliable")
 
-        # Detect frequency
+        # Detect frequency — map median date gap to human-readable label
         frequency = None
         if date_col and not df.empty:
             try:
@@ -660,14 +660,18 @@ class DataProcessor:
                     diffs = ts.diff().dropna()
                     if not diffs.empty:
                         median = diffs.median()
-                        if median <= pd.Timedelta(days=1):
+                        if median <= pd.Timedelta(days=3):
                             frequency = "D"
-                        elif median <= pd.Timedelta(days=7):
+                        elif median <= pd.Timedelta(days=10):
                             frequency = "W"
-                        elif median <= pd.Timedelta(days=31):
+                        elif median <= pd.Timedelta(days=20):
+                            frequency = "F"
+                        elif median <= pd.Timedelta(days=60):
                             frequency = "M"
+                        elif median <= pd.Timedelta(days=180):
+                            frequency = "Q"
                         else:
-                            frequency = "M"
+                            frequency = "Y"
             except Exception as e:
                 logger.warning("Frequency detection failed: %s", e)
                 frequency = None
