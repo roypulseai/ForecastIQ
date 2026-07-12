@@ -399,15 +399,11 @@ class DataProcessor:
         if value_col is None:
             raise ValueError("Sales data must have a numeric value column "
                              "(value / sales / revenue / quantity / etc.)")
-        if value_col != "value":
-            df["value"] = _coerce_numeric(df[value_col])
-            mapping[value_col] = "value"
-        else:
-            df["value"] = _coerce_numeric(df["value"])
-        nan_count = df["value"].isna().sum()
+        df[value_col] = _coerce_numeric(df[value_col])
+        nan_count = df[value_col].isna().sum()
         if nan_count > 0:
             logger.warning("Forward/backward filling %d missing sales values", nan_count)
-        df["value"] = df["value"].ffill().bfill().fillna(0.0)
+        df[value_col] = df[value_col].ffill().bfill().fillna(0.0)
         return df, mapping
 
     @staticmethod
@@ -646,8 +642,8 @@ class DataProcessor:
             errors.append("Could not identify a date column")
         if value_col is None:
             errors.append("Could not identify a numeric value column")
-        if "value" in df.columns and df["value"].isna().sum() > 0:
-            warnings.append(f"{df['value'].isna().sum()} missing values filled with 0")
+        if value_col and value_col in df.columns and df[value_col].isna().sum() > 0:
+            warnings.append(f"{df[value_col].isna().sum()} missing values filled with 0")
         if date_col and len(df) < 14:
             warnings.append("Series is short (<14 points) — forecasts may be unreliable")
 
