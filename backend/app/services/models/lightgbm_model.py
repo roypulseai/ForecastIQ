@@ -25,6 +25,13 @@ except ImportError:
     _SHAP_AVAILABLE = False
     shap = None
 
+try:
+    from sklearn.preprocessing import StandardScaler
+    _SKLEARN_AVAILABLE = True
+except ImportError:
+    _SKLEARN_AVAILABLE = False
+    StandardScaler = None  # type: ignore
+
 _MAX_LAG = 28  # maximum lag window we need for rolling computations
 
 
@@ -60,7 +67,11 @@ def _prep_exog_lookup(
     exog_data: Optional[Dict[str, pd.DataFrame]],
 ) -> Optional[Dict[str, Dict[str, float]]]:
     """Pre-aggregate exog sources into {date_str: {col: value}} lookups,
-    avoiding repeated DataFrame merges during the forecast loop."""
+    avoiding repeated DataFrame merges during the forecast loop.
+
+    Categorical columns in exog sources are one-hot encoded so they
+    produce usable numeric features for the regression model.
+    """
     if not exog_data:
         return None
     lookup: Dict[str, Dict[str, float]] = {}
@@ -82,14 +93,46 @@ def _prep_exog_lookup(
         sub = sub.dropna(subset=["date"])
         if sub.empty:
             continue
+
+        # Columns we care about for this source:
+        # - specified value_cols (or all columns for economic)
+        # - plus any additional categorical columns in the data
         if key == "economic":
-            cols_to_use = [c for c in sub.columns
-                           if c != "date" and pd.api.types.is_numeric_dtype(sub[c])]
+            specified = [c for c in sub.columns if c != "date"]
         else:
-            cols_to_use = [c for c in (value_cols or [])
-                           if c in sub.columns and pd.api.types.is_numeric_dtype(sub[c])]
+            specified = [c for c in (value_cols or []) if c in sub.columns]
+        extra_cat = [
+            c for c in sub.columns
+            if c != "date" and c not in specified
+            and not pd.api.types.is_numeric_dtype(sub[c])
+            and sub[c].nunique(dropna=False) > 1
+        ]
+        target_cols = specified + extra_cat
+
+        # One-hot encode categorical columns among target_cols
+        cat_cols = [
+            c for c in target_cols
+            if not pd.api.types.is_numeric_dtype(sub[c])
+            and sub[c].nunique(dropna=False) > 1
+        ]
+        if cat_cols:
+            dummies = pd.get_dummies(
+                sub[cat_cols].astype(str),
+                prefix=cat_cols,
+                prefix_sep="_",
+                dtype=float,
+            )
+            sub = pd.concat([
+                sub.reset_index(drop=True),
+                dummies.reset_index(drop=True),
+            ], axis=1)
+
+        # Numeric columns to use (original numerics + dummy 0/1s)
+        cols_to_use = [c for c in sub.columns
+                       if c != "date" and pd.api.types.is_numeric_dtype(sub[c])]
         if not cols_to_use:
             continue
+
         sub_agg = sub.groupby("date")[cols_to_use].agg(agg_func).reset_index()
         for _, row in sub_agg.iterrows():
             d = str(pd.Timestamp(row["date"]).strftime("%Y-%m-%d"))
@@ -251,7 +294,7 @@ class LightGBMForecaster(BaseForecaster):
 
         self._date_col = date_col
         self._value_col = value_col
-        self._frequency = kwargs.get("frequency") or self._infer_frequency(df, date_col)
+        self._frequency = self._normalize_frequency(kwargs.get("frequency") or self._infer_frequency(df, date_col))
         exog_data = kwargs.get("exog_data")
         self._exog_lookup = _prep_exog_lookup(exog_data)
 
@@ -271,6 +314,12 @@ class LightGBMForecaster(BaseForecaster):
         X = feat[self._feature_cols].astype(float).fillna(0.0)
         y = feat[value_col].astype(float).values
 
+        # StandardScaler: fit on training features, reused during forecast
+        self._scaler: Optional[StandardScaler] = StandardScaler() if _SKLEARN_AVAILABLE else None
+        X_arr = X.values
+        if self._scaler is not None:
+            X_arr = self._scaler.fit_transform(X_arr)
+
         try:
             self._fitted_model = LGBMRegressor(
                 n_estimators=self.n_estimators,
@@ -281,14 +330,14 @@ class LightGBMForecaster(BaseForecaster):
                 random_state=42,
                 verbose=-1,
             )
-            self._fitted_model.fit(X.values, y)
+            self._fitted_model.fit(X_arr, y)
         except Exception as e:
             raise RuntimeError(f"LightGBM fit failed: {e}")
 
         try:
             if _SHAP_AVAILABLE:
                 self._shap_explainer = shap.TreeExplainer(self._fitted_model)
-                shap_vals = self._shap_explainer.shap_values(X.values)
+                shap_vals = self._shap_explainer.shap_values(X_arr)
                 self._shap_base_value = float(self._shap_explainer.expected_value)
                 self._shap_training_importance = {
                     self._feature_cols[i]: float(np.abs(shap_vals[:, i]).mean())
@@ -343,6 +392,9 @@ class LightGBMForecaster(BaseForecaster):
                 self._exog_lookup if include_external else None,
                 self._feature_cols,
             ).reshape(1, -1)
+
+            if self._scaler is not None:
+                X_step = self._scaler.transform(X_step)
 
             try:
                 p = float(self._fitted_model.predict(X_step)[0])

@@ -21,6 +21,13 @@ from .lightgbm_model import (
     _step_features,
 )
 
+try:
+    from sklearn.preprocessing import StandardScaler
+    _SKLEARN_AVAILABLE = True
+except ImportError:
+    _SKLEARN_AVAILABLE = False
+    StandardScaler = None  # type: ignore
+
 warnings.filterwarnings("ignore")
 logger = logging.getLogger(__name__)
 
@@ -66,6 +73,7 @@ class XGBoostForecaster(BaseForecaster):
         self._shap_explainer: Any = None
         self._exog_lookup: Optional[Dict[str, Dict[str, float]]] = None
         self._train_values: Optional[np.ndarray] = None
+        self._scaler: Optional[Any] = None
 
     def _build_features(
         self,
@@ -97,7 +105,7 @@ class XGBoostForecaster(BaseForecaster):
 
         self._date_col = date_col
         self._value_col = value_col
-        self._frequency = kwargs.get("frequency") or self._infer_frequency(df, date_col)
+        self._frequency = self._normalize_frequency(kwargs.get("frequency") or self._infer_frequency(df, date_col))
         exog_data = kwargs.get("exog_data")
         self._exog_lookup = _prep_exog_lookup(exog_data)
 
@@ -115,8 +123,14 @@ class XGBoostForecaster(BaseForecaster):
             c for c in all_feature_cols
             if pd.api.types.is_numeric_dtype(feat[c])
         ]
-        X = feat[self._feature_cols].astype(float).fillna(0.0).values
+        X = feat[self._feature_cols].astype(float).fillna(0.0)
         y = feat[value_col].astype(float).values
+
+        # StandardScaler: fit on training features, reused during forecast
+        self._scaler = StandardScaler() if _SKLEARN_AVAILABLE else None
+        X_arr = X.values
+        if self._scaler is not None:
+            X_arr = self._scaler.fit_transform(X_arr)
 
         try:
             self._fitted_model = XGBRegressor(
@@ -129,14 +143,14 @@ class XGBoostForecaster(BaseForecaster):
                 random_state=42,
                 verbosity=0,
             )
-            self._fitted_model.fit(X, y)
+            self._fitted_model.fit(X_arr, y)
         except Exception as e:
             raise RuntimeError(f"XGBoost fit failed: {e}")
 
         try:
             if _SHAP_AVAILABLE:
                 self._shap_explainer = shap.TreeExplainer(self._fitted_model)
-                shap_vals = self._shap_explainer.shap_values(X)
+                shap_vals = self._shap_explainer.shap_values(X_arr)
                 self._shap_base_value = float(self._shap_explainer.expected_value)
                 self._shap_training_importance = {
                     self._feature_cols[i]: float(np.abs(shap_vals[:, i]).mean())
@@ -188,6 +202,9 @@ class XGBoostForecaster(BaseForecaster):
                 self._exog_lookup if include_external else None,
                 self._feature_cols,
             ).reshape(1, -1)
+
+            if self._scaler is not None:
+                X_step = self._scaler.transform(X_step)
 
             try:
                 p = float(self._fitted_model.predict(X_step)[0])

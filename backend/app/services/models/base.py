@@ -14,6 +14,18 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+# Panda 3.0+ deprecated several frequency aliases.
+# Map old → new so the codebase works across versions.
+_FREQ_ALIAS_MAP = {
+    "M": "ME",   # month end
+    "MS": "MS",  # month start (still valid)
+    "Q": "QE",   # quarter end
+    "QS": "QS",  # quarter start (still valid)
+    "Y": "YE",   # year end
+    "YS": "YS",  # year start (still valid)
+    "F": "14D",  # fortnightly (removed entirely)
+}
+
 
 class BaseForecaster(ABC):
     """Abstract base class for all forecasting models."""
@@ -80,6 +92,11 @@ class BaseForecaster(ABC):
         return {"training_importance": {}, "per_step": None, "base_value": None}
 
     # ----------------------------------------------------------- utilities
+    @staticmethod
+    def _normalize_frequency(freq: str) -> str:
+        """Map old pandas frequency aliases (M, Q, Y, F) to modern equivalents."""
+        return _FREQ_ALIAS_MAP.get(freq, freq)
+
     @staticmethod
     def _infer_frequency(df: pd.DataFrame, date_col: str, default: str = "D") -> str:
         """Infer the most common frequency from the date column."""

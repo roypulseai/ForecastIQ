@@ -56,7 +56,7 @@ DOWNSAMPLE_THRESHOLD = 5000  # rows
 WEEKLY_AGG_SPAN_DAYS = 365 * 5
 
 # Calendar days per frequency period (for converting backtest_overlap from days → periods)
-_DAYS_PER_PERIOD = {"D": 1, "W": 7, "F": 14, "M": 30, "Q": 91, "Y": 365}
+_DAYS_PER_PERIOD = {"D": 1, "W": 7, "F": 14, "14D": 14, "M": 30, "ME": 30, "Q": 91, "QE": 91, "Y": 365, "YE": 365}
 
 
 class EnsembleForecaster:

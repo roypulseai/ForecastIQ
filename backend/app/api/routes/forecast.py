@@ -44,8 +44,10 @@ processor = DataProcessor()
 service = ForecasterService()
 
 # Frequency ordering — coarser granularity = higher rank
-_FREQ_RANK = {"D": 0, "W": 1, "F": 2, "M": 3, "Q": 4, "Y": 5}
-_DAYS_PER_PERIOD = {"D": 1, "W": 7, "F": 14, "M": 30, "Q": 91, "Y": 365}
+# Panda 3.0+ deprecated older frequency aliases.
+# Accept both old and new names so the API is version-tolerant.
+_FREQ_RANK = {"D": 0, "W": 1, "F": 2, "14D": 2, "M": 3, "ME": 3, "Q": 4, "QE": 4, "Y": 5, "YE": 5}
+_DAYS_PER_PERIOD = {"D": 1, "W": 7, "F": 14, "14D": 14, "M": 30, "ME": 30, "Q": 91, "QE": 91, "Y": 365, "YE": 365}
 
 
 def _validate_frequency_against_data(
