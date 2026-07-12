@@ -319,6 +319,23 @@ class ForecasterService:
         has_ml = any(m in ml_models for m in models)
         test_df: Optional[pd.DataFrame] = None
         train_df: Optional[pd.DataFrame] = None
+
+        # ---- Always aggregate to one row per date ----
+        # If the stored data has multiple rows per date (e.g. different
+        # products/regions), collapse them to a single summed value per
+        # date so that training, backtest, and historical actuals are
+        # all on the same scale.
+        if not category_columns:
+            date_counts = sales_df[date_col].value_counts()
+            if (date_counts > 1).any():
+                sales_df = sales_df.groupby(date_col, as_index=False, sort=True)[value_col].sum()
+                logger.info(
+                    "Aggregated %d rows to %d unique dates (summed %d duplicate dates)",
+                    int(_sales_df_original.shape[0]) if '_sales_df_original' in dir() else int(len(sales_df)),
+                    len(sales_df),
+                    int((date_counts > 1).sum()),
+                )
+
         if has_ml and 0.5 <= train_test_split < 1.0 and len(sales_df) >= 30:
             split = time_series_split(
                 sales_df, date_col, value_col,
@@ -336,6 +353,9 @@ class ForecasterService:
         # Store original sales_df for historical actuals before any downsampling
         original_sales_df = sales_df.copy()
 
+        # Track if frequency changes due to downsampling
+        effective_frequency = request.get("frequency", "D")
+
         downsample_info: Dict[str, Any] = {
             "downsample_applied": False,
             "original_rows": int(len(sales_df)),
@@ -348,11 +368,14 @@ class ForecasterService:
                 )
                 downsample_info.update(ds_info)
                 if downsample_info.get("downsample_applied"):
+                    # Update frequency to match the new aggregation level
+                    effective_frequency = "W"
                     logger.info(
-                        "Downsampled sales data: %d -> %d rows (%s)",
+                        "Downsampled sales data: %d -> %d rows (%s), frequency updated to %s",
                         downsample_info["original_rows"],
                         downsample_info["new_rows"],
                         downsample_info.get("aggregation_level"),
+                        effective_frequency,
                     )
             except Exception as e:
                 logger.warning("Downsampling failed (continuing with full data): %s", e)
@@ -378,7 +401,7 @@ class ForecasterService:
                     result = tune_model(
                         cv_df, date_col, value_col, m,
                         n_iter=30, n_folds=max(3, min(7, int(n_unique_dates * 0.1))),
-                        exog_data=exog_data, frequency=request.get("frequency", "D"),
+                        exog_data=exog_data, frequency=effective_frequency,
                     )
                     if result.get("tuned") and result["best_params"]:
                         tuning_results[m] = result
@@ -446,7 +469,8 @@ class ForecasterService:
                         self.selector.cross_validate,
                         _cv_input(m), date_col, value_col, m, params,
                         min(7, horizon),
-                        request.get("frequency", "D"),
+                        5,
+                        effective_frequency,
                     ): m
                     for m in models
                 }
@@ -462,7 +486,7 @@ class ForecasterService:
                 try:
                     cv_results[m] = self.selector.cross_validate(
                         _cv_input(m), date_col, value_col, m, params, horizon=min(7, horizon),
-                        frequency=request.get("frequency", "D"),
+                        frequency=effective_frequency,
                     )
                 except Exception as e:
                     logger.warning("CV error for %s: %s", m, e)
@@ -491,7 +515,7 @@ class ForecasterService:
                     ex.submit(
                         _fit_and_forecast_one,
                         m, params, _fit_input(m), date_col, value_col,
-                        horizon, exog_data, request.get("frequency", "D"),
+                        horizon, exog_data, effective_frequency,
                     ): m
                     for m in models
                 }
@@ -509,7 +533,7 @@ class ForecasterService:
         else:
             for m in models:
                 result = _fit_and_forecast_one(
-                    m, params, _fit_input(m), date_col, value_col, horizon, exog_data, request.get("frequency", "D")
+                    m, params, _fit_input(m), date_col, value_col, horizon, exog_data, effective_frequency
                 )
                 per_model[m] = _assemble_model_result(m, result, cv_results)
                 completed += 1
@@ -564,7 +588,7 @@ class ForecasterService:
                     continue
                 try:
                     full_model = self.selector.get_model(m, params)
-                    full_model.fit(sales_df, date_col, value_col, exog_data=exog_data or {}, frequency=request.get("frequency", "D"))
+                    full_model.fit(sales_df, date_col, value_col, exog_data=exog_data or {}, frequency=effective_frequency)
                     full_fc = full_model.forecast(horizon, exog_data=exog_data)
                     full_base = full_model.get_baseline(horizon, exog_data=exog_data)
                     attach_uplift(full_fc, full_base)
@@ -597,7 +621,7 @@ class ForecasterService:
                 )
                 if best_key_for_factors:
                     fc_model = self.selector.get_model(best_key_for_factors, params)
-                    fc_model.fit(sales_df, date_col, value_col, exog_data=exog_data or {}, frequency=request.get("frequency", "D"))
+                    fc_model.fit(sales_df, date_col, value_col, exog_data=exog_data or {}, frequency=effective_frequency)
                     baseline_fc = fc_model.get_baseline(horizon, exog_data=exog_data)
                     factor_contributions = _compute_factor_contributions(
                         fc_model, exog_data, horizon, baseline_fc,
@@ -620,7 +644,7 @@ class ForecasterService:
                     # Re-fit the best model on FULL data so the saved model
                     # is the most up-to-date version.
                     best_model_instance = self.selector.get_model(best_key, params)
-                    best_model_instance.fit(sales_df, date_col, value_col, exog_data=exog_data or {}, frequency=request.get("frequency", "D"))
+                    best_model_instance.fit(sales_df, date_col, value_col, exog_data=exog_data or {}, frequency=effective_frequency)
                     best_metrics = test_metrics_per_model.get(best_key, {})
                     cv = cv_results.get(best_key, {})
                     registry_metrics = ModelMetrics(
@@ -636,7 +660,7 @@ class ForecasterService:
                     training_cfg = TrainingConfig(
                         date_column=date_col,
                         value_column=value_col,
-                        frequency=request.get("frequency", "D"),
+                        frequency=effective_frequency,
                         train_test_split=train_test_split,
                         horizon_used=horizon,
                         extra_columns=[c for c in sales_df.columns if c not in (date_col, value_col)],
@@ -694,7 +718,7 @@ class ForecasterService:
                     def _refit(m: str) -> Tuple[str, Optional[BaseForecaster]]:
                         try:
                             inst = self.selector.get_model(m, params)
-                            inst.fit(sales_df, date_col, value_col, exog_data=exog_data or {}, frequency=request.get("frequency", "D"))
+                            inst.fit(sales_df, date_col, value_col, exog_data=exog_data or {}, frequency=effective_frequency)
                             return m, inst
                         except Exception as e:
                             logger.warning("Ensemble member %s re-fit failed: %s", m, e)
@@ -806,7 +830,7 @@ class ForecasterService:
 
         # Compute overlap in terms of UNIQUE DATES, not row count
         n_unique_dates = int(sales_df[date_col].nunique()) if date_col in sales_df.columns else len(sales_df)
-        days_per = _DAYS_PER_PERIOD.get(request.get("frequency", "D"), 1)
+        days_per = _DAYS_PER_PERIOD.get(effective_frequency, 1)
         if backtest_overlap == 0 and n_unique_dates > 50:
             auto_backtest = True
             overlap_n = max(1, int(n_unique_dates * 0.2))
@@ -844,7 +868,7 @@ class ForecasterService:
                         continue
                     try:
                         bt_model = self.selector.get_model(m_name, params)
-                        bt_model.fit(backtest_df, date_col, value_col, exog_data=exog_data or {}, frequency=request.get("frequency", "D"))
+                        bt_model.fit(backtest_df, date_col, value_col, exog_data=exog_data or {}, frequency=effective_frequency)
                         bt_fc = bt_model.forecast(len(backtest_actuals), exog_data=exog_data)
                         pm["backtest_forecast_values"] = bt_fc
                         bt_metrics = _compute_backtest_metrics(bt_fc, backtest_actuals, date_col, value_col)
@@ -860,7 +884,7 @@ class ForecasterService:
                         for m_name in ensemble_result.get("models_used", []):
                             try:
                                 inst = self.selector.get_model(m_name, params)
-                                inst.fit(backtest_df, date_col, value_col, exog_data=exog_data or {}, frequency=request.get("frequency", "D"))
+                                inst.fit(backtest_df, date_col, value_col, exog_data=exog_data or {}, frequency=effective_frequency)
                                 bt_members.append(inst)
                             except Exception:
                                 pass
@@ -897,7 +921,7 @@ class ForecasterService:
                     try:
                         cat_cv = self.selector.cross_validate(
                             cat_df, date_col, value_col, m, params,
-                            min(7, horizon), frequency=request.get("frequency", "D"),
+                            min(7, horizon), frequency=effective_frequency,
                         )
                         cat_cv_results[cat_val][m] = cat_cv
                     except Exception as e:
@@ -913,7 +937,7 @@ class ForecasterService:
                     for m in models:
                         fut = ex.submit(
                             _fit_and_forecast_one,
-                            m, params, cat_df, date_col, value_col, horizon, exog_data, request.get("frequency", "D"),
+                            m, params, cat_df, date_col, value_col, horizon, exog_data, effective_frequency,
                         )
                         cat_futures[fut] = (cat_val, m)
 
@@ -988,7 +1012,7 @@ class ForecasterService:
                             continue
                         try:
                             bt_model = self.selector.get_model(m_name, params)
-                            bt_model.fit(cat_bt_df, date_col, value_col, exog_data=exog_data or {}, frequency=request.get("frequency", "D"))
+                            bt_model.fit(cat_bt_df, date_col, value_col, exog_data=exog_data or {}, frequency=effective_frequency)
                             bt_fc = bt_model.forecast(overlap_n, exog_data=exog_data)
                             pm["backtest_forecast_values"] = bt_fc
                             bt_metrics = _compute_backtest_metrics(
@@ -1002,9 +1026,11 @@ class ForecasterService:
 
         # Embed the source historical data so the frontend never needs to fetch
         # the file separately or guess column names for the chart.
+        # Use the same data that models were trained on (after any downsampling)
+        # so actuals and forecasts are on the same scale.
         historical: List[Dict[str, Any]] = []
-        if date_col in original_sales_df.columns and value_col in original_sales_df.columns:
-            src = original_sales_df[[date_col, value_col]].dropna().copy()
+        if date_col in sales_df.columns and value_col in sales_df.columns:
+            src = sales_df[[date_col, value_col]].dropna().copy()
             src[date_col] = src[date_col].astype(str).str[:10]
             src[value_col] = pd.to_numeric(src[value_col], errors="coerce")
             src = src.groupby(date_col, as_index=False)[value_col].sum()
@@ -1114,7 +1140,7 @@ class ForecasterService:
             try:
                 model = self.selector.get_model(mtype, params)
                 # Fit on TRAIN only (data-science best practice)
-                model.fit(train_df, date_col, value_col, exog_data=exog_data or {}, frequency=request.get("frequency", "D"))
+                model.fit(train_df, date_col, value_col, exog_data=exog_data or {}, frequency=frequency)
 
                 # Predict on the test set to evaluate
                 test_horizon = len(test_df)
@@ -1141,7 +1167,7 @@ class ForecasterService:
                 try:
                     cv = self.selector.cross_validate(
                         train_df, date_col, value_col, mtype, params,
-                        horizon=min(7, test_horizon), frequency=request.get("frequency", "D"),
+                        horizon=min(7, test_horizon), frequency=frequency,
                     )
                     eval_metrics.cv_mae = cv.get("mae")
                     eval_metrics.cv_rmse = cv.get("rmse")
