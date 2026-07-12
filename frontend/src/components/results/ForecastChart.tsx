@@ -126,13 +126,14 @@ export function ForecastChart({
       for (const a of actuals) {
         const date = normalizeDate(a.date);
         if (!date) continue;
+        const existing = byDate.get(date);
         byDate.set(date, {
           date,
           forecast: null,
           lower: null,
           upper: null,
           baseline: null,
-          actual: a.value,
+          actual: (existing?.actual ?? 0) + a.value,
         });
       }
     }

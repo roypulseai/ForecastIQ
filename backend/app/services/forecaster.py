@@ -19,6 +19,7 @@ Performance optimizations:
 """
 from __future__ import annotations
 
+import bisect
 import logging
 import os
 import traceback
@@ -795,62 +796,76 @@ class ForecasterService:
 
         # Compute overlap in terms of UNIQUE DATES, not row count
         n_unique_dates = int(sales_df[date_col].nunique()) if date_col in sales_df.columns else len(sales_df)
+        days_per = _DAYS_PER_PERIOD.get(request.get("frequency", "D"), 1)
         if backtest_overlap == 0 and n_unique_dates > 50:
             auto_backtest = True
             overlap_n = max(1, int(n_unique_dates * 0.2))
             logger.info("Auto-backtest: using last %d unique dates (~20%% of %d)", overlap_n, n_unique_dates)
         elif backtest_overlap > 0:
             # backtest_overlap is in calendar days — convert to periods based on frequency
-            frequency = request.get("frequency", "D")
-            days_per = _DAYS_PER_PERIOD.get(frequency, 1)
             overlap_periods = max(1, backtest_overlap // days_per)
             overlap_n = min(overlap_periods, n_unique_dates - 5)
 
         if overlap_n > 0 and n_unique_dates > overlap_n + 5:
-            # Date-based split: train on data before split_date, test on data after
+            # Calendar-based split: overlap_n model-frequency periods =
+            # overlap_n * days_per calendar days.  This correctly handles
+            # cases where model frequency differs from data granularity
+            # (e.g. daily data, weekly forecast).
             unique_dates = sorted(sales_df[date_col].unique())
-            split_date = unique_dates[-overlap_n]
-            backtest_df = sales_df[sales_df[date_col] < split_date].copy()
-            backtest_actuals = sales_df[sales_df[date_col] >= split_date].copy()
-            backtest_start_date = str(backtest_actuals[date_col].iloc[0])[:10]
-            backtest_end_date = str(backtest_actuals[date_col].iloc[-1])[:10]
-            logger.info("Backtest overlap_n=%d dates, train=%d rows, test=%d rows", overlap_n, len(backtest_df), len(backtest_actuals))
+            last_date = unique_dates[-1]
+            target_split_date = last_date - pd.DateOffset(days=overlap_n * days_per)
+            if target_split_date <= unique_dates[0]:
+                logger.warning("Backtest overlap=%d periods (%d calendar days) exceeds data span, skipping", overlap_n, overlap_n * days_per)
+                overlap_n = 0
+                auto_backtest = False
+            else:
+                split_idx = bisect.bisect_left(unique_dates, target_split_date)
+                if split_idx < 5:
+                    split_idx = 5
+                split_date = unique_dates[split_idx]
+                backtest_df = sales_df[sales_df[date_col] < split_date].copy()
+                backtest_actuals = sales_df[sales_df[date_col] >= split_date].copy()
+                backtest_start_date = str(backtest_actuals[date_col].iloc[0])[:10]
+                backtest_end_date = str(backtest_actuals[date_col].iloc[-1])[:10]
+                logger.info("Backtest overlap_n=%d (%d calendar days), train=%d rows, test=%d rows", overlap_n, overlap_n * days_per, len(backtest_df), len(backtest_actuals))
 
-            for m_name, pm in per_model.items():
-                if pm.get("error"):
-                    continue
-                try:
-                    bt_model = self.selector.get_model(m_name, params)
-                    bt_model.fit(backtest_df, date_col, value_col, exog_data=exog_data or {}, frequency=request.get("frequency", "D"))
-                    bt_fc = bt_model.forecast(overlap_n, exog_data=exog_data)
-                    pm["backtest_forecast_values"] = bt_fc
-                    bt_metrics = _compute_backtest_metrics(bt_fc, backtest_actuals, date_col, value_col)
-                    pm["backtest_metrics"] = bt_metrics
-                except Exception as e:
-                    logger.warning("Backtest re-forecast failed for %s: %s", m_name, e)
-                    pm["backtest_forecast_values"] = []
-                    pm["backtest_metrics"] = {}
-
-            if ensemble_result:
-                try:
-                    bt_members: List[BaseForecaster] = []
-                    for m_name in ensemble_result.get("models_used", []):
-                        try:
-                            inst = self.selector.get_model(m_name, params)
-                            inst.fit(backtest_df, date_col, value_col, exog_data=exog_data or {}, frequency=request.get("frequency", "D"))
-                            bt_members.append(inst)
-                        except Exception:
-                            pass
-                    if len(bt_members) >= 1:
-                        ens = EnsembleForecaster(bt_members)
-                        bt_fc = ens.forecast(overlap_n, exog_data=exog_data)
-                        ensemble_result["backtest_forecast_values"] = bt_fc
+                for m_name, pm in per_model.items():
+                    if pm.get("error"):
+                        continue
+                    try:
+                        bt_model = self.selector.get_model(m_name, params)
+                        bt_model.fit(backtest_df, date_col, value_col, exog_data=exog_data or {}, frequency=request.get("frequency", "D"))
+                        bt_fc = bt_model.forecast(overlap_n, exog_data=exog_data)
+                        pm["backtest_forecast_values"] = bt_fc
                         bt_metrics = _compute_backtest_metrics(bt_fc, backtest_actuals, date_col, value_col)
-                        ensemble_result["backtest_metrics"] = bt_metrics
-                except Exception as e:
-                    logger.warning("Ensemble backtest re-forecast failed: %s", e)
+                        pm["backtest_metrics"] = bt_metrics
+                    except Exception as e:
+                        logger.warning("Backtest re-forecast failed for %s: %s", m_name, e)
+                        pm["backtest_forecast_values"] = []
+                        pm["backtest_metrics"] = {}
+
+                if ensemble_result:
+                    try:
+                        bt_members: List[BaseForecaster] = []
+                        for m_name in ensemble_result.get("models_used", []):
+                            try:
+                                inst = self.selector.get_model(m_name, params)
+                                inst.fit(backtest_df, date_col, value_col, exog_data=exog_data or {}, frequency=request.get("frequency", "D"))
+                                bt_members.append(inst)
+                            except Exception:
+                                pass
+                        if len(bt_members) >= 1:
+                            ens = EnsembleForecaster(bt_members)
+                            bt_fc = ens.forecast(overlap_n, exog_data=exog_data)
+                            ensemble_result["backtest_forecast_values"] = bt_fc
+                            bt_metrics = _compute_backtest_metrics(bt_fc, backtest_actuals, date_col, value_col)
+                            ensemble_result["backtest_metrics"] = bt_metrics
+                    except Exception as e:
+                        logger.warning("Ensemble backtest re-forecast failed: %s", e)
         elif overlap_n > 0:
             logger.warning("Backtest skipped: overlap=%d unique dates, but only %d available", overlap_n, n_unique_dates)
+            overlap_n = 0
+            auto_backtest = False
 
         # ---- 6) Per-category forecasts (parallel) ----
         # Run forecasts for each category value in parallel for speed.
@@ -926,6 +941,7 @@ class ForecasterService:
                     src = cat_src[[date_col, value_col]].dropna().copy()
                     src[date_col] = src[date_col].astype(str).str[:10]
                     src[value_col] = pd.to_numeric(src[value_col], errors="coerce")
+                    src = src.groupby(date_col, as_index=False)[value_col].sum()
                     cat_actuals = src.rename(columns={date_col: "date", value_col: "value"}).to_dict("records")
                     cat_actuals.sort(key=lambda x: x["date"])
                 category_forecasts[cat_val] = {
@@ -946,7 +962,14 @@ class ForecasterService:
                     cat_unique_dates = sorted(cat_df[date_col].unique())
                     if len(cat_unique_dates) <= overlap_n + 5:
                         continue
-                    cat_split_date = cat_unique_dates[-overlap_n]
+                    cat_last_date = cat_unique_dates[-1]
+                    cat_target_split = cat_last_date - pd.DateOffset(days=overlap_n * days_per)
+                    if cat_target_split <= cat_unique_dates[0]:
+                        continue
+                    cat_split_idx = bisect.bisect_left(cat_unique_dates, cat_target_split)
+                    if cat_split_idx < 5:
+                        cat_split_idx = 5
+                    cat_split_date = cat_unique_dates[cat_split_idx]
                     cat_bt_df = cat_df[cat_df[date_col] < cat_split_date].copy()
                     cat_bt_actuals = cat_df[cat_df[date_col] >= cat_split_date].copy()
                     cat_per_model = category_forecasts[cat_val].get("results", {})
@@ -974,6 +997,7 @@ class ForecasterService:
             src = sales_df[[date_col, value_col]].dropna().copy()
             src[date_col] = src[date_col].astype(str).str[:10]
             src[value_col] = pd.to_numeric(src[value_col], errors="coerce")
+            src = src.groupby(date_col, as_index=False)[value_col].sum()
             historical = src.rename(columns={date_col: "date", value_col: "value"}).to_dict("records")
 
         result: Dict[str, Any] = {
