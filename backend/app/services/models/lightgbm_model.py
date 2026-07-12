@@ -55,7 +55,7 @@ def _add_lag_rolling(
     for lag in lags:
         df[f"lag_{lag}"] = df[value_col].shift(lag)
     for w in windows:
-        roll = df[value_col].rolling(window=w, min_periods=1)
+        roll = df[value_col].shift(1).rolling(window=w, min_periods=1)
         df[f"rolling_mean_{w}"] = roll.mean()
         df[f"rolling_std_{w}"] = roll.std().fillna(0.0)
         df[f"rolling_min_{w}"] = roll.min()
@@ -311,8 +311,12 @@ class LightGBMForecaster(BaseForecaster):
             c for c in all_feature_cols
             if pd.api.types.is_numeric_dtype(feat[c])
         ]
-        X = feat[self._feature_cols].astype(float).fillna(0.0)
+        X = feat[self._feature_cols].astype(float)
         y = feat[value_col].astype(float).values
+        valid_mask = X.notna().all(axis=1)
+        X = X[valid_mask]
+        y = y[valid_mask]
+        feat = feat[valid_mask].reset_index(drop=True)
 
         # StandardScaler: fit on training features, reused during forecast
         self._scaler: Optional[StandardScaler] = StandardScaler() if _SKLEARN_AVAILABLE else None

@@ -210,6 +210,7 @@ def _adaptive_search_round(
     space: Dict[str, List[Any]],
     folds: List[Tuple[pd.DataFrame, pd.DataFrame]],
     exog_data: Optional[Dict[str, pd.DataFrame]] = None,
+    frequency: str = "D",
 ) -> Tuple[Dict[str, Any], List[Dict[str, float]], float]:
     """Single round of random search: sample candidates, evaluate on folds,
     return the best params, fold scores, and mean MAE."""
@@ -289,7 +290,7 @@ def tune_model(
     # ---- Round 1: broad exploration ----
     random.seed(random_seed)
     best_params, best_fold_scores, best_mae = _adaptive_search_round(
-        selector, model_type, space, folds, exog_data=exog_data,
+        selector, model_type, space, folds, exog_data=exog_data, frequency=frequency,
     )
 
     if not best_fold_scores or len(best_fold_scores) < 2:
@@ -317,7 +318,7 @@ def tune_model(
 
     if any(len(v) < len(space.get(k, [])) for k, v in narrowed_space.items() if k in space):
         ref_params, ref_fold_scores, ref_mae = _adaptive_search_round(
-            selector, model_type, narrowed_space, folds, exog_data=exog_data,
+            selector, model_type, narrowed_space, folds, exog_data=exog_data, frequency=frequency,
         )
         if ref_fold_scores and ref_mae < best_mae:
             best_params = ref_params

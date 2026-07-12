@@ -128,7 +128,7 @@ class ModelSelector:
         ts = ts.dropna().sort_values(date_col)
         ts_s = ts.set_index(date_col)[value_col]
         if ts_s.index.has_duplicates:
-            ts_s = ts_s.groupby(level=0).mean()
+            ts_s = ts_s.groupby(level=0).sum()
         n = len(ts_s)
         mean = float(ts_s.mean()) if n else 0.0
         std = float(ts_s.std()) if n else 0.0
@@ -204,8 +204,8 @@ class ModelSelector:
             result = adfuller(ts.dropna(), autolag="AIC")
             return bool(result[1] < 0.05)
         except Exception as e:
-            logger.warning("Stationarity test failed, assuming stationary: %s", e)
-            return True
+            logger.warning("Stationarity test failed, assuming non-stationary: %s", e)
+            return False
 
     def _detect_outliers(self, ts: pd.Series) -> float:
         if len(ts) < 4:
@@ -567,7 +567,7 @@ class ModelSelector:
         ts[date_col] = pd.to_datetime(ts[date_col], errors="coerce")
         ts[value_col] = pd.to_numeric(ts[value_col], errors="coerce")
         ts = ts.dropna().sort_values(date_col).reset_index(drop=True)
-        ts = ts.groupby(date_col, as_index=False)[value_col].mean()
+        ts = ts.groupby(date_col, as_index=False)[value_col].sum()
         n = len(ts)
         if n < max(horizon * 2, 14):
             return {"mae": None, "rmse": None, "mape": None, "note": "insufficient_data"}
@@ -602,10 +602,14 @@ class ModelSelector:
                 mae = float(np.mean(np.abs(diff)))
                 rmse = float(np.sqrt(np.mean(diff ** 2)))
                 denom = np.where(np.abs(av) < 1e-9, 1e-9, np.abs(av))
-                mape = float(np.mean(np.abs(diff / denom)) * 100)
+                per_point_mape = np.abs(diff / denom) * 100
+                mape = float(np.mean(np.clip(per_point_mape, 0, 1000)))
+                ss_res = float(np.sum(diff ** 2))
+                ss_tot = float(np.sum((av - np.mean(av)) ** 2))
+                r2 = 1 - ss_res / ss_tot if ss_tot > 1e-9 else None
                 fold_results.append({
                     "mae": mae, "rmse": rmse, "mape": mape,
-                    "r2": 1 - float(np.sum(diff ** 2)) / float(np.sum((av - np.mean(av)) ** 2)) if len(av) > 0 and np.std(av) != 0 else None,
+                    "r2": r2,
                     "fold": i, "train_size": len(train), "test_size": len(test)
                 })
             except Exception as e:

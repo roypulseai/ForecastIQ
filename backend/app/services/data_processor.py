@@ -406,8 +406,8 @@ class DataProcessor:
             df["value"] = _coerce_numeric(df["value"])
         nan_count = df["value"].isna().sum()
         if nan_count > 0:
-            logger.warning("Filled %d missing sales values with 0.0 — this may bias the forecast downward", nan_count)
-        df["value"] = df["value"].fillna(0.0)
+            logger.warning("Forward/backward filling %d missing sales values", nan_count)
+        df["value"] = df["value"].ffill().bfill().fillna(0.0)
         return df, mapping
 
     @staticmethod

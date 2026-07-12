@@ -23,7 +23,7 @@ def _prepare_ts(df: pd.DataFrame, date_col: str, value_col: str) -> pd.Series:
     ts[date_col] = pd.to_datetime(ts[date_col], errors="coerce")
     ts[value_col] = pd.to_numeric(ts[value_col], errors="coerce")
     ts = ts.dropna().sort_values(date_col)
-    ts = ts.groupby(date_col, as_index=False)[value_col].mean()
+    ts = ts.groupby(date_col, as_index=False)[value_col].sum()
     ts = ts.set_index(date_col)[value_col].astype(float)
     return ts
 

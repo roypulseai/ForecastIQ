@@ -27,7 +27,7 @@ def _prepare_df(
     out["y"] = pd.to_numeric(out["y"], errors="coerce")
     out = out.dropna(subset=["ds", "y"])
     out = out.sort_values("ds")
-    out = out.groupby("ds", as_index=False)["y"].mean()
+    out = out.groupby("ds", as_index=False)["y"].sum()
     return out
 
 

@@ -104,7 +104,7 @@ RAMADAN_START_DATES: Dict[int, date] = {
     2024: date(2024, 3, 11), 2025: date(2025, 3, 1),
     2026: date(2026, 2, 18), 2027: date(2027, 2, 7),
     2028: date(2028, 1, 28), 2029: date(2029, 1, 16),
-    2030: date(2030, 1, 5), 2031: date(2030, 12, 26),
+    2030: date(2030, 1, 5),     2031: date(2031, 2, 20),
     2032: date(2032, 1, 15), 2033: date(2033, 1, 4),
     2034: date(2034, 12, 15), 2035: date(2035, 12, 5),
 }
@@ -153,7 +153,7 @@ SPORTS_EVENTS: List[Dict[str, Any]] = [
     # FIFA World Cup years (every 4 years, Jun-Jul)
     {"name": "fifa_world_cup_start", "label": "FIFA World Cup",
      "type": "sports", "years": [2018, 2022, 2026, 2030, 2034],
-     "start_month": 6, "start_day": 14, "duration_days": 32},
+     "start_month": 6, "start_day": 11, "duration_days": 32},
     # Summer Olympics (every 4 years, Jul-Aug)
     {"name": "summer_olympics_start", "label": "Summer Olympics",
      "type": "sports", "years": [2020, 2024, 2028, 2032],
@@ -255,7 +255,7 @@ EVENT_COUNTRY_MAP: Dict[str, List[str] | str] = {
 MUSLIM_COUNTRIES: List[str] = [
     "SA", "IQ", "IR", "EG", "DZ", "MA", "SD", "PK", "BD", "ID",
     "MY", "NG", "TR", "AF", "YE", "SY", "TN", "SO", "NE", "ML",
-    "SN", "LB", "JO", "PS", "AE", "QA", "KW", "OM", "BH", "SA",
+    "SN", "LB", "JO", "PS", "AE", "QA", "KW", "OM", "BH",
 ]
 
 # Western Christian countries 
@@ -346,7 +346,7 @@ def _generate_moveable_feasts(country: str, years: List[int]) -> pd.DataFrame:
                 d = CHINESE_NEW_YEAR_DATES[yr]
                 rows.append({"date": d, "holiday_name": "Chinese New Year", "holiday_type": "cultural"})
                 # 15-day festival
-                for i in range(1, 7):
+                for i in range(1, 15):
                     rows.append({"date": d + timedelta(days=i),
                                  "holiday_name": f"CNY Day {i+1}",
                                  "holiday_type": "cultural"})

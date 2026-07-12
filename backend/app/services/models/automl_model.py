@@ -120,13 +120,14 @@ class AutoMLForecaster(BaseForecaster):
         if self._residual_model is not None and self._strategy == "prophet_xgb":
             residuals = self._residual_model.forecast(horizon, exog_data=exog_data)
             for i in range(min(len(primary), len(residuals))):
+                orig_fc = self._safe_float(primary[i].get("forecast"))
                 primary[i]["forecast"] = float(
-                    self._safe_float(primary[i].get("forecast")) +
+                    orig_fc +
                     self._safe_float(residuals[i].get("forecast")) * 0.3,
                 )
-                # Widen CI slightly to reflect residual uncertainty
-                ci_half = (self._safe_float(primary[i].get("upper_ci", 0)) -
-                           self._safe_float(primary[i].get("forecast", 0))) or (primary[i].get("forecast", 0) * 0.1)
+                orig_upper = self._safe_float(primary[i].get("upper_ci", orig_fc * 1.15))
+                orig_lower = self._safe_float(primary[i].get("lower_ci", orig_fc * 0.85))
+                ci_half = max(0.0, orig_upper - orig_fc) or (orig_fc * 0.1)
                 primary[i]["lower_ci"] = self._safe_float(primary[i].get("forecast")) - ci_half * 1.2
                 primary[i]["upper_ci"] = self._safe_float(primary[i].get("forecast")) + ci_half * 1.2
 
@@ -342,15 +343,29 @@ class AutoMLForecaster(BaseForecaster):
         if self._inner_model is None:
             return
         try:
-            # Get in-sample predictions from Prophet
-            horizon_insample = len(df)
-            preds = self._inner_model.forecast(horizon_insample, exog_data=exog_data)
+            # Get in-sample predictions from the fitted inner model
+            inner = self._inner_model
             actuals = pd.to_numeric(df[value_col], errors="coerce").values
             residuals = []
-            for i, p in enumerate(preds[:len(actuals)]):
-                av = float(actuals[i]) if i < len(actuals) else 0.0
-                pv = self._safe_float(p.get("forecast", 0))
-                residuals.append(av - pv)
+            if hasattr(inner, '_fitted_model') and hasattr(inner, '_train_df') and inner._fitted_model is not None:
+                try:
+                    train_pred = inner._fitted_model.predict(inner._train_df)
+                    in_sample_vals = train_pred["yhat"].values
+                    for i in range(len(actuals)):
+                        pv = float(in_sample_vals[i]) if i < len(in_sample_vals) else 0.0
+                        av = float(actuals[i]) if not np.isnan(actuals[i]) else 0.0
+                        residuals.append(av - pv)
+                except Exception:
+                    # Fallback: use future forecast shifted back (imperfect but better than garbage)
+                    preds = inner.forecast(len(df), exog_data=exog_data)
+                    for i, p in enumerate(preds[:len(actuals)]):
+                        av = float(actuals[i]) if not np.isnan(actuals[i]) else 0.0
+                        pv = self._safe_float(p.get("forecast", 0))
+                        residuals.append(av - pv)
+            else:
+                # No fitted model available, skip residual correction
+                logger.info("Inner model has no fitted state — skipping residual correction")
+                return
 
             # Build a small XGBoost model on residuals using exog features
             from ..model_selector import ModelSelector
@@ -379,7 +394,10 @@ class AutoMLForecaster(BaseForecaster):
             last_val = float(self._df[self._value_col].iloc[-1]) if len(self._df) else 0.0
         results = []
         for i in range(horizon):
-            d = pd.Timestamp.now() + pd.Timedelta(days=i + 1)
+            if self._last_date is not None:
+                d = self._last_date + pd.Timedelta(days=i + 1)
+            else:
+                d = pd.Timestamp.now() + pd.Timedelta(days=i + 1)
             results.append({
                 "date": self._format_date(d),
                 "forecast": last_val,

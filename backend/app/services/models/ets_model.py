@@ -19,7 +19,7 @@ def _prepare_ts(df: pd.DataFrame, date_col: str, value_col: str) -> pd.Series:
     ts[date_col] = pd.to_datetime(ts[date_col], errors="coerce")
     ts[value_col] = pd.to_numeric(ts[value_col], errors="coerce")
     ts = ts.dropna().sort_values(date_col)
-    ts = ts.groupby(date_col, as_index=False)[value_col].mean()
+    ts = ts.groupby(date_col, as_index=False)[value_col].sum()
     ts = ts.set_index(date_col)[value_col].astype(float)
     return ts
 
@@ -118,16 +118,17 @@ class ETSForecaster(BaseForecaster):
         if self._last_date is None:
             raise ValueError("Model not fitted")
         future_idx = self._future_index(horizon)
+        fallback_val = getattr(self, '_fallback_mean', None) or (float(self._train_values[-1]) if self._train_values is not None and len(self._train_values) else 0.0)
         if self._fitted_model is not None:
             try:
                 mean = self._fitted_model.forecast(horizon)
                 mean_arr = np.asarray(mean, dtype=float)
             except Exception as e:
                 logger.warning("ETS forecast failed: %s", e)
-                mean_arr = np.array([self._fallback_mean] * horizon)
+                mean_arr = np.array([fallback_val] * horizon)
         else:
-            mean_arr = np.array([self._fallback_mean] * horizon)
-        # Use residual std for CI
+            mean_arr = np.array([fallback_val] * horizon)
+        # Use residual std for CI, widening with horizon
         std = 0.0
         try:
             resid = np.asarray(self._fitted_model.resid) if self._fitted_model is not None else np.array([0.0])
@@ -136,9 +137,10 @@ class ETSForecaster(BaseForecaster):
             std = 0.0
         results: List[Dict[str, Any]] = []
         for i, val in enumerate(mean_arr):
-            if std > 0:
-                lo = val - 1.96 * std
-                hi = val + 1.96 * std
+            step_std = std * np.sqrt(i + 1) if std > 0 else 0.0
+            if step_std > 0:
+                lo = val - 1.96 * step_std
+                hi = val + 1.96 * step_std
             else:
                 lo = val * 0.85
                 hi = val * 1.15

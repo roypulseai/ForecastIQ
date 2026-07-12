@@ -123,8 +123,12 @@ class XGBoostForecaster(BaseForecaster):
             c for c in all_feature_cols
             if pd.api.types.is_numeric_dtype(feat[c])
         ]
-        X = feat[self._feature_cols].astype(float).fillna(0.0)
+        X = feat[self._feature_cols].astype(float)
         y = feat[value_col].astype(float).values
+        valid_mask = X.notna().all(axis=1)
+        X = X[valid_mask]
+        y = y[valid_mask]
+        feat = feat[valid_mask].reset_index(drop=True)
 
         # StandardScaler: fit on training features, reused during forecast
         self._scaler = StandardScaler() if _SKLEARN_AVAILABLE else None

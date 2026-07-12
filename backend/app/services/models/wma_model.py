@@ -50,7 +50,7 @@ class WMAForecaster(BaseForecaster):
         ts[date_col] = pd.to_datetime(ts[date_col], errors="coerce")
         ts[value_col] = pd.to_numeric(ts[value_col], errors="coerce")
         ts = ts.dropna().sort_values(date_col)
-        ts = ts.groupby(date_col, as_index=False)[value_col].mean()
+        ts = ts.groupby(date_col, as_index=False)[value_col].sum()
         ts = ts.set_index(date_col)[value_col].astype(float)
         self._last_values = ts
         self._last_date = ts.index[-1] if len(ts) else None

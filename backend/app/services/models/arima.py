@@ -23,7 +23,7 @@ def _prepare_ts(df: pd.DataFrame, date_col: str, value_col: str) -> pd.Series:
     ts = ts.set_index(date_col)[value_col].astype(float)
     # Drop duplicate dates (mean)
     if ts.index.has_duplicates:
-        ts = ts.groupby(level=0).mean()
+        ts = ts.groupby(level=0).sum()
     return ts
 
 
@@ -113,7 +113,11 @@ class ARIMAForecaster(BaseForecaster):
             lower = ci.iloc[:, 0].values
             upper = ci.iloc[:, 1].values
         except Exception:
-            std = np.asarray(pred.predicted_mean).std() or 1.0
+            try:
+                resid_std = float(np.std(self._fitted_model.resid))
+            except Exception:
+                resid_std = float(np.asarray(pred.predicted_mean).std()) or 1.0
+            std = resid_std * np.sqrt(np.arange(1, horizon + 1))
             lower = np.asarray(mean) - 1.96 * std
             upper = np.asarray(mean) + 1.96 * std
 
@@ -196,11 +200,10 @@ class SARIMAXForecaster(BaseForecaster):
         agg = merged.groupby("date").sum()
         # Align to ts index
         aligned = agg.reindex(ts.index, method="ffill").fillna(0.0)
-        # Single combined column (sum of flags)
-        cols = [c for c in aligned.columns]
-        if not cols:
+        # Combine all flag columns into a single regressor
+        if aligned.empty:
             return None
-        return aligned[cols[0]].astype(float)
+        return aligned.sum(axis=1).astype(float)
 
     def fit(
         self,

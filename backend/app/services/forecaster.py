@@ -333,6 +333,9 @@ class ForecasterService:
             )
 
         # ---- Pre-step: intelligent downsampling for huge datasets ----
+        # Store original sales_df for historical actuals before any downsampling
+        original_sales_df = sales_df.copy()
+
         downsample_info: Dict[str, Any] = {
             "downsample_applied": False,
             "original_rows": int(len(sales_df)),
@@ -443,6 +446,7 @@ class ForecasterService:
                         self.selector.cross_validate,
                         _cv_input(m), date_col, value_col, m, params,
                         min(7, horizon),
+                        request.get("frequency", "D"),
                     ): m
                     for m in models
                 }
@@ -727,11 +731,17 @@ class ForecasterService:
                         if test_df is not None and len(test_df) > 0:
                             try:
                                 actual_vals = test_df[value_col].values
-                                pred_vals = [fv.get("forecast", 0.0) for fv in ens_fc]
-                                n = min(len(actual_vals), len(pred_vals))
+                                pred_dates = {fv.get("date", ""): fv.get("forecast", 0.0) for fv in ens_fc}
+                                matched_acts, matched_preds = [], []
+                                for _, row in test_df.iterrows():
+                                    d_str = str(row[date_col])[:10]
+                                    if d_str in pred_dates:
+                                        matched_acts.append(float(row[value_col]))
+                                        matched_preds.append(pred_dates[d_str])
+                                n = len(matched_acts)
                                 if n > 0:
-                                    actuals_arr = np.array(actual_vals[:n])
-                                    preds_arr = np.array(pred_vals[:n])
+                                    actuals_arr = np.array(matched_acts)
+                                    preds_arr = np.array(matched_preds)
                                     errors = np.abs(actuals_arr - preds_arr)
                                     mae = float(np.mean(errors))
                                     rmse = float(np.sqrt(np.mean(errors ** 2)))
@@ -835,7 +845,7 @@ class ForecasterService:
                     try:
                         bt_model = self.selector.get_model(m_name, params)
                         bt_model.fit(backtest_df, date_col, value_col, exog_data=exog_data or {}, frequency=request.get("frequency", "D"))
-                        bt_fc = bt_model.forecast(overlap_n, exog_data=exog_data)
+                        bt_fc = bt_model.forecast(len(backtest_actuals), exog_data=exog_data)
                         pm["backtest_forecast_values"] = bt_fc
                         bt_metrics = _compute_backtest_metrics(bt_fc, backtest_actuals, date_col, value_col)
                         pm["backtest_metrics"] = bt_metrics
@@ -856,7 +866,7 @@ class ForecasterService:
                                 pass
                         if len(bt_members) >= 1:
                             ens = EnsembleForecaster(bt_members)
-                            bt_fc = ens.forecast(overlap_n, exog_data=exog_data)
+                            bt_fc = ens.forecast(len(backtest_actuals), exog_data=exog_data)
                             ensemble_result["backtest_forecast_values"] = bt_fc
                             bt_metrics = _compute_backtest_metrics(bt_fc, backtest_actuals, date_col, value_col)
                             ensemble_result["backtest_metrics"] = bt_metrics
@@ -993,8 +1003,8 @@ class ForecasterService:
         # Embed the source historical data so the frontend never needs to fetch
         # the file separately or guess column names for the chart.
         historical: List[Dict[str, Any]] = []
-        if date_col in sales_df.columns and value_col in sales_df.columns:
-            src = sales_df[[date_col, value_col]].dropna().copy()
+        if date_col in original_sales_df.columns and value_col in original_sales_df.columns:
+            src = original_sales_df[[date_col, value_col]].dropna().copy()
             src[date_col] = src[date_col].astype(str).str[:10]
             src[value_col] = pd.to_numeric(src[value_col], errors="coerce")
             src = src.groupby(date_col, as_index=False)[value_col].sum()

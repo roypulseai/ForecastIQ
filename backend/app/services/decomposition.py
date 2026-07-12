@@ -145,11 +145,10 @@ def decompose_series(
         residual_vals = resid_arr.tolist()
         dates = ts[date_col].dt.strftime("%Y-%m-%d").tolist()
 
-        # Compute seasonal strength (0-1): how much of the variance is explained by seasonality
-        combined = resid_arr + seasonal_arr + trend_arr
-        var_total = float(np.var(combined)) if len(combined) > 0 else 0
-        var_seasonal = float(np.var(seasonal_arr)) if var_total > 1e-9 else 0
-        seasonal_strength = min(1.0, var_seasonal / var_total) if var_total > 1e-9 else 0.0
+        # Compute seasonal strength (0-1): standard Hyndman definition
+        var_resid_seasonal = float(np.var(resid_arr + seasonal_arr)) if len(resid_arr) > 0 else 0
+        var_resid = float(np.var(resid_arr)) if len(resid_arr) > 0 else 0
+        seasonal_strength = max(0.0, min(1.0, 1.0 - var_resid / var_resid_seasonal)) if var_resid_seasonal > 1e-9 else 0.0
 
         return {
             "period": period,
