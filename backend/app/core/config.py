@@ -81,6 +81,11 @@ class Settings(BaseSettings):
 
     LOG_LEVEL: str = "INFO"
 
+    REDIS_URL: str = Field(
+        default="",
+        description="Redis URL for persistent job queue. Empty = use in-memory queue.",
+    )
+
     # ---- Public API ----
     # Whether the public /v1/* API is exposed. When false, the routes are
     # still registered but the auth dependency short-circuits. Useful for
@@ -90,6 +95,11 @@ class Settings(BaseSettings):
     # Default tier for newly created API keys. Operators can override
     # this to "pro" or "enterprise" to give all keys more headroom.
     DEFAULT_API_KEY_TIER: str = "free"
+
+    JWT_SECRET_KEY: str = Field(
+        default_factory=lambda: __import__("secrets").token_hex(32),
+        description="Secret key for JWT tokens. Set in env for production.",
+    )
 
     def ensure_dirs(self) -> None:
         """Create all required directories on startup."""

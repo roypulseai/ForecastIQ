@@ -18,6 +18,7 @@ is essential because a single forecast can take 30-90 s.
 from __future__ import annotations
 
 import json
+import json as _json
 import logging
 import os
 import threading
@@ -249,6 +250,121 @@ class JobManager:
             logger.warning("Failed to load jobs from disk: %s", e)
 
 
-# Module-level singleton accessor
-def get_job_manager() -> JobManager:
-    return JobManager()
+class RedisJobManager:
+    """Redis-backed job manager for multi-process deployments."""
+
+    def __init__(self, redis_url: str):
+        import redis
+        self._redis = redis.from_url(redis_url, decode_responses=True)
+        self._prefix = "fiq:jobs:"
+        self._result_prefix = "fiq:results:"
+        logger.info("RedisJobManager connected to %s", redis_url)
+
+    def submit(self, job_id: str, func, *args, **kwargs) -> str:
+        import threading
+        job_info = JobInfo(
+            job_id=job_id,
+            status="PENDING",
+            progress=0.0,
+            message="Queued",
+            created_at=time.time(),
+        )
+        self._redis.set(f"{self._prefix}{job_id}", _json.dumps(job_info.to_dict()))
+        def _runner():
+            job_info.status = "RUNNING"
+            job_info.started_at = time.time()
+            self._redis.set(f"{self._prefix}{job_id}", _json.dumps(job_info.to_dict()))
+            try:
+                result = func(*args, **kwargs)
+                job_info.status = "COMPLETED"
+                job_info.progress = 1.0
+                job_info.message = "Done"
+                job_info.finished_at = time.time()
+                self._redis.set(f"{self._prefix}{job_id}", _json.dumps(job_info.to_dict()))
+                self._redis.set(f"{self._result_prefix}{job_id}", _json.dumps(result) if isinstance(result, dict) else str(result))
+            except Exception as e:
+                job_info.status = "FAILED"
+                job_info.message = str(e)
+                job_info.finished_at = time.time()
+                self._redis.set(f"{self._prefix}{job_id}", _json.dumps(job_info.to_dict()))
+        t = threading.Thread(target=_runner, daemon=True, name=f"fiq-redis-{job_id[:8]}")
+        t.start()
+        return job_id
+
+    def get_job(self, job_id: str):
+        raw = self._redis.get(f"{self._prefix}{job_id}")
+        if raw:
+            data = _json.loads(raw)
+            info = JobInfo(job_id=job_id)
+            for k, v in data.items():
+                setattr(info, k, v)
+            return info
+        return None
+
+    def get_result(self, job_id: str):
+        raw = self._redis.get(f"{self._result_prefix}{job_id}")
+        if raw:
+            try:
+                return _json.loads(raw)
+            except Exception:
+                return raw
+        return None
+
+    def update_progress(self, job_id: str, progress: float, message: str = ""):
+        job = self.get_job(job_id)
+        if job:
+            job.progress = progress
+            if message:
+                job.message = message
+            self._redis.set(f"{self._prefix}{job_id}", _json.dumps(job.to_dict()))
+
+    def update_status(self, job_id: str, status: str, message: str = ""):
+        job = self.get_job(job_id)
+        if job:
+            job.status = status
+            if message:
+                job.message = message
+            if status == "RUNNING":
+                job.started_at = time.time()
+            elif status in ("COMPLETED", "FAILED", "CANCELLED"):
+                job.finished_at = time.time()
+            self._redis.set(f"{self._prefix}{job_id}", _json.dumps(job.to_dict()))
+
+    def list_jobs(self, limit: int = 50):
+        keys = self._redis.keys(f"{self._prefix}*")[:limit]
+        jobs = []
+        for key in keys:
+            raw = self._redis.get(key)
+            if raw:
+                data = _json.loads(raw)
+                info = JobInfo(job_id=data.get("job_id", ""))
+                for k, v in data.items():
+                    setattr(info, k, v)
+                jobs.append(info.to_public())
+        return sorted(jobs, key=lambda j: j.get("created_at", 0), reverse=True)
+
+    def cleanup(self, max_age_seconds: int = 3600):
+        cutoff = time.time() - max_age_seconds
+        for key in self._redis.scan_iter(f"{self._prefix}*"):
+            raw = self._redis.get(key)
+            if raw:
+                data = _json.loads(raw)
+                if data.get("finished_at", 0) < cutoff and data.get("status") in ("COMPLETED", "FAILED", "CANCELLED"):
+                    self._redis.delete(key)
+
+
+_job_manager = None
+
+def get_job_manager():
+    global _job_manager
+    if _job_manager is None:
+        redis_url = os.environ.get("REDIS_URL", "")
+        if redis_url:
+            try:
+                _job_manager = RedisJobManager(redis_url)
+            except Exception as e:
+                logger.warning("Redis unavailable, falling back to in-memory jobs: %s", e)
+                _job_manager = JobManager()
+        else:
+            _job_manager = JobManager()
+    return _job_manager

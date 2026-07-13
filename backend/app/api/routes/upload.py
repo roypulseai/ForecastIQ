@@ -69,6 +69,12 @@ async def _process_and_save(
             raw_df = processor.load_file(tmp_path)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Failed to read file: {e}")
+        pre_check = DataProcessor.validate_upload_content(raw_df)
+        if not pre_check["valid"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Data validation failed: {'; '.join(pre_check['errors'])}",
+            )
         try:
             clean_df, mapping = processor.process(raw_df, file_type)
         except ValueError as e:

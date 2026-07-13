@@ -12,6 +12,9 @@ ForecastIQ is a self-hosted advanced sales forecasting platform built for data s
 - Frontend: React 18 + TypeScript + Vite + Material UI 5 + TanStack Query + Recharts
 - Backend: FastAPI + Pydantic v2 + Python 3.11
 - Storage: Parquet datasets + JSON metadata (no external DB required)
+- Auth: JWT session tokens + API key authentication
+- Queue: In-memory (single-user) or Redis (multi-process)
+- Testing: pytest with 44 tests covering core pipeline
 
 ---
 
@@ -74,6 +77,35 @@ ForecastIQ is a self-hosted advanced sales forecasting platform built for data s
 | Data Explorer | ✅ Complete | Interactive data visualization |
 | Dashboard | ✅ Complete | Overview with recent forecasts |
 | What-If Analysis | ✅ Complete | Scenario planning |
+
+### Security & Auth
+| Feature | Status | Notes |
+|---------|--------|-------|
+| JWT Authentication | ✅ Complete | Session-based auth for internal UI |
+| API Key Auth | ✅ Complete | SHA-256 hashed keys for public API |
+| Role-Based Access Control | ✅ Complete | admin/analyst/viewer roles |
+| Rate Limiting | ✅ Complete | Per-key fixed-window (60/600/6000 rpm by tier) |
+| Input Validation | ✅ Complete | Pre-processing validation for uploads |
+| Request ID Tracking | ✅ Complete | UUID-based request IDs in logs and responses |
+
+### Infrastructure
+| Feature | Status | Notes |
+|---------|--------|-------|
+| In-Memory Job Queue | ✅ Complete | Default for single-user deployments |
+| Redis Job Queue | ✅ Complete | Optional for multi-process deployments |
+| Structured Logging | ✅ Complete | Request ID context, configurable level |
+| Parquet Upload | ✅ Complete | Via pd.read_parquet |
+| File-Based User Storage | ✅ Complete | JSON persistence for user accounts |
+| Model Registry (Pickle) | ✅ Complete | Save/load trained models |
+
+### Testing
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Test Suite | ✅ Complete | 44 tests, 11.9s runtime |
+| API Endpoint Tests | ✅ Complete | Health, upload, analyze, models |
+| Model Tests | ✅ Complete | All 8 models: fit + forecast + CI validation |
+| Data Processor Tests | ✅ Complete | Validation, normalization, downsampling |
+| CV Tests | ✅ Complete | Cross-validation with/without exog |
 
 ---
 
@@ -260,6 +292,8 @@ ForecastIQ/
 | `LOG_LEVEL` | `INFO` | DEBUG/INFO/WARNING/ERROR |
 | `FORECASTIQ_MODEL_TIMEOUT` | `300` | Per-model timeout in seconds |
 | `FORECASTIQ_FOLD_TIMEOUT` | `120` | Per-CV-fold timeout in seconds |
+| `JWT_SECRET_KEY` | auto-generated | Secret for JWT tokens (set in env for production) |
+| `REDIS_URL` | (empty) | Redis URL for persistent job queue; empty = in-memory |
 
 ---
 
@@ -270,9 +304,9 @@ ForecastIQ/
 3. **SARIMAX Binary Exog:** Uses 0/1 promo flags instead of quantitative values
 4. **No Future Promotions:** Only historical promotion data supported
 5. **No Hierarchical Reconciliation:** Per-category forecasts don't reconcile to aggregate
-6. **CV Exog Gap:** Cross-validation doesn't pass exog_data to model.fit(), so models with regressors may be unfairly evaluated
-7. **In-memory Job State:** Background jobs lost on backend restart
-8. **ML Test Metrics:** Evaluated on full dataset, not held-out test split
+6. **JWT_SECRET_KEY auto-generated:** Random key on each restart invalidates all tokens; set explicitly in production
+7. **In-memory Default:** Without Redis, job state is lost on backend restart
+8. **Internal UI Unauthenticated:** `/api/v1/*` routes have no auth; rely on network isolation
 
 ---
 

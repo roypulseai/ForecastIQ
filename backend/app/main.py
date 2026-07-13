@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import logging
+import uuid
+from contextvars import ContextVar
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -13,10 +15,21 @@ from .api import api_router
 from .api.public import build_public_router
 from .core.config import settings
 
+_request_id: ContextVar[str] = ContextVar("request_id", default="-")
+
+def get_request_id() -> str:
+    return _request_id.get()
+
+class RequestIdFilter(logging.Filter):
+    def filter(self, record):
+        record.request_id = get_request_id()
+        return True
+
 logging.basicConfig(
     level=getattr(logging, settings.LOG_LEVEL, logging.INFO),
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    format="%(asctime)s [%(levelname)s] %(name)s [%(request_id)s]: %(message)s",
 )
+logging.getLogger().addFilter(RequestIdFilter())
 logger = logging.getLogger(__name__)
 
 
@@ -72,6 +85,9 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    from app.middleware.request_id import RequestIdMiddleware
+    app.add_middleware(RequestIdMiddleware)
+
     # Serve templates + outputs
     try:
         app.mount("/templates", StaticFiles(directory=settings.TEMPLATE_DIR), name="templates")
@@ -83,6 +99,9 @@ def create_app() -> FastAPI:
         logger.warning("Could not mount /outputs: %s", e)
 
     app.include_router(api_router, prefix=settings.API_V1_STR)
+
+    from app.api.routes.auth import router as auth_router
+    app.include_router(auth_router)
 
     # Public, versioned, API-key-authenticated API at /v1/*
     public_router = build_public_router()

@@ -690,6 +690,37 @@ class DataProcessor:
             "column_types": _infer_column_types(df),
         }
 
+    @staticmethod
+    def validate_upload_content(df: pd.DataFrame) -> dict:
+        errors = []
+        warnings = []
+        
+        if df.empty:
+            errors.append("File contains no data rows")
+            return {"valid": False, "errors": errors, "warnings": warnings}
+        
+        if len(df.columns) == 0:
+            errors.append("File contains no columns")
+            return {"valid": False, "errors": errors, "warnings": warnings}
+        
+        for col in df.columns:
+            null_pct = df[col].isnull().mean()
+            if null_pct > 0.5:
+                warnings.append(f"Column '{col}' has {null_pct:.0%} missing values")
+        
+        dup_cols = [c for c in df.columns if list(df.columns).count(c) > 1]
+        if dup_cols:
+            errors.append(f"Duplicate column names: {list(set(dup_cols))}")
+        
+        if len(df) > 10_000_000:
+            warnings.append(f"Very large dataset ({len(df):,} rows) — may be slow")
+        
+        all_null = [col for col in df.columns if df[col].isnull().all()]
+        if all_null:
+            errors.append(f"Columns with all null values: {all_null}")
+        
+        return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings}
+
     # ----------------------------------------------------- time features
     def add_calendar_features(
         self, df: pd.DataFrame, date_col: str = "date"
