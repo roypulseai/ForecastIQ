@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import itertools
 import logging
+import os
 import random
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -211,6 +213,7 @@ def _adaptive_search_round(
     folds: List[Tuple[pd.DataFrame, pd.DataFrame]],
     exog_data: Optional[Dict[str, pd.DataFrame]] = None,
     frequency: str = "D",
+    fold_timeout: int = 120,
 ) -> Tuple[Dict[str, Any], List[Dict[str, float]], float]:
     """Single round of random search: sample candidates, evaluate on folds,
     return the best params, fold scores, and mean MAE."""
@@ -228,14 +231,19 @@ def _adaptive_search_round(
         fold_scores: List[Dict[str, float]] = []
         for train_df, test_df in folds:
             try:
-                model = selector.get_model(model_type, _to_model_params(model_type, candidate_params))
-                model.fit(train_df, date_col, value_col, exog_data=exog_data, frequency=frequency)
-                preds = model.forecast(len(test_df), exog_data=exog_data)
+                def _fit_predict():
+                    m_ = selector.get_model(model_type, _to_model_params(model_type, candidate_params))
+                    m_.fit(train_df, date_col, value_col, exog_data=exog_data, frequency=frequency)
+                    return m_.forecast(len(test_df), exog_data=exog_data)
+                with ThreadPoolExecutor(max_workers=1) as _pool:
+                    preds = _pool.submit(_fit_predict).result(timeout=fold_timeout)
                 pred_values = np.array([_safe_float(p.get("forecast", 0.0)) for p in preds])
                 actual_values = test_df[value_col].astype(float).values
                 metrics = _compute_metrics(actual_values, pred_values)
                 if metrics["mae"] is not None:
                     fold_scores.append(metrics)
+            except FuturesTimeoutError:
+                logger.debug("Tuner fold timed out for params %s after %ds", candidate_params, fold_timeout)
             except Exception as e:
                 logger.debug("Params %s failed on fold: %s", candidate_params, e)
         if len(fold_scores) < 2:
@@ -289,8 +297,10 @@ def tune_model(
 
     # ---- Round 1: broad exploration ----
     random.seed(random_seed)
+    fold_timeout = int(os.environ.get("FORECASTIQ_FOLD_TIMEOUT", 120))
     best_params, best_fold_scores, best_mae = _adaptive_search_round(
         selector, model_type, space, folds, exog_data=exog_data, frequency=frequency,
+        fold_timeout=fold_timeout,
     )
 
     if not best_fold_scores or len(best_fold_scores) < 2:
@@ -319,6 +329,7 @@ def tune_model(
     if any(len(v) < len(space.get(k, [])) for k, v in narrowed_space.items() if k in space):
         ref_params, ref_fold_scores, ref_mae = _adaptive_search_round(
             selector, model_type, narrowed_space, folds, exog_data=exog_data, frequency=frequency,
+            fold_timeout=fold_timeout,
         )
         if ref_fold_scores and ref_mae < best_mae:
             best_params = ref_params

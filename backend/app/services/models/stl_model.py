@@ -154,8 +154,8 @@ class STLForecaster(BaseForecaster):
             forecast = trend + seasonal
             # CI based on residual std
             if self._resid_std > 0:
-                lo = forecast - 1.96 * self._resid_std
-                hi = forecast + 1.96 * self._resid_std
+                lo = forecast - 1.96 * self._resid_std * np.sqrt(i + 1)
+                hi = forecast + 1.96 * self._resid_std * np.sqrt(i + 1)
             else:
                 lo = forecast * 0.85
                 hi = forecast * 1.15

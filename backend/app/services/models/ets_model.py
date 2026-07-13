@@ -118,7 +118,7 @@ class ETSForecaster(BaseForecaster):
         if self._last_date is None:
             raise ValueError("Model not fitted")
         future_idx = self._future_index(horizon)
-        fallback_val = getattr(self, '_fallback_mean', None) or (float(self._train_values[-1]) if self._train_values is not None and len(self._train_values) else 0.0)
+        fallback_val = getattr(self, '_fallback_mean', None) or (float(self._train_df[self._value_col].iloc[-1]) if hasattr(self, '_train_df') and self._train_df is not None and len(self._train_df) > 0 else 0.0)
         if self._fitted_model is not None:
             try:
                 mean = self._fitted_model.forecast(horizon)

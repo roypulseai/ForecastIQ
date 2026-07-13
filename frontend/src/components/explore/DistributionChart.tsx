@@ -18,6 +18,7 @@ interface DistributionChartProps {
   bins?: number;
   title?: string;
   height?: number;
+  valueLabel?: string;
 }
 
 interface Bin {
@@ -59,6 +60,7 @@ export function DistributionChart({
   bins = 20,
   title = 'Distribution',
   height = 280,
+  valueLabel = 'Value',
 }: DistributionChartProps): ReactNode {
   const theme = useTheme();
 
@@ -105,7 +107,7 @@ export function DistributionChart({
                   border: `1px solid ${theme.palette.divider}`,
                   fontSize: 12,
                 }}
-                labelFormatter={(label: number) => `Value: ${formatNumber(label, 2)}`}
+                labelFormatter={(label: number) => `${valueLabel}: ${formatNumber(label, 2)}`}
                 formatter={(value: number) => [value, 'Count']}
               />
               <Bar dataKey="count" radius={[4, 4, 0, 0]}>

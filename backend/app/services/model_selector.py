@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import logging
+import os
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -561,13 +563,19 @@ class ModelSelector:
         fixed-size test window.  Returns mean + std of MAE / RMSE / MAPE
         across folds, plus per-fold details.
         """
+        fold_timeout = int(os.environ.get("FORECASTIQ_FOLD_TIMEOUT", 120))
         if df.empty or value_col not in df.columns or date_col not in df.columns:
             return {"mae": None, "rmse": None, "mape": None}
-        ts = df[[date_col, value_col]].copy()
+        exog_cols = [c for c in df.columns if c not in (date_col, value_col)]
+        ts = df[[date_col, value_col] + exog_cols].copy()
         ts[date_col] = pd.to_datetime(ts[date_col], errors="coerce")
         ts[value_col] = pd.to_numeric(ts[value_col], errors="coerce")
         ts = ts.dropna().sort_values(date_col).reset_index(drop=True)
-        ts = ts.groupby(date_col, as_index=False)[value_col].sum()
+        agg_dict = {value_col: "sum"}
+        for c in exog_cols:
+            if c in ts.columns:
+                agg_dict[c] = "first"
+        ts = ts.groupby(date_col, as_index=False).agg(agg_dict)
         n = len(ts)
         if n < max(horizon * 2, 14):
             return {"mae": None, "rmse": None, "mape": None, "note": "insufficient_data"}
@@ -590,8 +598,12 @@ class ModelSelector:
                 continue
             try:
                 model = self.get_model(model_type, params)
-                model.fit(train, date_col, value_col, frequency=frequency)
-                preds = model.forecast(len(test))
+                def _fit_and_predict():
+                    m_ = self.get_model(model_type, params)
+                    m_.fit(train, date_col, value_col, frequency=frequency)
+                    return m_.forecast(len(test))
+                with ThreadPoolExecutor(max_workers=1) as _pool:
+                    preds = _pool.submit(_fit_and_predict).result(timeout=fold_timeout)
                 pred_values = np.array([self._safe_float(p.get("forecast", 0.0)) for p in preds])
                 actuals = test[value_col].astype(float).values
                 m = min(len(pred_values), len(actuals))
@@ -612,6 +624,8 @@ class ModelSelector:
                     "r2": r2,
                     "fold": i, "train_size": len(train), "test_size": len(test)
                 })
+            except FuturesTimeoutError:
+                logger.warning("CV fold %d timed out for %s after %ds", i, model_type, fold_timeout)
             except Exception as e:
                 logger.debug("CV fold %d failed for %s: %s", i, model_type, e)
 

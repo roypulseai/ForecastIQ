@@ -57,25 +57,19 @@ setup-without-docker.bat
 
 ### Step 1: Upload Your Data
 
-1. Navigate to the **Forecast** page
-2. Click **Upload Data** or drag-and-drop your file
-3. Supported formats: CSV, Excel (.xlsx), Parquet
+1. Navigate to the **Upload** page (sidebar)
+2. Click **Choose File** or drag-and-drop your file
+3. Supported formats: CSV, Excel (.xlsx, .xls)
 
 **Data Format Requirements:**
 
 | Column | Required | Description |
 |--------|----------|-------------|
-| `date` | Yes | Date column (YYYY-MM-DD or similar) |
-| `value` | Yes | Target metric to forecast (sales, units, revenue) |
+| Date column | Yes | Auto-detected date column (any date format) |
+| Numeric column | Yes | Target metric to forecast (sales, units, revenue) |
 | Category columns | No | e.g., `region`, `sku`, `store`, `product` |
 
-**Example CSV:**
-```csv
-date,value,region,sku
-2024-01-01,150,North,SKU001
-2024-01-02,165,North,SKU001
-2024-01-01,200,South,SKU002
-```
+Column names are preserved from your file (no renaming needed).
 
 ### Step 2: Configure Your Forecast
 
@@ -163,7 +157,7 @@ Bar chart comparing models across metrics:
 | **MAPE** | Average percentage error | 0% |
 | **R²** | How well model fits data | 1.0 |
 | **Forecast Accuracy %** | 100 - MAPE | 100% |
-| **Accuracy Grade** | Letter grade (A-F) | A |
+| **Accuracy Grade** | Quality label | Excellent |
 
 ---
 
@@ -244,11 +238,11 @@ Example: MAPE of 13% → 87% Accuracy
 **Interpretation:**
 | Accuracy | Grade | Meaning |
 |----------|-------|---------|
-| 90-100% | A | Excellent - Highly reliable forecast |
-| 80-89% | B | Good - Reliable for planning |
-| 70-79% | C | Fair - Use with caution |
-| 60-69% | D | Poor - Consider different approach |
-| <60% | F | Failing - Review model/data |
+| 90-100% | Excellent | Highly reliable forecast |
+| 80-89% | Good | Reliable for planning |
+| 70-79% | Fair | Use with caution |
+| 60-69% | Marginal | Consider different approach |
+| <60% | Poor | Review model/data |
 
 ### CV Accuracy vs Backtest Accuracy
 
@@ -318,12 +312,13 @@ Where:
 
 ### Q: Can I save and reuse models?
 
-Yes! Use the **Model Registry**:
+Yes! Use the **Model Registry** (Models page):
 
-1. After running forecast, click **Save Model**
-2. Give it a name and optional tags
-3. Later, load saved model for quick forecasts
-4. Or call `/v1/models/{id}/forecast` via API
+1. Navigate to the **Models** page
+2. Click **Train & save** to train and persist a model as a pickle
+3. Give it a name and optional tags
+4. Later, click the forecast icon on any saved model to load and forecast without retraining
+5. Or call `/v1/models/{id}/forecast` via API
 
 ### Q: How do I handle multiple SKUs or regions?
 
@@ -361,18 +356,6 @@ Possible causes:
 4. **Model updates:** Algorithm improvements
 
 **Solution:** Use saved models for reproducible results.
-
----
-
-## Appendix: Keyboard Shortcuts
-
-| Shortcut | Action |
-|----------|--------|
-| `Ctrl/Cmd + K` | Open command palette |
-| `Ctrl/Cmd + S` | Save current forecast |
-| `Ctrl/Cmd + E` | Export results |
-| `Ctrl/Cmd + R` | Re-run forecast |
-| `Esc` | Close modal/dialog |
 
 ---
 

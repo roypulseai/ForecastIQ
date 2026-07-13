@@ -24,6 +24,7 @@ interface TimeSeriesChartProps {
   title?: string;
   height?: number;
   yLabel?: string;
+  seriesLabel?: string;
   highlightOutliers?: boolean;
 }
 
@@ -65,6 +66,7 @@ export function TimeSeriesChart({
   title,
   height = 360,
   yLabel,
+  seriesLabel = 'Value',
   highlightOutliers = true,
 }: TimeSeriesChartProps): ReactNode {
   const theme = useTheme();
@@ -98,7 +100,7 @@ export function TimeSeriesChart({
           <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
             <Typography variant="h5">{title}</Typography>
             <Stack direction="row" spacing={2}>
-              <LegendDot color={theme.palette.primary.main} label="Value" />
+              <LegendDot color={theme.palette.primary.main} label={seriesLabel} />
               <LegendDot color={theme.palette.secondary.main} label="Linear trend" />
               {highlightOutliers && (
                 <LegendDot color={theme.palette.error.main} label="Outlier" />
@@ -142,7 +144,7 @@ export function TimeSeriesChart({
                 labelFormatter={(label: string) => formatShortDate(label)}
                 formatter={(value: number, name: string) => [
                   formatNumber(value, 2),
-                  name === 'value' ? 'Value' : 'Trend',
+                  name === 'value' ? seriesLabel : 'Trend',
                 ]}
               />
               <Area
@@ -182,7 +184,7 @@ export function TimeSeriesChart({
               <Legend
                 content={() => (
                   <Stack direction="row" spacing={3} justifyContent="center" sx={{ pt: 1 }}>
-                    <LegendDot color={theme.palette.primary.main} label="Value" />
+                    <LegendDot color={theme.palette.primary.main} label={seriesLabel} />
                     <LegendDot color={theme.palette.secondary.main} label="Linear trend" />
                     {highlightOutliers && (
                       <LegendDot color={theme.palette.error.main} label="Outlier" />

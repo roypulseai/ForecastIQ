@@ -55,6 +55,7 @@ logger = logging.getLogger(__name__)
 MAX_PARALLEL_WORKERS = max(2, min(os.cpu_count() or 4, int(os.environ.get("FORECASTIQ_WORKERS", 8))))
 DOWNSAMPLE_THRESHOLD = 5000  # rows
 WEEKLY_AGG_SPAN_DAYS = 365 * 5
+MODEL_TIMEOUT = int(os.environ.get("FORECASTIQ_MODEL_TIMEOUT", 300))  # seconds per model fit+forecast
 
 # Calendar days per frequency period (for converting backtest_overlap from days → periods)
 _DAYS_PER_PERIOD = {"D": 1, "W": 7, "F": 14, "14D": 14, "M": 30, "ME": 30, "Q": 91, "QE": 91, "Y": 365, "YE": 365}
@@ -390,10 +391,10 @@ class ForecasterService:
         # ---- 0) Optional hyperparameter tuning ----
         # Runs adaptive two-round search with expanding-window CV for each model.
         # Tuned parameters are merged into the user-supplied params.
+        n_models = len(models)
         tuning_results: Dict[str, Any] = {}
         if tune_hyperparameters:
             cv_df = (train_df if has_split else sales_df)
-            n_models = len(models)
             for idx, m in enumerate(models):
                 try:
                     if progress_cb:
@@ -477,7 +478,10 @@ class ForecasterService:
                 for fut in as_completed(fut_to_model):
                     m = fut_to_model[fut]
                     try:
-                        cv_results[m] = fut.result()
+                        cv_results[m] = fut.result(timeout=MODEL_TIMEOUT)
+                    except TimeoutError:
+                        logger.warning("CV timed out for %s after %ds", m, MODEL_TIMEOUT)
+                        cv_results[m] = {"mae": None, "rmse": None, "mape": None, "error": "timeout"}
                     except Exception as e:
                         logger.warning("CV error for %s: %s", m, e)
                         cv_results[m] = {"mae": None, "rmse": None, "mape": None, "error": str(e)}
@@ -522,7 +526,10 @@ class ForecasterService:
                 for fut in as_completed(fut_to_model):
                     m = fut_to_model[fut]
                     try:
-                        result = fut.result()
+                        result = fut.result(timeout=MODEL_TIMEOUT)
+                    except TimeoutError:
+                        logger.warning("Model %s timed out after %ds", m, MODEL_TIMEOUT)
+                        result = (m, None, [], [], {"error": f"timeout after {MODEL_TIMEOUT}s"}, {}, {}, f"timeout after {MODEL_TIMEOUT}s")
                     except Exception as e:
                         logger.error("Model %s crashed: %s", m, e)
                         result = (m, None, [], [], {"error": str(e)}, {}, {}, str(e))
@@ -532,9 +539,19 @@ class ForecasterService:
                         progress_cb(0.20 + 0.55 * (completed / n_models), f"Trained {completed}/{n_models} models")
         else:
             for m in models:
-                result = _fit_and_forecast_one(
-                    m, params, _fit_input(m), date_col, value_col, horizon, exog_data, effective_frequency
-                )
+                try:
+                    with ThreadPoolExecutor(max_workers=1) as _seq_pool:
+                        fut = _seq_pool.submit(
+                            _fit_and_forecast_one,
+                            m, params, _fit_input(m), date_col, value_col, horizon, exog_data, effective_frequency,
+                        )
+                        result = fut.result(timeout=MODEL_TIMEOUT)
+                except TimeoutError:
+                    logger.warning("Model %s timed out after %ds (sequential)", m, MODEL_TIMEOUT)
+                    result = (m, None, [], [], {"error": f"timeout after {MODEL_TIMEOUT}s"}, {}, {}, f"timeout after {MODEL_TIMEOUT}s")
+                except Exception as e:
+                    logger.error("Model %s crashed: %s", m, e)
+                    result = (m, None, [], [], {"error": str(e)}, {}, {}, str(e))
                 per_model[m] = _assemble_model_result(m, result, cv_results)
                 completed += 1
                 if progress_cb:
@@ -946,9 +963,15 @@ class ForecasterService:
                 for fut in as_completed(cat_futures):
                     cat_val, m = cat_futures[fut]
                     try:
-                        result_tuple = fut.result()
+                        result_tuple = fut.result(timeout=MODEL_TIMEOUT)
                         cv_for_cat = cat_cv_results.get(cat_val, {})
                         cat_results[cat_val][m] = _assemble_model_result(m, result_tuple, cv_for_cat)
+                    except TimeoutError:
+                        logger.warning("Category %s model %s timed out after %ds", cat_val, m, MODEL_TIMEOUT)
+                        cat_results[cat_val][m] = {
+                            "model_name": m, "metrics": {"error": f"timeout after {MODEL_TIMEOUT}s"},
+                            "forecast_values": [], "error": f"timeout after {MODEL_TIMEOUT}s",
+                        }
                     except Exception as e:
                         logger.warning("Category %s model %s failed: %s", cat_val, m, e)
                         cat_results[cat_val][m] = {

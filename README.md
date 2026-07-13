@@ -2,11 +2,11 @@
 
 **Advanced time series forecasting for data scientists.**
 
-ForecastIQ is a self-hosted platform for sales forecasting with 9 built-in models, automatic model selection, external factor integration, and a built-in model registry (train/save/load) that mirrors the typical data-science workflow.
+ForecastIQ is a self-hosted platform for sales forecasting with 10 built-in models, automatic model selection, external factor integration, and a built-in model registry (train/save/load) that mirrors the typical data-science workflow.
 
 ## Features
 
-- **9 forecasting models**: ARIMA, SARIMAX, Prophet, LightGBM, XGBoost, WMA, ETS, Theta, STL
+- **10 forecasting models**: ARIMA, SARIMAX, Prophet, LightGBM, XGBoost, WMA, ETS, Theta, STL, AutoML
 - **Automatic model selection** based on data characteristics
 - **External factors**: media plan, promotions, holidays, events, weather, competitor, economic
 - **Ensemble support**: combine 2+ models with weighted averaging
@@ -101,7 +101,7 @@ API keys: see [API_KEYS.md](docs/API_KEYS.md).
                        │
                        ▼
               ┌────────────────┐
-              │  9 ML models   │
+               │  10 ML models  │
               │  + Model       │
               │  registry      │
               └────────────────┘

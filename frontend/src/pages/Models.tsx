@@ -45,6 +45,7 @@ import { getErrorMessage } from '../services/api';
 import { formatDate, formatNumber } from '../utils/format';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { useToast } from '../components/common/ToastProvider';
+import { useStore } from '../store/appStore';
 import { MODEL_LABELS, type SavedModelMeta } from '../types';
 
 const ALL_MODEL_TYPES = ['automl', 'arima', 'sarimax', 'prophet', 'lightgbm', 'xgboost', 'wma', 'ets', 'theta', 'stl'] as const;
@@ -68,6 +69,7 @@ export function ModelsPage(): ReactNode {
     model_id: string;
     forecast_values: Array<{ date: string; forecast: number; lower_ci: number; upper_ci: number; baseline?: number | null; uplift?: number | null }>;
   } | null>(null);
+  const analysisData = useStore((s) => s.analysisData);
   const { showToast } = useToast();
   const [confirmDeleteModel, setConfirmDeleteModel] = useState<string | null>(null);
 
@@ -110,8 +112,8 @@ export function ModelsPage(): ReactNode {
         file_id: salesFile.file_id,
         train_test_split: params.trainTestSplit,
         horizon: params.horizon,
-        date_column: 'date',
-        target_column: 'value',
+        date_column: analysisData?.validation?.date_column ?? 'date',
+        target_column: analysisData?.validation?.value_column ?? 'value',
         frequency: 'D',
         name: params.name,
         notes: params.notes,

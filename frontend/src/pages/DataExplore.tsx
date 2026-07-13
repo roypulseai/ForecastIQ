@@ -318,13 +318,14 @@ export function DataExplorePage(): ReactNode {
           <TimeSeriesChart
             data={values.map((v, i) => ({ date: dates[i] ?? '', value: v }))}
             title={metricColumn ? `${metricColumn} over time` : `Business Metric (${data.validation.value_column}) over time`}
+            seriesLabel={metricColumn || data.validation.value_column || 'Value'}
           />
         </Grid>
         <Grid item xs={12} lg={4}>
           <Card sx={{ height: '100%' }}>
             <CardContent>
               <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
-                <Typography variant="h5">Value distribution</Typography>
+                <Typography variant="h5">{metricColumn || data.validation.value_column || 'Value'} distribution</Typography>
                 <TextField
                   size="small"
                   select
@@ -340,7 +341,7 @@ export function DataExplorePage(): ReactNode {
                   ))}
                 </TextField>
               </Stack>
-              <DistributionChart values={values} bins={bins} title="" height={300} />
+              <DistributionChart values={values} bins={bins} title="" height={300} valueLabel={metricColumn || data.validation.value_column || 'Value'} />
             </CardContent>
           </Card>
         </Grid>

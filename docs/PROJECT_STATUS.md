@@ -1,12 +1,12 @@
 # ForecastIQ - Project Status
 
-**Last Updated:** July 9, 2026
+**Last Updated:** July 13, 2026
 
 ---
 
 ## Project Overview
 
-ForecastIQ is a self-hosted advanced sales forecasting platform built for data scientists and business analysts. It provides 9 built-in forecasting models, automatic model selection, external factor integration, ensemble support, and a model registry for saving/loading trained models.
+ForecastIQ is a self-hosted advanced sales forecasting platform built for data scientists and business analysts. It provides 10 built-in forecasting models, automatic model selection, external factor integration, ensemble support, and a model registry for saving/loading trained models.
 
 **Tech Stack:**
 - Frontend: React 18 + TypeScript + Vite + Material UI 5 + TanStack Query + Recharts
@@ -20,24 +20,25 @@ ForecastIQ is a self-hosted advanced sales forecasting platform built for data s
 ### Core Forecasting
 | Feature | Status | Notes |
 |---------|--------|-------|
-| 9 Forecasting Models | ✅ Complete | ARIMA, SARIMAX, Prophet, LightGBM, XGBoost, WMA, ETS, Theta, STL |
+| 10 Forecasting Models | ✅ Complete | ARIMA, SARIMAX, Prophet, LightGBM, XGBoost, WMA, ETS, Theta, STL, AutoML |
 | Automatic Model Selection | ✅ Complete | Based on data characteristics |
 | Ensemble Support | ✅ Complete | Combine 2+ models with weighted averaging |
 | Multi-category Hierarchical Forecasting | ✅ Complete | Parallel execution with composite keys |
 | Backtest Zone with Re-forecast | ✅ Complete | Overlap-based visual comparison |
 | Auto Backtest (20% default) | ✅ Complete | When no backtest_overlap specified |
+| Hyperparameter Tuning | ✅ Complete | Adaptive two-round search with per-fold timeout |
+| AutoML | ✅ Complete | Auto-selects best algorithm from multiple candidates |
 
 ### Accuracy & Evaluation
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Train/Test Split Evaluation | ✅ Complete | Held-out test metrics |
-| Cross-Validation (CV) | ✅ Complete | Expanding window CV with 5 folds |
+| Cross-Validation (CV) | ✅ Complete | Expanding window CV with 5 folds + per-fold timeout |
 | Backtest Metrics | ✅ Complete | MAE, RMSE, MAPE, R² computed automatically |
 | CV Metrics | ✅ Complete | Per-fold and aggregated |
 | R² Computation | ✅ Complete | Both CV and backtest |
-| Forecast Accuracy % | ✅ Complete | Business-friendly metric |
-| Accuracy Grade | ✅ Complete | A/B/C/D/F grading |
-| Consolidated Accuracy Display | ✅ Complete | Single KPI card, updates on model selection |
+| Forecast Accuracy % | ✅ Complete | Business-friendly metric (100 - MAPE) |
+| Accuracy Grade | ✅ Complete | Excellent/Good/Fair/Marginal/Poor labels |
 
 ### External Factors
 | Feature | Status | Notes |
@@ -45,20 +46,21 @@ ForecastIQ is a self-hosted advanced sales forecasting platform built for data s
 | Media Plan Integration | ✅ Complete | External data |
 | Promotions | ✅ Complete | Lift isolation metrics |
 | Holidays | ✅ Complete | Country-specific |
-| Events | ✅ Complete | Auto-detect regional |
+| Events | ✅ Complete | Auto-detect regional (AutoEvents detector) |
 | Weather | ✅ Complete | External data |
 | Competitor Data | ✅ Complete | External data |
 | Economic Indicators | ✅ Complete | External data |
+| Auto Events Detection | ✅ Complete | Auto-detects regional events, festivals, sports |
 
 ### Data & Storage
 | Feature | Status | Notes |
 |---------|--------|-------|
 | CSV Upload | ✅ Complete | |
 | Excel Upload | ✅ Complete | |
-| Parquet Upload | ✅ Complete | |
+| Parquet Upload | ⚠️ Planned | Documented but not yet in ALLOWED_EXTENSIONS |
 | Large Dataset Optimization | ✅ Complete | 5+ years daily → weekly aggregation |
-| Model Registry | ✅ Complete | Save/load trained models |
-| Parallel Model Training | ✅ Complete | ThreadPoolExecutor |
+| Model Registry | ✅ Complete | Save/load trained models as pickles |
+| Parallel Model Training | ✅ Complete | ThreadPoolExecutor with per-model timeout |
 
 ### UI/UX
 | Feature | Status | Notes |
@@ -69,6 +71,9 @@ ForecastIQ is a self-hosted advanced sales forecasting platform built for data s
 | Metrics Dashboard | ✅ Complete | KPI cards |
 | Insights Panel | ✅ Complete | External factor analysis |
 | Category Selector | ✅ Complete | SKU-level granularity |
+| Data Explorer | ✅ Complete | Interactive data visualization |
+| Dashboard | ✅ Complete | Overview with recent forecasts |
+| What-If Analysis | ✅ Complete | Scenario planning |
 
 ---
 
@@ -100,36 +105,43 @@ ForecastIQ is a self-hosted advanced sales forecasting platform built for data s
 - **Missing:** Bottom-up/top-down reconciliation to aggregate forecasts
 - **Options:** Would need implementation: bottom-up, top-down, or middle-out
 
+### CV Exogenous Variables
+- **Status:** Partially fixed (columns preserved but not passed to model.fit)
+- **Issue:** CV fold fitting doesn't pass exog_data to models like SARIMAX, LightGBM, XGBoost
+- **Impact:** Models with regressors may be unfairly evaluated in CV
+
 ---
 
 ## Recent Changes
 
-### July 9, 2026
-- **Fixed backtest overlap slider stuck at 0:** `analyze.py` route now forwards `unique_dates` from `validate_sales()` to the frontend, so `maxBacktestOverlap` properly computes > 0
-- **Fixed actuals line not rendering:** `Results.tsx` now uses `analysisData.validation.date_column`/`value_column` instead of hardcoded `'date'`/`'value'` column names, fixing cases where uploaded files use different column names (e.g. `Date`/`Sales`)
-- **Backtest overlap uses unique dates** (not total rows): Fixed clamping, forecaster, and frontend slider to use `nunique()` on date column, preventing inflation from multi-row-per-date SKU-level data
-- **Date-based split in backtest:** Changed from `iloc` row-based to date-based (`< split_date` / `>= split_date`) so overlap_n corresponds exactly to N unique dates
-- **Auto-backtest fires earlier:** Removed `train_test_split >= 1.0` guard; runs whenever data > 50 rows (with descriptive log warnings)
-- **Best Model uses backend ranking:** Fixed `Results.tsx` to read `resultQuery.data.best_model` instead of hardcoding to first model in request list
-- **KPI cards respond to model selection:** Single "Forecast accuracy" card now shows selected model's name and metrics; "Best model" card remains as reference
-- **Column selectors filter by type:** Date dropdown shows only `'date'` typed columns; Target dropdown shows only `'numeric'` typed columns
-- **Backtest structural fix:** Rewrote backtest section in `forecaster.py` to fix broken logic (code was trapped inside skip `elif` branch)
-- **Data Explore dynamic title:** Changed "Sales over time" → "Business Metric ({value_column}) over time"
-- **Explore column selector:** Added dropdown to switch between numeric columns in Explore tab
+### July 13, 2026
+- **Fixed hardcoded columns in Models.tsx:** Training now uses actual column names from upload analysis instead of hardcoded 'date'/'value'
+- **Fixed n_models NameError in forecaster.py:** Moved variable definition before conditional block
+- **Fixed STL CI scaling:** Confidence intervals now widen with sqrt(horizon) like other models
+- **Fixed ETS _train_values AttributeError:** Fallback now uses train_df correctly
+- **Fixed CV dropping exog columns:** Preserved through groupby for better model evaluation
+- **Fixed accuracy grade labels:** Documentation corrected from A-F to Excellent/Good/Fair/Marginal/Poor
+- **Removed fabricated keyboard shortcuts:** USER_GUIDE no longer references non-existent shortcuts
 
-### July 8, 2026
-- **Auto Backtest (20% default):** When no `backtest_overlap` specified, system now automatically uses latest 20% of data as backtest period for business users
-- **Backtest Metrics:** MAE, RMSE, MAPE, R² computed from backtest forecasts vs actuals
-- **CV/Backtest Display:** UI now shows both backtest accuracy and CV accuracy
-- **Ensemble Metrics:** Ensemble models now compute and display accuracy metrics
-- **R² Support:** Added R² computation to CV (per-fold and aggregated) and backtest metrics
+### July 9, 2026
+- Fixed backtest overlap slider stuck at 0: analyze.py route now forwards unique_dates
+- Fixed actuals line not rendering: Results.tsx uses validation.date_column/value_column
+- Backtest overlap uses unique dates (not total rows)
+- Date-based split in backtest
+- Auto-backtest fires earlier
+- Best Model uses backend ranking
+- KPI cards respond to model selection
+- Column selectors filter by type
+- Backtest structural fix: rewrote backtest section in forecaster.py
 
 ### Earlier Updates
-- Multi-category hierarchical forecasting with parallel execution
+- Auto Backtest (20% default)
+- Backtest Metrics: MAE, RMSE, MAPE, R²
+- CV/Backtest Display
+- Ensemble Metrics
+- R² Support
+- Multi-category hierarchical forecasting
 - Category selector handles SKU-level granularity
-- Fixed backtest zone overlap handling
-- Results table dynamic category columns
-- ForecastChart category results support
 
 ---
 
@@ -146,6 +158,19 @@ ForecastIQ is a self-hosted advanced sales forecasting platform built for data s
 | `/v1/models/train` | POST | Train with split, save best |
 | `/v1/models/{id}/forecast` | POST | Forecast with saved model |
 | `/v1/models/upload` | POST | Upload pickle model |
+| `/v1/models` | GET | List saved models |
+| `/v1/models/{id}` | PUT | Update model metadata |
+| `/v1/models/{id}` | DELETE | Delete saved model |
+| `/v1/models/{id}/download` | GET | Download model pickle |
+| `/v1/jobs` | GET | List background jobs |
+| `/v1/jobs/{id}` | GET | Get job status |
+
+### What-If & Public API
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/v1/what-if` | POST | Run what-if scenario analysis |
+| `/v1/public/models` | GET | List public models (API key auth) |
+| `/v1/public/forecasts` | GET | List public forecasts |
 
 ### Health & Info
 | Endpoint | Method | Description |
@@ -161,36 +186,64 @@ ForecastIQ is a self-hosted advanced sales forecasting platform built for data s
 ForecastIQ/
 ├── backend/
 │   └── app/
+│       ├── core/
+│       │   ├── config.py           # Configuration
+│       │   ├── jobs.py             # Background job manager
+│       │   └── storage.py          # Parquet/JSON file storage
 │       ├── services/
-│       │   ├── forecaster.py          # Main forecast orchestration
-│       │   ├── model_selector.py     # Model selection & CV
-│       │   ├── data_processor.py      # Data handling
-│       │   ├── auto_events.py         # Event detection
-│       │   └── models/                # Individual model implementations
-│       │       ├── registry.py        # Model registry
+│       │   ├── forecaster.py       # Main forecast orchestration (1700+ lines)
+│       │   ├── model_selector.py   # Model selection & CV
+│       │   ├── data_processor.py   # Data handling & normalization
+│       │   ├── auto_events.py      # Event detection & AutoEvents
+│       │   ├── decomposition.py    # Time series decomposition
+│       │   ├── hyperparameter_tuner.py  # Hyperparameter tuning
+│       │   └── models/
+│       │       ├── base.py         # BaseForecaster interface
+│       │       ├── registry.py     # Model registry (pickle persistence)
+│       │       ├── arima.py        # ARIMA & SARIMAX
 │       │       ├── prophet_model.py
-│       │       ├── arima.py
 │       │       ├── lightgbm_model.py
-│       │       └── ...
+│       │       ├── xgboost_model.py
+│       │       ├── ets_model.py
+│       │       ├── wma_model.py
+│       │       ├── theta_model.py
+│       │       ├── stl_model.py
+│       │       └── automl_model.py
+│       ├── api/
+│       │   └── routes/
+│       │       ├── forecast.py     # Forecast CRUD endpoints
+│       │       └── upload.py       # Upload processing
 │       └── schemas/
-│           └── forecast.py            # Request/response schemas
+│           ├── common.py           # Shared schemas (ForecastFrequency, etc.)
+│           └── forecast.py         # Request/response schemas
 ├── frontend/
 │   └── src/
 │       ├── pages/
-│       │   └── Results.tsx            # Main results page
+│       │   ├── Forecast.tsx        # Forecast configuration page
+│       │   ├── Results.tsx         # Results display
+│       │   ├── DataExplore.tsx     # Data exploration
+│       │   ├── DataUpload.tsx      # Data upload
+│       │   ├── Models.tsx          # Model registry
+│       │   └── Dashboard.tsx       # Overview dashboard
 │       ├── components/
-│       │   └── results/               # Result components
-│       │       ├── MetricsCards.tsx   # KPI cards
-│       │       ├── ForecastChart.tsx  # Forecast visualization
-│       │       ├── ModelComparison.tsx
-│       │       └── ...
-│       └── types/
-│           └── index.ts               # TypeScript types
+│       │   ├── results/            # Result components
+│       │   │   ├── MetricsCards.tsx
+│       │   │   ├── ForecastChart.tsx
+│       │   │   └── ModelComparison.tsx
+│       │   ├── explore/            # Explore components
+│       │   │   ├── TimeSeriesChart.tsx
+│       │   │   └── DistributionChart.tsx
+│       │   └── common/             # Shared components
+│       ├── hooks/                  # React Query hooks
+│       ├── services/               # API client
+│       ├── store/                  # Zustand state
+│       └── types/                  # TypeScript types
 ├── docs/
-│   ├── API.md
-│   ├── MODELS.md
-│   ├── DATA_FORMAT.md
-│   └── API_KEYS.md
+│   ├── API.md                     # Full API reference
+│   ├── API_KEYS.md                # API key management
+│   ├── MODELS.md                  # Model documentation
+│   ├── DATA_FORMAT.md             # Data format requirements
+│   └── USER_GUIDE.md              # User guide
 └── README.md
 ```
 
@@ -205,6 +258,8 @@ ForecastIQ/
 | `PUBLIC_API_ENABLED` | `true` | Requires API key for `/v1/*` |
 | `DEFAULT_API_KEY_TIER` | `free` | Default tier for new keys |
 | `LOG_LEVEL` | `INFO` | DEBUG/INFO/WARNING/ERROR |
+| `FORECASTIQ_MODEL_TIMEOUT` | `300` | Per-model timeout in seconds |
+| `FORECASTIQ_FOLD_TIMEOUT` | `120` | Per-CV-fold timeout in seconds |
 
 ---
 
@@ -215,6 +270,9 @@ ForecastIQ/
 3. **SARIMAX Binary Exog:** Uses 0/1 promo flags instead of quantitative values
 4. **No Future Promotions:** Only historical promotion data supported
 5. **No Hierarchical Reconciliation:** Per-category forecasts don't reconcile to aggregate
+6. **CV Exog Gap:** Cross-validation doesn't pass exog_data to model.fit(), so models with regressors may be unfairly evaluated
+7. **In-memory Job State:** Background jobs lost on backend restart
+8. **ML Test Metrics:** Evaluated on full dataset, not held-out test split
 
 ---
 
@@ -230,6 +288,7 @@ ForecastIQ/
    - SARIMAX quantitative exog values
    - Future promotion support
    - Seasonality/decomposition chart enhancement
+   - Add Parquet to ALLOWED_EXTENSIONS
 
 3. **Lower Priority:**
    - Additional model types
