@@ -556,6 +556,7 @@ class ModelSelector:
         horizon: int = 7,
         n_folds: int = 5,
         frequency: str = "D",
+        exog_data: Optional[Dict[str, pd.DataFrame]] = None,
     ) -> Dict[str, Any]:
         """Expanding-window time-series cross-validation.
 
@@ -600,7 +601,7 @@ class ModelSelector:
                 model = self.get_model(model_type, params)
                 def _fit_and_predict():
                     m_ = self.get_model(model_type, params)
-                    m_.fit(train, date_col, value_col, frequency=frequency)
+                    m_.fit(train, date_col, value_col, exog_data=exog_data or {}, frequency=frequency)
                     return m_.forecast(len(test))
                 with ThreadPoolExecutor(max_workers=1) as _pool:
                     preds = _pool.submit(_fit_and_predict).result(timeout=fold_timeout)

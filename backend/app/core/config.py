@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     )
 
     MAX_UPLOAD_SIZE: int = 100 * 1024 * 1024  # 100 MB
-    ALLOWED_EXTENSIONS: List[str] = [".csv", ".xlsx", ".xls"]
+    ALLOWED_EXTENSIONS: List[str] = [".csv", ".xlsx", ".xls", ".parquet"]
 
     # CORS: explicit origins. '*' is incompatible with credentials=True.
     # Pydantic Settings auto-parses list fields from JSON or comma-separated env values.

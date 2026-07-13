@@ -235,6 +235,8 @@ class DataProcessor:
             return DataProcessor._read_csv_smart(file_path)
         if ext in (".xlsx", ".xls"):
             return pd.read_excel(file_path)
+        if ext == ".parquet":
+            return pd.read_parquet(file_path)
         raise ValueError(f"Unsupported file format: {ext}")
 
     @staticmethod
@@ -255,6 +257,8 @@ class DataProcessor:
             return pd.read_csv(bio)
         if ext in (".xlsx", ".xls"):
             return pd.read_excel(io.BytesIO(content))
+        if ext == ".parquet":
+            return pd.read_parquet(io.BytesIO(content))
         raise ValueError(f"Unsupported file format: {ext}")
 
     @staticmethod

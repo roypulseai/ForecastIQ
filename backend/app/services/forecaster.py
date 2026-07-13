@@ -472,6 +472,7 @@ class ForecasterService:
                         min(7, horizon),
                         5,
                         effective_frequency,
+                        exog_data,
                     ): m
                     for m in models
                 }
@@ -490,7 +491,7 @@ class ForecasterService:
                 try:
                     cv_results[m] = self.selector.cross_validate(
                         _cv_input(m), date_col, value_col, m, params, horizon=min(7, horizon),
-                        frequency=effective_frequency,
+                        frequency=effective_frequency, exog_data=exog_data,
                     )
                 except Exception as e:
                     logger.warning("CV error for %s: %s", m, e)
@@ -886,7 +887,8 @@ class ForecasterService:
                     try:
                         bt_model = self.selector.get_model(m_name, params)
                         bt_model.fit(backtest_df, date_col, value_col, exog_data=exog_data or {}, frequency=effective_frequency)
-                        bt_fc = bt_model.forecast(len(backtest_actuals), exog_data=exog_data)
+                        bt_exog = _filter_exog_to_range(exog_data, backtest_actuals[date_col].iloc[0], backtest_actuals[date_col].iloc[-1], date_col) if exog_data else None
+                        bt_fc = bt_model.forecast(len(backtest_actuals), exog_data=bt_exog)
                         pm["backtest_forecast_values"] = bt_fc
                         bt_metrics = _compute_backtest_metrics(bt_fc, backtest_actuals, date_col, value_col)
                         pm["backtest_metrics"] = bt_metrics
@@ -939,6 +941,7 @@ class ForecasterService:
                         cat_cv = self.selector.cross_validate(
                             cat_df, date_col, value_col, m, params,
                             min(7, horizon), frequency=effective_frequency,
+                            exog_data=exog_data,
                         )
                         cat_cv_results[cat_val][m] = cat_cv
                     except Exception as e:
@@ -1191,6 +1194,7 @@ class ForecasterService:
                     cv = self.selector.cross_validate(
                         train_df, date_col, value_col, mtype, params,
                         horizon=min(7, test_horizon), frequency=frequency,
+                        exog_data=exog_data,
                     )
                     eval_metrics.cv_mae = cv.get("mae")
                     eval_metrics.cv_rmse = cv.get("rmse")
@@ -1433,6 +1437,28 @@ def _safe_dict(d: Any) -> Dict[str, Any]:
     if not isinstance(d, dict):
         return {}
     return to_python(d)
+
+
+def _filter_exog_to_range(
+    exog_data: Optional[Dict[str, pd.DataFrame]],
+    start: Any,
+    end: Any,
+    date_col: str,
+) -> Optional[Dict[str, pd.DataFrame]]:
+    """Filter each exog DataFrame to rows within [start, end]."""
+    if not exog_data:
+        return None
+    filtered = {}
+    start_ts = pd.Timestamp(start)
+    end_ts = pd.Timestamp(end)
+    for key, df in exog_data.items():
+        if df is None or df.empty or date_col not in df.columns:
+            filtered[key] = df
+            continue
+        mask = (pd.to_datetime(df[date_col], errors="coerce") >= start_ts) & \
+               (pd.to_datetime(df[date_col], errors="coerce") <= end_ts)
+        filtered[key] = df[mask].copy()
+    return filtered
 
 
 def _build_rankings(cv: Dict[str, Dict[str, float]]) -> List[Dict[str, Any]]:

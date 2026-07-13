@@ -356,11 +356,9 @@ class AutoMLForecaster(BaseForecaster):
                         av = float(actuals[i]) if not np.isnan(actuals[i]) else 0.0
                         residuals.append(av - pv)
                 except Exception:
-                    # Fallback: use future forecast shifted back (imperfect but better than garbage)
-                    preds = inner.forecast(len(df), exog_data=exog_data)
-                    for i, p in enumerate(preds[:len(actuals)]):
+                    for i in range(len(actuals)):
                         av = float(actuals[i]) if not np.isnan(actuals[i]) else 0.0
-                        pv = self._safe_float(p.get("forecast", 0))
+                        pv = float(actuals[i - 1]) if i > 0 and not np.isnan(actuals[i - 1]) else av
                         residuals.append(av - pv)
             else:
                 # No fitted model available, skip residual correction
