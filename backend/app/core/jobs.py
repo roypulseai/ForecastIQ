@@ -114,6 +114,8 @@ class JobManager:
         *,
         request: Optional[Dict[str, Any]] = None,
         on_progress: Optional[Callable[[float, str], None]] = None,
+        pass_progress: bool = False,
+        timeout: Optional[float] = None,
         **kwargs: Any,
     ) -> str:
         """Submit a job. Returns the job_id immediately."""
@@ -121,20 +123,36 @@ class JobManager:
         job = JobInfo(job_id=job_id, job_type=job_type, request=request)
         with self._lock:
             self._jobs[job_id] = job
-        # Wrap func so we can track status + progress + exception
+
+        job_deadline = time.time() + timeout if timeout else None
+
         def _runner() -> Any:
             job.status = JobStatus.RUNNING
             job.started_at = datetime.utcnow().isoformat() + "Z"
-            if on_progress:
-                on_progress(0.05, "Started")
             self._persist()
+            def _update_progress(progress: float, message: str):
+                if job_deadline and time.time() > job_deadline:
+                    raise TimeoutError(f"Job exceeded overall timeout of {timeout}s")
+                job.progress = progress
+                job.message = message
+                self._persist()
             try:
-                result = func(**kwargs)
+                if pass_progress:
+                    result = func(progress_cb=_update_progress, **kwargs)
+                else:
+                    result = func(**kwargs)
+                if job_deadline and time.time() > job_deadline:
+                    raise TimeoutError(f"Job exceeded overall timeout of {timeout}s")
                 job.result = result
                 job.status = JobStatus.COMPLETED
                 job.progress = 1.0
                 job.message = "Done"
                 return result
+            except TimeoutError:
+                logger.warning("Job %s timed out after overall deadline", job_id)
+                job.status = JobStatus.FAILED
+                job.error = "Forecast timed out. Try fewer models or a shorter horizon."
+                raise
             except Exception as e:
                 logger.exception("Job %s failed", job_id)
                 job.status = JobStatus.FAILED

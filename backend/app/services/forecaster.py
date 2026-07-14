@@ -885,13 +885,20 @@ class ForecasterService:
                     if pm.get("error"):
                         continue
                     try:
-                        bt_model = self.selector.get_model(m_name, params)
-                        bt_model.fit(backtest_df, date_col, value_col, exog_data=exog_data or {}, frequency=effective_frequency)
-                        bt_exog = _filter_exog_to_range(exog_data, backtest_actuals[date_col].iloc[0], backtest_actuals[date_col].iloc[-1], date_col) if exog_data else None
-                        bt_fc = bt_model.forecast(len(backtest_actuals), exog_data=bt_exog)
+                        def _bt_fit_and_forecast():
+                            bt_m = self.selector.get_model(m_name, params)
+                            bt_m.fit(backtest_df, date_col, value_col, exog_data=exog_data or {}, frequency=effective_frequency)
+                            bt_ex = _filter_exog_to_range(exog_data, backtest_actuals[date_col].iloc[0], backtest_actuals[date_col].iloc[-1], date_col) if exog_data else None
+                            return bt_m.forecast(len(backtest_actuals), exog_data=bt_ex)
+                        with ThreadPoolExecutor(max_workers=1) as _bt_pool:
+                            bt_fc = _bt_pool.submit(_bt_fit_and_forecast).result(timeout=MODEL_TIMEOUT)
                         pm["backtest_forecast_values"] = bt_fc
                         bt_metrics = _compute_backtest_metrics(bt_fc, backtest_actuals, date_col, value_col)
                         pm["backtest_metrics"] = bt_metrics
+                    except TimeoutError:
+                        logger.warning("Backtest timed out for %s after %ds", m_name, MODEL_TIMEOUT)
+                        pm["backtest_forecast_values"] = []
+                        pm["backtest_metrics"] = {}
                     except Exception as e:
                         logger.warning("Backtest re-forecast failed for %s: %s", m_name, e)
                         pm["backtest_forecast_values"] = []

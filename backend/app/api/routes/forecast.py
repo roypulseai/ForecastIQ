@@ -11,6 +11,7 @@ Async is recommended for large datasets (50k+ rows) or when running 5+ models.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
@@ -297,8 +298,8 @@ async def _create_forecast_impl(
     if async_mode:
         jm = get_job_manager()
 
-        def _task() -> Dict[str, Any]:
-            result = service.run(sales_df, request_dict, exog_data=exog_data)
+        def _task(progress_cb=None) -> Dict[str, Any]:
+            result = service.run(sales_df, request_dict, exog_data=exog_data, progress_cb=progress_cb)
             result["data_file_id"] = sales_entry["file_id"]
             forecast_id = storage.save_forecast(result)
             return {"result": result, "forecast_id": forecast_id}
@@ -307,6 +308,8 @@ async def _create_forecast_impl(
             job_type="forecast",
             func=_task,
             request=request_dict,
+            pass_progress=True,
+            timeout=int(os.environ.get("FORECASTIQ_JOB_TIMEOUT", 900)),
         )
         return {
             "job_id": job_id,
