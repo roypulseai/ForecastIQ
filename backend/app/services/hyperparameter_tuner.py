@@ -219,7 +219,7 @@ def _adaptive_search_round(
     return the best params, fold scores, and mean MAE."""
     keys = list(space.keys())
     all_combos = list(itertools.product(*space.values()))
-    n_iter = min(40, len(all_combos))
+    n_iter = min(12, len(all_combos))
     candidates = all_combos if len(all_combos) <= n_iter else random.sample(all_combos, n_iter)
 
     best_mae = float("inf")

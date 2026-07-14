@@ -164,6 +164,7 @@ class ProphetForecaster(BaseForecaster):
             self._fitted_model.fit(prophet_df)
         except Exception as e:
             raise RuntimeError(f"Prophet fit failed: {e}")
+        self._predict_cache: Dict[int, pd.DataFrame] = {}
         return self
 
     def _make_future(self, horizon: int, exog_data: Optional[Dict[str, pd.DataFrame]]) -> pd.DataFrame:
@@ -183,6 +184,14 @@ class ProphetForecaster(BaseForecaster):
             future[reg] = 0.0
         return future
 
+    def _predict_cached(self, future: pd.DataFrame) -> pd.DataFrame:
+        key = hash(pd.util.hash_pandas_object(future).tobytes())
+        if key in self._predict_cache:
+            return self._predict_cache[key]
+        result = self._fitted_model.predict(future)
+        self._predict_cache[key] = result
+        return result
+
     def forecast(
         self,
         horizon: int,
@@ -193,7 +202,7 @@ class ProphetForecaster(BaseForecaster):
             raise ValueError("Model not fitted")
         try:
             future = self._make_future(horizon, exog_data)
-            pred = self._fitted_model.predict(future).tail(horizon)
+            pred = self._predict_cached(future).tail(horizon)
         except Exception as e:
             logger.warning("Prophet predict failed: %s — using naive fallback", e)
             last = float(self._train_df["y"].iloc[-1]) if self._train_df is not None else 0.0
@@ -227,7 +236,7 @@ class ProphetForecaster(BaseForecaster):
             raise ValueError("Model not fitted")
         try:
             future = self._make_future_baseline(horizon)
-            pred = self._fitted_model.predict(future).tail(horizon)
+            pred = self._predict_cached(future).tail(horizon)
         except Exception as e:
             logger.warning("Prophet baseline failed: %s", e)
             return self.forecast(horizon, exog_data=None, **kwargs)
@@ -248,7 +257,7 @@ class ProphetForecaster(BaseForecaster):
             future = self._fitted_model.make_future_dataframe(periods=30, freq=self._frequency or "D")
             for reg in self._regressors:
                 future[reg] = 0.0
-            pred = self._fitted_model.predict(future).tail(30)
+            pred = self._predict_cached(future).tail(30)
             comps: Dict[str, Any] = {}
             for c in ("trend", "yearly", "weekly"):
                 if c in pred.columns:

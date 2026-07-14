@@ -401,7 +401,7 @@ class ForecasterService:
                         progress_cb(0.05 + 0.10 * (idx / n_models), f"Tuning {m}…")
                     result = tune_model(
                         cv_df, date_col, value_col, m,
-                        n_iter=30, n_folds=max(3, min(7, int(n_unique_dates * 0.1))),
+                        n_iter=30, n_folds=max(3, min(5, int(n_unique_dates * 0.1))),
                         exog_data=exog_data, frequency=effective_frequency,
                     )
                     if result.get("tuned") and result["best_params"]:
@@ -881,37 +881,47 @@ class ForecasterService:
                 backtest_end_date = str(backtest_actuals[date_col].iloc[-1])[:10]
                 logger.info("Backtest overlap_n=%d (%d calendar days), train=%d rows, test=%d rows", overlap_n, overlap_n * days_per, len(backtest_df), len(backtest_actuals))
 
-                for m_name, pm in per_model.items():
-                    if pm.get("error"):
-                        continue
-                    try:
-                        def _bt_fit_and_forecast():
-                            bt_m = self.selector.get_model(m_name, params)
+                bt_futures: Dict[str, Future] = {}
+                with ThreadPoolExecutor(max_workers=min(4, len(per_model))) as bt_pool:
+                    for m_name, pm in per_model.items():
+                        if pm.get("error"):
+                            continue
+                        def _bt_fit_and_forecast(name=m_name):
+                            bt_m = self.selector.get_model(name, params)
                             bt_m.fit(backtest_df, date_col, value_col, exog_data=exog_data or {}, frequency=effective_frequency)
                             bt_ex = _filter_exog_to_range(exog_data, backtest_actuals[date_col].iloc[0], backtest_actuals[date_col].iloc[-1], date_col) if exog_data else None
                             return bt_m.forecast(len(backtest_actuals), exog_data=bt_ex)
-                        with ThreadPoolExecutor(max_workers=1) as _bt_pool:
-                            bt_fc = _bt_pool.submit(_bt_fit_and_forecast).result(timeout=MODEL_TIMEOUT)
-                        pm["backtest_forecast_values"] = bt_fc
-                        bt_metrics = _compute_backtest_metrics(bt_fc, backtest_actuals, date_col, value_col)
-                        pm["backtest_metrics"] = bt_metrics
-                    except TimeoutError:
-                        logger.warning("Backtest timed out for %s after %ds", m_name, MODEL_TIMEOUT)
-                        pm["backtest_forecast_values"] = []
-                        pm["backtest_metrics"] = {}
-                    except Exception as e:
-                        logger.warning("Backtest re-forecast failed for %s: %s", m_name, e)
-                        pm["backtest_forecast_values"] = []
-                        pm["backtest_metrics"] = {}
+                        bt_futures[m_name] = bt_pool.submit(_bt_fit_and_forecast)
+                    for m_name, fut in bt_futures.items():
+                        pm = per_model[m_name]
+                        try:
+                            bt_fc = fut.result(timeout=MODEL_TIMEOUT)
+                            pm["backtest_forecast_values"] = bt_fc
+                            bt_metrics = _compute_backtest_metrics(bt_fc, backtest_actuals, date_col, value_col)
+                            pm["backtest_metrics"] = bt_metrics
+                        except TimeoutError:
+                            logger.warning("Backtest timed out for %s after %ds", m_name, MODEL_TIMEOUT)
+                            pm["backtest_forecast_values"] = []
+                            pm["backtest_metrics"] = {}
+                        except Exception as e:
+                            logger.warning("Backtest re-forecast failed for %s: %s", m_name, e)
+                            pm["backtest_forecast_values"] = []
+                            pm["backtest_metrics"] = {}
 
                 if ensemble_result:
                     try:
-                        bt_members: List[BaseForecaster] = []
-                        for m_name in ensemble_result.get("models_used", []):
+                        bt_member_futures: Dict[str, Future] = {}
+                        with ThreadPoolExecutor(max_workers=min(4, len(ensemble_result.get("models_used", [])))) as bt_mem_pool:
+                            for m_name in ensemble_result.get("models_used", []):
+                                def _ens_bt_fit(name=m_name):
+                                    inst = self.selector.get_model(name, params)
+                                    inst.fit(backtest_df, date_col, value_col, exog_data=exog_data or {}, frequency=effective_frequency)
+                                    return inst
+                                bt_member_futures[m_name] = bt_mem_pool.submit(_ens_bt_fit)
+                        bt_members = []
+                        for fut in bt_member_futures.values():
                             try:
-                                inst = self.selector.get_model(m_name, params)
-                                inst.fit(backtest_df, date_col, value_col, exog_data=exog_data or {}, frequency=effective_frequency)
-                                bt_members.append(inst)
+                                bt_members.append(fut.result(timeout=MODEL_TIMEOUT))
                             except Exception:
                                 pass
                         if len(bt_members) >= 1:
