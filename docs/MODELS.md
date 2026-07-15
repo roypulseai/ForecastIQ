@@ -5,15 +5,15 @@ ForecastIQ includes a built-in model registry that mirrors the data-science patt
 ## Workflow
 
 ```
-                  ┌────────────────────────────────┐
-                  │   Train & save (POST /train)   │
-                  │  - train/test split             │
-                  │  - train one or more models     │
-                  │  - evaluate on held-out test    │
-                  │  - persist best as a pickle     │
-                  └────────────────┬───────────────┘
-                                   │
-                                   ▼
+                  ┌──────────────────────────────────────┐
+                  │ Train & save (POST /v1/models/train) │
+                  │  - train/test split                  │
+                  │  - train one or more models          │
+                  │  - evaluate on held-out test         │
+                  │  - persist best as a pickle          │
+                  └────────────────────┬─────────────────┘
+                                       │
+                                       ▼
                   ┌────────────────────────────────┐
                   │   Model Registry (data/models/) │
                   │  - <id>.pkl    (binary blob)    │

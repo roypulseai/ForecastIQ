@@ -364,15 +364,16 @@ Possible causes:
 ### Run Forecast via API
 
 ```bash
-curl -X POST http://localhost:8000/v1/forecast \
+curl -X POST "http://localhost:8000/v1/forecast?async=true" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-api-key" \
   -d '{
-    "data_file_id": "file-uuid",
+    "name": "My forecast",
+    "target_column": "value",
+    "date_column": "date",
+    "frequency": "D",
     "horizon": 30,
     "models": ["prophet", "lightgbm"],
-    "train_test_split": 0.8,
-    "backtest_overlap": 0,
     "include_promotions": true,
     "include_holidays": true
   }'
@@ -381,9 +382,11 @@ curl -X POST http://localhost:8000/v1/forecast \
 ### Get Results
 
 ```bash
-curl http://localhost:8000/v1/forecast/result/forecast-uuid \
+curl http://localhost:8000/v1/forecast/jobs/{job_id}/result \
   -H "X-API-Key: your-api-key"
 ```
+
+For the internal UI surface, use `/api/v1/forecast/jobs/{job_id}/result`.
 
 For full API documentation, visit http://localhost:8000/docs
 

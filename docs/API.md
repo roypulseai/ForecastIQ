@@ -53,6 +53,8 @@ The key has three parts:
 
 A missing or invalid key returns `401 Unauthorized`. A revoked or expired key also returns 401. The response includes a `WWW-Authenticate: Bearer realm="ForecastIQ"` header.
 
+The public API is mounted under `/v1`. Internal UI endpoints used by the browser frontend are under `/api/v1/*` and use JWT session authentication, not API keys.
+
 ### Tiers and rate limits
 
 Each key has a tier that determines its per-minute request budget:

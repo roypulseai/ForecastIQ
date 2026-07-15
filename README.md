@@ -45,6 +45,8 @@ Then open:
 setup-without-docker.bat
 ```
 
+These scripts install Python and Node dependencies. The macOS / Linux script also starts the backend and frontend; the Windows batch file only installs dependencies, so you must start the backend and frontend manually afterward.
+
 ## The data-science workflow
 
 ```
@@ -122,6 +124,12 @@ The backend reads from environment variables. Most have sensible defaults for se
 | `PUBLIC_API_ENABLED` | `true` | When true, `/v1/*` requires an API key |
 | `DEFAULT_API_KEY_TIER` | `free` | Default tier for newly created keys |
 | `LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
+| `REDIS_URL` | (empty) | Redis URL for persistent job queue; empty = in-memory |
+| `JWT_SECRET_KEY` | auto-generated | Secret for JWT tokens; set in env for production |
+| `MAX_UPLOAD_SIZE` | `104857600` | Maximum upload size in bytes (default 100 MB) |
+| `FORECASTIQ_JOB_TIMEOUT` | `900` | Job timeout in seconds |
+| `FORECASTIQ_FOLD_TIMEOUT` | `120` | Per-CV-fold timeout in seconds |
+| `FORECASTIQ_MODEL_TIMEOUT` | `300` | Per-model timeout in seconds |
 
 For a self-hosted single-user install, the defaults are fine.
 

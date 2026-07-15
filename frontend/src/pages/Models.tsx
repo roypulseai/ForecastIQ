@@ -185,7 +185,7 @@ export function ModelsPage(): ReactNode {
           <Button
             variant="contained"
             startIcon={<ModelTrainingIcon />}
-            onClick={() => setTrainOpen(true)}
+            onClick={() => { trainMut.reset(); setTrainOpen(true); }}
             disabled={!salesFile}
           >
             Train & save
@@ -263,7 +263,7 @@ export function ModelsPage(): ReactNode {
             <Button variant="outlined" startIcon={<CloudUploadIcon />} onClick={() => setUploadOpen(true)}>
               Upload pickle
             </Button>
-            <Button variant="contained" startIcon={<ModelTrainingIcon />} onClick={() => setTrainOpen(true)} disabled={!salesFile}>
+            <Button variant="contained" startIcon={<ModelTrainingIcon />} onClick={() => { trainMut.reset(); setTrainOpen(true); }} disabled={!salesFile}>
               Train & save
             </Button>
           </Stack>

@@ -33,7 +33,7 @@ The **plain secret is shown only once** — at creation time. The server stores 
 
 ### Programmatically (internal endpoint)
 
-The internal `/api/v1/api-keys` endpoints let you manage keys from the UI. These are mounted under `/api/v1/*` (the internal surface) and don't require an API key themselves — they assume the request is from the same self-hosted browser session.
+The internal `/api/v1/api-keys` endpoints let you manage keys from the UI. These are mounted under `/api/v1/*` (the internal surface) and require JWT session authentication. **Warning: `/api/v1/*` endpoints are not reachable with a public API key; you must authenticate with a JWT session cookie.**
 
 ```bash
 # Create a key

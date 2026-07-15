@@ -66,6 +66,7 @@ class ThetaForecaster(BaseForecaster):
         self._last_date = ts.index[-1]
         freq = kwargs.get("frequency")
         self._frequency = self._normalize_frequency(freq if freq else _infer_freq(ts))
+        self._resid_std: float = 0.0
 
         period = min(self.period, max(2, len(ts) // 2))
         last_err: Optional[Exception] = None
@@ -77,6 +78,11 @@ class ThetaForecaster(BaseForecaster):
                     self._fitted_model = model.fit()
                     self.period = period
                     self.deseasonalize = des
+                    try:
+                        resid = np.asarray(self._fitted_model.resid, dtype=float)
+                    except Exception:
+                        resid = np.asarray(ts.diff().dropna().values, dtype=float)
+                    self._resid_std = float(np.nanstd(resid)) if len(resid) > 0 else 0.0
                     return self
                 except Exception as e:
                     last_err = e
@@ -109,13 +115,16 @@ class ThetaForecaster(BaseForecaster):
             logger.warning("Theta forecast failed: %s", e)
             last = float(self._train_df[self._value_col].iloc[-1])
             values = np.array([last] * horizon)
-        # CI: 85% / 115% band
+        if self._resid_std > 0:
+            margin = 1.96 * self._resid_std * np.sqrt(horizon)
+        else:
+            margin = 0.0
         return [
             {
                 "date": self._format_date(d),
                 "forecast": self._safe_float(v),
-                "lower_ci": self._safe_float(v * 0.85),
-                "upper_ci": self._safe_float(v * 1.15),
+                "lower_ci": self._safe_float(v - margin if margin > 0 else v * 0.85),
+                "upper_ci": self._safe_float(v + margin if margin > 0 else v * 1.15),
             }
             for d, v in zip(future_idx, values)
         ]

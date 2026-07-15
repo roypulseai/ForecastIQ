@@ -71,7 +71,8 @@ export function DataUploadPage(): ReactNode {
         onProgress: setUploadProgress,
       });
       showToast(`${file.name} uploaded successfully`);
-      if (fileType === 'sales' && !analysisData) {
+      if (fileType === 'sales') {
+        setAnalysisData(null);
         try {
           await analyzeMut.mutateAsync(uploaded.file_id);
         } catch (e) {

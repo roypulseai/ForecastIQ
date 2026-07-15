@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import {
   Accordion,
   AccordionDetails,
@@ -530,17 +530,37 @@ interface NumberFieldProps {
 }
 
 function NumberField({ label, value, min, max, step, onChange }: NumberFieldProps): ReactNode {
+  const [rawValue, setRawValue] = useState(String(value));
+  useEffect(() => {
+    setRawValue(String(value));
+  }, [value]);
+  const clamp = (n: number) => Math.min(max, Math.max(min, n));
+  const fallback = Number.isFinite(value) ? value : min;
   return (
     <TextField
       type="number"
       size="small"
       fullWidth
       label={label}
-      value={Number.isFinite(value) ? value : ''}
+      value={rawValue}
       inputProps={{ min, max, step }}
-      onChange={(e) => {
-        const n = Number(e.target.value);
-        if (Number.isFinite(n)) onChange(n);
+      onChange={(e) => setRawValue(e.target.value)}
+      onBlur={() => {
+        const trimmed = rawValue.trim();
+        if (trimmed === '') {
+          onChange(fallback);
+          setRawValue(String(fallback));
+          return;
+        }
+        const n = Number(trimmed);
+        if (!Number.isFinite(n)) {
+          onChange(fallback);
+          setRawValue(String(fallback));
+          return;
+        }
+        const clamped = clamp(n);
+        onChange(clamped);
+        setRawValue(String(clamped));
       }}
     />
   );

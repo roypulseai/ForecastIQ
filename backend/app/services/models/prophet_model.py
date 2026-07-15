@@ -5,6 +5,7 @@ the user columns and pre-merge external regressors on 'ds'.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -185,7 +186,7 @@ class ProphetForecaster(BaseForecaster):
         return future
 
     def _predict_cached(self, future: pd.DataFrame) -> pd.DataFrame:
-        key = hash(pd.util.hash_pandas_object(future).tobytes())
+        key = hashlib.sha256(pd.util.hash_pandas_object(future).to_numpy().tobytes()).hexdigest()
         if key in self._predict_cache:
             return self._predict_cache[key]
         result = self._fitted_model.predict(future)
@@ -207,8 +208,10 @@ class ProphetForecaster(BaseForecaster):
             logger.warning("Prophet predict failed: %s — using naive fallback", e)
             last = float(self._train_df["y"].iloc[-1]) if self._train_df is not None else 0.0
             results = []
+            freq = self._frequency or "D"
+            offset = pd.tseries.frequencies.to_offset(freq)
             for i in range(horizon):
-                d = self._last_date + pd.Timedelta(days=i + 1)
+                d = self._last_date + offset * (i + 1)
                 results.append({
                     "date": self._format_date(d),
                     "forecast": self._safe_float(last),

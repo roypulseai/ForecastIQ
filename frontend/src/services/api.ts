@@ -52,11 +52,12 @@ api.interceptors.response.use(
 );
 
 export const apiClient = {
-  async uploadFile(fileType: string, file: File, onProgress?: (pct: number) => void): Promise<UploadedFile> {
+  async uploadFile(fileType: string, file: File, onProgress?: (pct: number) => void, timeout?: number): Promise<UploadedFile> {
     const formData = new FormData();
     formData.append('file', file);
     const res = await api.post<UploadedFile>(`/upload/${fileType}`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout,
       onUploadProgress: (evt) => {
         if (onProgress && evt.total) onProgress(Math.round((evt.loaded / evt.total) * 100));
       },
@@ -108,11 +109,11 @@ export const apiClient = {
     return res.data;
   },
 
-  async createForecast(request: ForecastRequest, asyncMode = true): Promise<ForecastResponse | { job_id: string; status: string; message: string }> {
+  async createForecast(request: ForecastRequest, asyncMode = true, timeout?: number): Promise<ForecastResponse | { job_id: string; status: string; message: string }> {
     const res = await api.post<ForecastResponse | { job_id: string; status: string; message: string }>(
       '/forecast',
       request,
-      { params: asyncMode ? { async: 'true' } : undefined },
+      { params: asyncMode ? { async: 'true' } : undefined, timeout },
     );
     return res.data;
   },
@@ -184,6 +185,7 @@ export const apiClient = {
   async uploadModel(
     file: File,
     meta?: { name?: string; notes?: string; tags?: string[] },
+    timeout?: number,
   ): Promise<SavedModelMeta> {
     const formData = new FormData();
     formData.append('file', file);
@@ -192,12 +194,13 @@ export const apiClient = {
     if (meta?.tags) formData.append('tags', meta.tags.join(','));
     const res = await api.post<SavedModelMeta>('/models/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout,
     });
     return res.data;
   },
 
-  async trainAndSave(request: TrainRequest): Promise<TrainResult> {
-    const res = await api.post<TrainResult>('/models/train', request);
+  async trainAndSave(request: TrainRequest, timeout?: number): Promise<TrainResult> {
+    const res = await api.post<TrainResult>('/models/train', request, { timeout });
     return res.data;
   },
 

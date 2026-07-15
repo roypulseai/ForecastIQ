@@ -147,4 +147,4 @@ date,inflation,unemployment,consumer_confidence
 
 ## Sample data
 
-`public/sample-data/` in the repository contains small example files for each type.
+`public_data/` in the repository contains small example files for each type.

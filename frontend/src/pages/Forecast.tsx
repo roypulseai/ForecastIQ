@@ -190,8 +190,6 @@ export function ForecastPage(): ReactNode {
     return () => { cancelled = true; };
   }, [completedJobId, navigate, setCurrentForecastId]);
 
-  const dateColumn = analysisData?.validation.date_column ?? 'date';
-  const valueColumn = analysisData?.validation.value_column ?? 'value';
   const salesFile = uploadedFiles.find((f) => f.type === 'sales');
   // Pull real columns from the file metadata. If the file's `columns` is empty
   // (older uploads), try the analysis validation's column names.
@@ -211,6 +209,16 @@ export function ForecastPage(): ReactNode {
 
   // Column type detection — frontend gets the same types the backend inferred
   const columnTypes = analysisData?.validation.column_types ?? {};
+  const dateColumn =
+    analysisData?.validation.date_column && columns.includes(analysisData.validation.date_column)
+      ? analysisData.validation.date_column
+      : columns.find((c) => columnTypes[c] === 'date') ?? columns[0] ?? 'date';
+  const valueColumn =
+    analysisData?.validation.value_column && columns.includes(analysisData.validation.value_column)
+      ? analysisData.validation.value_column
+      : columns.find((c) => c !== dateColumn && columnTypes[c] === 'numeric') ??
+        columns.find((c) => c !== dateColumn) ??
+        'value';
   const typeColor = (t: string) => {
     switch (t) {
       case 'date': return 'primary';
@@ -256,6 +264,23 @@ export function ForecastPage(): ReactNode {
       }));
     }
   }, [analysisData, dateColumn, valueColumn, request.date_column, request.target_column]);
+
+  useEffect(() => {
+    if (columns.length === 0) return;
+    setRequest((r) => {
+      const next: Partial<ForecastRequest> = {};
+      let changed = false;
+      if (!columns.includes(r.date_column)) {
+        next.date_column = dateColumn;
+        changed = true;
+      }
+      if (!columns.includes(r.target_column)) {
+        next.target_column = valueColumn;
+        changed = true;
+      }
+      return changed ? { ...r, ...next } : r;
+    });
+  }, [columns, dateColumn, valueColumn]);
 
   if (!analysisData) {
     return (
@@ -303,6 +328,14 @@ export function ForecastPage(): ReactNode {
     }
     if (request.horizon < 1) {
       setError('Horizon must be at least 1 period');
+      return;
+    }
+    if (!columns.includes(request.date_column)) {
+      setError(`Date column "${request.date_column}" not found in uploaded file`);
+      return;
+    }
+    if (!columns.includes(request.target_column)) {
+      setError(`Target column "${request.target_column}" not found in uploaded file`);
       return;
     }
     const payload: ForecastRequest = {

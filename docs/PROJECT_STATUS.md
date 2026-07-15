@@ -60,7 +60,7 @@ ForecastIQ is a self-hosted advanced sales forecasting platform built for data s
 |---------|--------|-------|
 | CSV Upload | ✅ Complete | |
 | Excel Upload | ✅ Complete | |
-| Parquet Upload | ⚠️ Planned | Documented but not yet in ALLOWED_EXTENSIONS |
+| Parquet Upload | ✅ Complete | Supported via pd.read_parquet |
 | Large Dataset Optimization | ✅ Complete | 5+ years daily → weekly aggregation |
 | Model Registry | ✅ Complete | Save/load trained models as pickles |
 | Parallel Model Training | ✅ Complete | ThreadPoolExecutor with per-model timeout |
@@ -94,7 +94,7 @@ ForecastIQ is a self-hosted advanced sales forecasting platform built for data s
 | In-Memory Job Queue | ✅ Complete | Default for single-user deployments |
 | Redis Job Queue | ✅ Complete | Optional for multi-process deployments |
 | Structured Logging | ✅ Complete | Request ID context, configurable level |
-| Parquet Upload | ✅ Complete | Via pd.read_parquet |
+| Parquet Upload | ✅ Complete | Supported via pd.read_parquet |
 | File-Based User Storage | ✅ Complete | JSON persistence for user accounts |
 | Model Registry (Pickle) | ✅ Complete | Save/load trained models |
 
@@ -182,7 +182,7 @@ ForecastIQ is a self-hosted advanced sales forecasting platform built for data s
 ### Core Endpoints
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/v1/files` | POST | Upload data file |
+| `/v1/files/upload/{file_type}` | POST | Upload data file |
 | `/v1/files` | GET | List uploaded files |
 | `/v1/files/{id}/rows` | GET | Fetch file rows |
 | `/v1/analyze` | POST | Analyze data characteristics |
@@ -191,7 +191,7 @@ ForecastIQ is a self-hosted advanced sales forecasting platform built for data s
 | `/v1/models/{id}/forecast` | POST | Forecast with saved model |
 | `/v1/models/upload` | POST | Upload pickle model |
 | `/v1/models` | GET | List saved models |
-| `/v1/models/{id}` | PUT | Update model metadata |
+| `/v1/models/{id}` | PATCH | Update model metadata |
 | `/v1/models/{id}` | DELETE | Delete saved model |
 | `/v1/models/{id}/download` | GET | Download model pickle |
 | `/v1/jobs` | GET | List background jobs |

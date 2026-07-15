@@ -47,10 +47,11 @@ def _infer_freq(ts: pd.Series) -> str:
 class STLForecaster(BaseForecaster):
     name = "STL"
 
-    def __init__(self, period: int = 7, robust: bool = True) -> None:
-        super().__init__(period=period, robust=robust)
+    def __init__(self, period: int = 7, robust: bool = True, non_negative: bool = True) -> None:
+        super().__init__(period=period, robust=robust, non_negative=non_negative)
         self.period = max(2, int(period))
         self.robust = bool(robust)
+        self.non_negative = bool(non_negative)
         self._trend_slope: float = 0.0
         self._trend_intercept: float = 0.0
         self._seasonal_pattern: np.ndarray = np.array([])
@@ -161,8 +162,8 @@ class STLForecaster(BaseForecaster):
                 hi = forecast * 1.15
             results.append({
                 "date": self._format_date(d),
-                "forecast": self._safe_float(max(0.0, forecast)),
-                "lower_ci": self._safe_float(max(0.0, lo)),
+                "forecast": self._safe_float(max(0.0, forecast) if self.non_negative else forecast),
+                "lower_ci": self._safe_float(max(0.0, lo) if self.non_negative else lo),
                 "upper_ci": self._safe_float(hi),
             })
         return results

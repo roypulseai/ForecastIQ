@@ -124,7 +124,7 @@ export function ApiKeysPage(): ReactNode {
                 </code>
                 . Base URL:{' '}
                 <code style={{ background: '#f5f5f5', padding: '2px 6px', borderRadius: 4 }}>
-                  {window.location.origin}/v1
+                  {window.location.origin}/api/v1
                 </code>
               </Typography>
             </Box>

@@ -211,7 +211,8 @@ class ModelRegistry:
 
             # Serialize the fitted state. We use joblib for sklearn-compatible
             # models (LightGBM, XGBoost, ETS) and pickle for everything else.
-            framework = self._pick_framework(model.name if hasattr(model, "name") else "")
+            model_type_key = self._canonical_model_type(model)
+            framework = self._pick_framework(model_type_key)
 
             blob = self._serialize_model(model, framework)
 
@@ -226,7 +227,7 @@ class ModelRegistry:
             meta = ModelArtifactMeta(
                 model_id=mid,
                 name=name,
-                model_type=model.name if hasattr(model, "name") else "unknown",
+                model_type=model_type_key,
                 framework=framework,
                 created_at=now,
                 updated_at=now,
@@ -268,6 +269,14 @@ class ModelRegistry:
         if n in ("lightgbm", "xgboost"):
             return ModelFramework.JOBLIB
         return ModelFramework.PICKLE
+
+    @staticmethod
+    def _canonical_model_type(model) -> str:
+        selector = ModelSelector()
+        for key, cls in selector.MODEL_CLASSES.items():
+            if isinstance(model, cls):
+                return key
+        return (model.name if hasattr(model, "name") else type(model).__name__).lower()
 
     def _serialize_model(self, model, framework: ModelFramework) -> bytes:
         """Serialize a fitted model into bytes.
@@ -415,7 +424,8 @@ class ModelRegistry:
             index = self._read_json(self._index_path)
         items = list(index.values())
         if model_type:
-            items = [i for i in items if i.get("model_type") == model_type]
+            q = model_type.lower()
+            items = [i for i in items if (i.get("model_type") or "").lower() == q]
         if search:
             q = search.lower()
             items = [

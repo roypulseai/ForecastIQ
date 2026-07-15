@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -114,7 +115,7 @@ FILE_TYPE_SPECS: Dict[str, FileTypeSpec] = {
 # --------------------------------------------------------------------------- #
 
 def _normalize_col(col: str) -> str:
-    return str(col).strip().lower().replace(" ", "_").replace("-", "_")
+    return re.sub(r"_+", "_", re.sub(r"[^a-z0-9_]+", "_", str(col).strip().lower()))
 
 
 def _find_column(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
@@ -134,7 +135,8 @@ def _find_date_column(df: pd.DataFrame, aliases: List[str]) -> Optional[str]:
         return found
     # Fuzzy: any column whose normalized name contains "date"
     for c in df.columns:
-        if "date" in _normalize_col(c):
+        normalized = _normalize_col(c)
+        if normalized == "date" or normalized.endswith("_date") or normalized.startswith("date_"):
             return c
     # Datetime dtype
     for c in df.columns:
@@ -155,7 +157,7 @@ def _parse_date_column(df: pd.DataFrame, col: str) -> pd.Series:
     # Try ISO / common formats; fall back to inferred format
     result = pd.to_datetime(s, errors="coerce", format="mixed", utc=False)
     if result.isna().all():
-        result = pd.to_datetime(s, errors="coerce", infer_datetime_format=True)
+        result = pd.to_datetime(s, errors="coerce")
     return result
 
 
@@ -648,7 +650,7 @@ class DataProcessor:
             errors.append("Could not identify a numeric value column")
         if value_col and value_col in df.columns and df[value_col].isna().sum() > 0:
             warnings.append(f"{df[value_col].isna().sum()} missing values filled with 0")
-        if date_col and len(df) < 14:
+        if date_col and df[date_col].nunique() < 14:
             warnings.append("Series is short (<14 points) — forecasts may be unreliable")
 
         # Detect frequency — map median date gap to human-readable label
@@ -708,9 +710,8 @@ class DataProcessor:
             if null_pct > 0.5:
                 warnings.append(f"Column '{col}' has {null_pct:.0%} missing values")
         
-        dup_cols = [c for c in df.columns if list(df.columns).count(c) > 1]
-        if dup_cols:
-            errors.append(f"Duplicate column names: {list(set(dup_cols))}")
+        if df.columns.duplicated().any():
+            errors.append(f"Duplicate column names: {df.columns[df.columns.duplicated()].unique().tolist()}")
         
         if len(df) > 10_000_000:
             warnings.append(f"Very large dataset ({len(df):,} rows) — may be slow")

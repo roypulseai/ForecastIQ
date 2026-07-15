@@ -544,9 +544,14 @@ export function ResultsPage(): ReactNode {
                         variant="outlined"
                         startIcon={<AssessmentIcon />}
                         disabled={analyzeMut.isPending}
-                        onClick={() => {
+                        onClick={async () => {
                           const fid = salesFileId ?? resultQuery.data?.data_file_id;
-                          if (fid) analyzeMut.mutate(fid);
+                          if (!fid) return;
+                          try {
+                            await analyzeMut.mutateAsync(fid);
+                          } catch (e) {
+                            setError(getErrorMessage(e));
+                          }
                         }}
                       >
                         {analyzeMut.isPending ? 'Analyzing…' : 'Analyze data'}
