@@ -151,6 +151,19 @@ def create_app() -> FastAPI:
             "templates": "/templates",
         }
 
+    @app.on_event("startup")
+    def _ensure_admin_user():
+        """Create a default admin user on first run so the UI is usable out of the box."""
+        from .core.users import get_user_manager
+        mgr = get_user_manager()
+        if not mgr.list_users():
+            admin = mgr.create_user("admin", "admin", role="admin")
+            if admin:
+                logger.warning(
+                    "No users found — created default admin account "
+                    "(username=admin, password=admin). Change this password immediately!"
+                )
+
     return app
 
 

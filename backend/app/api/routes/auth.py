@@ -37,6 +37,33 @@ def login(req: LoginRequest):
         role=user.role,
     )
 
+@router.get("/status")
+def auth_status():
+    """Return whether any users exist (for auto-login on first run)."""
+    mgr = get_user_manager()
+    return {"has_users": len(mgr.list_users()) > 0}
+
+
+@router.post("/demo")
+def demo_login():
+    """Issue a real admin JWT for demo/testing. Creates a temporary admin
+    user on the fly so every API call succeeds."""
+    import uuid, time
+    mgr = get_user_manager()
+    demo_id = f"demo-{uuid.uuid4().hex[:8]}"
+    mgr.create_user(demo_id, "demo", role="admin")
+    user = mgr.authenticate(demo_id, "demo")
+    if not user:
+        raise HTTPException(status_code=500, detail="Failed to create demo user")
+    token = create_access_token({"sub": user.user_id, "role": user.role})
+    return LoginResponse(
+        access_token=token,
+        user_id=user.user_id,
+        username="demo",
+        role="admin",
+    )
+
+
 @router.post("/register")
 def register(req: RegisterRequest):
     mgr = get_user_manager()

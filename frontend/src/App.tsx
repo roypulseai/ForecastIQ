@@ -11,6 +11,15 @@ import { ForecastPage } from './pages/Forecast';
 import { ResultsPage } from './pages/Results';
 import { ModelsPage } from './pages/Models';
 import { ApiKeysPage } from './pages/ApiKeys';
+import { LoginPage } from './pages/Login';
+
+function AuthGate({ children }: { children: ReactNode }): ReactNode {
+  const token = localStorage.getItem('token');
+  if (!token) {
+    return <Navigate to="/login" replace />;
+  }
+  return <>{children}</>;
+}
 
 function App(): ReactNode {
   return (
@@ -26,14 +35,15 @@ function App(): ReactNode {
         <ErrorBoundary>
           <ToastProvider>
             <Routes>
-              <Route path="/" element={<Navigate to="/dashboard" replace />} />
-              <Route path="/dashboard" element={<Dashboard />} />
-              <Route path="/upload" element={<DataUploadPage />} />
-              <Route path="/explore" element={<DataExplorePage />} />
-              <Route path="/forecast" element={<ForecastPage />} />
-              <Route path="/results" element={<ResultsPage />} />
-              <Route path="/models" element={<ModelsPage />} />
-              <Route path="/api-keys" element={<ApiKeysPage />} />
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/" element={<AuthGate><Navigate to="/dashboard" replace /></AuthGate>} />
+              <Route path="/dashboard" element={<AuthGate><Dashboard /></AuthGate>} />
+              <Route path="/upload" element={<AuthGate><DataUploadPage /></AuthGate>} />
+              <Route path="/explore" element={<AuthGate><DataExplorePage /></AuthGate>} />
+              <Route path="/forecast" element={<AuthGate><ForecastPage /></AuthGate>} />
+              <Route path="/results" element={<AuthGate><ResultsPage /></AuthGate>} />
+              <Route path="/models" element={<AuthGate><ModelsPage /></AuthGate>} />
+              <Route path="/api-keys" element={<AuthGate><ApiKeysPage /></AuthGate>} />
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Routes>
           </ToastProvider>

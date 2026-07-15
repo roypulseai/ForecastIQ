@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { Link, NavLink, useLocation } from 'react-router-dom';
+import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   AppBar,
   Box,
@@ -23,6 +23,7 @@ import CloseIcon from '@mui/icons-material/Close';
 import ShowChartIcon from '@mui/icons-material/ShowChart';
 import StorageIcon from '@mui/icons-material/Storage';
 import VpnKeyIcon from '@mui/icons-material/VpnKey';
+import LogoutIcon from '@mui/icons-material/Logout';
 import { alpha } from '@mui/material/styles';
 
 const NAV_ITEMS = [
@@ -40,8 +41,18 @@ export function AppNavbar(): ReactNode {
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [drawerOpen, setDrawerOpen] = useState(false);
   const location = useLocation();
+  const navigate = useNavigate();
+  const isLoggedIn = !!localStorage.getItem('token');
 
   const closeDrawer = () => setDrawerOpen(false);
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    navigate('/login', { replace: true });
+    window.location.reload();
+  };
+
+  if (!isLoggedIn || location.pathname === '/login') return null;
 
   return (
     <>
@@ -142,6 +153,12 @@ export function AppNavbar(): ReactNode {
               >
                 API Docs
               </Button>
+            </Tooltip>
+
+            <Tooltip title="Sign out">
+              <IconButton size="small" onClick={handleLogout} sx={{ ml: 1 }}>
+                <LogoutIcon fontSize="small" />
+              </IconButton>
             </Tooltip>
 
             {isMobile && (
