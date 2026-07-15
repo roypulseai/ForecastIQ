@@ -34,14 +34,14 @@ class UserManager:
 
     def _load(self):
         if os.path.exists(self._path):
-            with open(self._path, "r") as f:
+            with open(self._path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 for uid, udata in data.items():
                     self._users[uid] = User(**udata)
 
     def _persist(self):
         os.makedirs(os.path.dirname(self._path) or ".", exist_ok=True)
-        with open(self._path, "w") as f:
+        with open(self._path, "w", encoding="utf-8") as f:
             json.dump({uid: asdict(u) for uid, u in self._users.items()}, f, indent=2)
 
     def create_user(self, username: str, password: str, role: str = "viewer", email: str = "") -> Optional[User]:
@@ -71,10 +71,12 @@ class UserManager:
             return None
 
     def get_user(self, user_id: str) -> Optional[User]:
-        return self._users.get(user_id)
+        with self._lock:
+            return self._users.get(user_id)
 
     def list_users(self) -> List[User]:
-        return list(self._users.values())
+        with self._lock:
+            return list(self._users.values())
 
     def delete_user(self, user_id: str) -> bool:
         with self._lock:

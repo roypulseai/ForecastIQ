@@ -58,6 +58,38 @@ class ARIMAForecaster(BaseForecaster):
         self.enforce_stationarity = enforce_stationarity
         self.enforce_invertibility = enforce_invertibility
 
+    def _build_exog(
+        self,
+        ts: pd.Series,
+        exog_data: Optional[Dict[str, pd.DataFrame]],
+    ) -> Optional[pd.Series]:
+        if not exog_data:
+            return None
+        frames = []
+        for key in ("promotions", "media_plan", "holidays", "events"):
+            df = exog_data.get(key)
+            if df is None or df.empty:
+                continue
+            if "date" not in df.columns:
+                continue
+            sub = df[["date"]].copy()
+            sub["date"] = pd.to_datetime(sub["date"], errors="coerce")
+            sub = sub.dropna()
+            if sub.empty:
+                continue
+            sub[f"{key}_flag"] = 1
+            frames.append(sub)
+        if not frames:
+            return None
+        merged = frames[0]
+        for f in frames[1:]:
+            merged = pd.concat([merged, f], ignore_index=True)
+        agg = merged.groupby("date").sum()
+        aligned = agg.reindex(ts.index, method="ffill").fillna(0.0)
+        if aligned.empty:
+            return None
+        return aligned.sum(axis=1).astype(float)
+
     def fit(
         self,
         df: pd.DataFrame,
@@ -78,13 +110,17 @@ class ARIMAForecaster(BaseForecaster):
         if len(ts) < 5:
             raise ValueError("ARIMA requires at least 5 data points")
 
-        # Try the requested order, fall back to (1,1,1), then to (0,1,0)
+        exog = self._build_exog(ts, kwargs.get("exog_data"))
+        self._has_exog = exog is not None
+        self._exog = exog
+
         orders_to_try = [self.order, (1, 1, 1), (0, 1, 0)]
         last_err: Optional[Exception] = None
         for order in orders_to_try:
             try:
                 model = ARIMA(
                     ts,
+                    exog=exog,
                     order=order,
                     enforce_stationarity=self.enforce_stationarity,
                     enforce_invertibility=self.enforce_invertibility,
@@ -98,6 +134,42 @@ class ARIMAForecaster(BaseForecaster):
                 continue
         raise RuntimeError(f"ARIMA failed for all orders: {last_err}")
 
+    def _future_exog(
+        self,
+        horizon: int,
+        exog_data: Optional[Dict[str, pd.DataFrame]],
+    ) -> Optional[np.ndarray]:
+        if exog_data is None:
+            return None
+        freq = self._frequency or "D"
+        future_idx = pd.date_range(
+            start=self._last_date + pd.tseries.frequencies.to_offset(freq),
+            periods=horizon,
+            freq=freq,
+        )
+        merged = pd.DataFrame({"date": future_idx})
+        any_added = False
+        for key in ("promotions", "media_plan", "holidays", "events"):
+            df = exog_data.get(key)
+            if df is None or df.empty or "date" not in df.columns:
+                continue
+            sub = df[["date"]].copy()
+            sub["date"] = pd.to_datetime(sub["date"], errors="coerce")
+            sub = sub.dropna()
+            if sub.empty:
+                continue
+            sub[f"{key}_flag"] = 1
+            sub = sub.drop_duplicates(subset=["date"])
+            merged = merged.merge(sub, on="date", how="left")
+            any_added = True
+        if not any_added:
+            return None
+        flag_cols = [c for c in merged.columns if c.endswith("_flag")]
+        if not flag_cols:
+            return None
+        merged["_exog"] = merged[flag_cols].sum(axis=1)
+        return merged["_exog"].fillna(0.0).astype(float).values
+
     def forecast(
         self,
         horizon: int,
@@ -106,7 +178,10 @@ class ARIMAForecaster(BaseForecaster):
     ) -> List[Dict[str, Any]]:
         if self._fitted_model is None or self._last_date is None:
             raise ValueError("Model not fitted")
-        pred = self._fitted_model.get_forecast(steps=horizon)
+        future_exog = self._future_exog(horizon, exog_data)
+        if getattr(self, "_has_exog", False) and future_exog is None:
+            future_exog = np.zeros(horizon)
+        pred = self._fitted_model.get_forecast(steps=horizon, exog=future_exog)
         mean = pred.predicted_mean
         try:
             ci = pred.conf_int(alpha=0.05)
@@ -199,7 +274,7 @@ class SARIMAXForecaster(BaseForecaster):
         # Aggregate duplicate dates
         agg = merged.groupby("date").sum()
         # Align to ts index
-        aligned = agg.reindex(ts.index, method="ffill").fillna(0.0)
+        aligned = agg.reindex(ts.index, fill_value=0).fillna(0.0)
         # Combine all flag columns into a single regressor
         if aligned.empty:
             return None
@@ -261,6 +336,7 @@ class SARIMAXForecaster(BaseForecaster):
             self.order = (1, 1, 1)
             self.seasonal_order = (0, 0, 0, 0)
             self._exog = None
+            self._has_exog = False
             return self
         except Exception as e:
             raise RuntimeError(f"SARIMAX failed: {last_err or e}")
@@ -271,6 +347,8 @@ class SARIMAXForecaster(BaseForecaster):
         exog_data: Optional[Dict[str, pd.DataFrame]],
     ) -> Optional[np.ndarray]:
         if exog_data is None:
+            if self._has_exog:
+                return np.zeros((horizon, 1))
             return None
         # Build a future date index matching forecast horizon
         freq = self._frequency or "D"

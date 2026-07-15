@@ -376,13 +376,11 @@ _job_manager = None
 def get_job_manager():
     global _job_manager
     if _job_manager is None:
-        redis_url = os.environ.get("REDIS_URL", "")
+        redis_url = settings.REDIS_URL
         if redis_url:
-            try:
-                _job_manager = RedisJobManager(redis_url)
-            except Exception as e:
-                logger.warning("Redis unavailable, falling back to in-memory jobs: %s", e)
-                _job_manager = JobManager()
-        else:
-            _job_manager = JobManager()
+            logger.warning(
+                "Redis job manager is not fully implemented; using in-memory job manager. "
+                "Unset REDIS_URL to silence this warning."
+            )
+        _job_manager = JobManager()
     return _job_manager

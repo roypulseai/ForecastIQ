@@ -529,8 +529,8 @@ def _compute_event_impact(
     if region_col and region_value:
         s = s[s[region_col] == region_value]
 
-    if "date" in s.columns:
-        s = s.set_index("date")
+    if date_col in s.columns:
+        s = s.set_index(date_col)
     s.index = pd.to_datetime(s.index)
     s = s.sort_index()
     s_val = pd.to_numeric(s[value_col], errors="coerce")
@@ -714,8 +714,8 @@ def _compute_baseline_sales(
     s = sales_df.copy()
     if region_col and region_value:
         s = s[s[region_col] == region_value]
-    if "date" in s.columns:
-        s = s.set_index("date")
+    if date_col in s.columns:
+        s = s.set_index(date_col)
     s.index = pd.to_datetime(s.index)
     s = s.sort_index()
     s_val = pd.to_numeric(s[value_col], errors="coerce")

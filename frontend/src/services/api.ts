@@ -29,9 +29,21 @@ export const api = axios.create({
   timeout: 30000,
 });
 
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
 api.interceptors.response.use(
   (response: AxiosResponse) => response,
   (error: AxiosError) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('token');
+      window.location.href = '/login';
+    }
     const detail = (error.response?.data as { detail?: unknown } | undefined)?.detail;
     const message = typeof detail === 'string' ? detail : error.message;
     console.error('[API]', error.config?.url, '->', error.response?.status, message);
@@ -161,6 +173,11 @@ export const apiClient = {
     updates: { name?: string; notes?: string; tags?: string[] },
   ): Promise<SavedModelMeta> {
     const res = await api.patch<SavedModelMeta>(`/models/${modelId}`, updates);
+    return res.data;
+  },
+
+  async downloadModel(modelId: string): Promise<Blob> {
+    const res = await api.get(`/models/${modelId}/download`, { responseType: 'blob' });
     return res.data;
   },
 

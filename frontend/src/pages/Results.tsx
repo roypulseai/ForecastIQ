@@ -195,7 +195,7 @@ export function ResultsPage(): ReactNode {
       // Reset category when the forecast changes
       setSelectedCategory('');
     }
-  }, [resultQuery.data]);
+  }, [resultQuery.data?.forecast_id]);
 
   // When a category is selected, use its per-category results; otherwise use aggregate.
   const activeResults = useMemo(() => {
@@ -431,9 +431,9 @@ export function ResultsPage(): ReactNode {
                   ? Object.values(activeResults ?? {}).map((r) => {
                       const btMetrics = r.backtest_metrics ?? {};
                       const cvAcc = r.metrics.forecast_accuracy;
-                      const cvGrade = r.metrics.accuracy_grade != null ? String(r.metrics.accuracy_grade) : null;
+                      const cvGrade = r.accuracy_grade != null ? String(r.accuracy_grade) : null;
                       const btAcc = btMetrics.forecast_accuracy ?? r.metrics.test_forecast_accuracy;
-                      const btGradeRaw = btMetrics.accuracy_grade ?? r.metrics.test_accuracy_grade;
+                      const btGradeRaw = btMetrics.accuracy_grade ?? r.test_accuracy_grade;
                       const btGrade = btGradeRaw != null ? String(btGradeRaw) : null;
                       return {
                         model: r.model_name,
@@ -483,9 +483,9 @@ export function ResultsPage(): ReactNode {
                     : Object.values(activeResults ?? {}).map((r) => {
                       const btMetrics = r.backtest_metrics ?? {};
                       const cvAcc = r.metrics.forecast_accuracy;
-                      const cvGrade = r.metrics.accuracy_grade != null ? String(r.metrics.accuracy_grade) : null;
+                      const cvGrade = r.accuracy_grade != null ? String(r.accuracy_grade) : null;
                       const btAcc = btMetrics.forecast_accuracy ?? r.metrics.test_forecast_accuracy;
-                      const btGradeRaw = btMetrics.accuracy_grade ?? r.metrics.test_accuracy_grade;
+                      const btGradeRaw = btMetrics.accuracy_grade ?? r.test_accuracy_grade;
                       const btGrade = btGradeRaw != null ? String(btGradeRaw) : null;
                       return {
                         model: r.model_name,
@@ -910,7 +910,7 @@ function ModelMetricsCard({ result, testMetrics }: { result: ModelResult; testMe
   const m = result.metrics;
   const bt = result.backtest_metrics ?? {};
   const cvAccuracy = m?.forecast_accuracy ?? null;
-  const cvGrade = m?.accuracy_grade ?? null;
+  const cvGrade = result.accuracy_grade ?? null;
   const testAccuracy = m?.test_forecast_accuracy ?? null;
   const accuracyTone: 'success' | 'info' | 'warning' | 'error' =
     !cvAccuracy ? 'info'

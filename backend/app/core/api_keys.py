@@ -100,7 +100,9 @@ class ApiKeyRecord:
                     return False
             except Exception as e:
                 logger.warning("Failed to parse expiry date '%s': %s", self.expires_at, e)
+                return False
             return True
+        return True
 
 
 class ApiKeyStore:

@@ -63,19 +63,21 @@ def test_downsample_for_forecasting_weekly(processor):
     np.random.seed(42)
     dates = pd.date_range(start="2015-01-01", periods=2500, freq="D")
     df = pd.DataFrame({"date": dates, "value": np.random.rand(2500) * 100})
-    result, info = DataProcessor.downsample_for_forecasting(
+    result, exog_data, info = DataProcessor.downsample_for_forecasting(
         df, "date", "value", max_points=500
     )
     assert info["downsample_applied"] is True
     assert len(result) <= 500
+    assert exog_data is None
 
 
 def test_downsample_for_forecasting_insufficient_data(processor):
     np.random.seed(42)
     dates = pd.date_range(start="2023-01-01", periods=100, freq="D")
     df = pd.DataFrame({"date": dates, "value": np.random.rand(100) * 100})
-    result, info = DataProcessor.downsample_for_forecasting(
+    result, exog_data, info = DataProcessor.downsample_for_forecasting(
         df, "date", "value", max_points=500
     )
     assert info["downsample_applied"] is False
     assert len(result) == 100
+    assert exog_data is None

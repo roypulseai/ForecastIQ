@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 
 from ...core.api_keys import (
     ApiKeyRecord,
@@ -18,8 +18,10 @@ from ...core.api_keys import (
     generate_api_key,
     get_api_key_store,
 )
+from ...core.users import User
 from ...core.utils import to_python
 from ...core.config import settings
+from ...middleware.auth import require_jwt
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +29,7 @@ router = APIRouter(prefix="/api-keys")
 
 
 @router.get("")
-async def list_keys() -> Dict[str, Any]:
+async def list_keys(user: User = Depends(require_jwt)) -> Dict[str, Any]:
     """List all API keys. Plain secrets are NEVER returned."""
     store = get_api_key_store()
     items = store.list_keys()
@@ -43,6 +45,7 @@ async def list_keys() -> Dict[str, Any]:
 @router.post("")
 async def create_key(
     payload: Dict[str, Any] = Body(...),
+    user: User = Depends(require_jwt),
 ) -> Dict[str, Any]:
     """Create a new API key.
 
@@ -87,6 +90,7 @@ async def create_key(
 async def update_key(
     key_id: str,
     payload: Dict[str, Any] = Body(...),
+    user: User = Depends(require_jwt),
 ) -> Dict[str, Any]:
     """Update a key's name, tier, scopes, or expiry. To revoke, use DELETE."""
     store = get_api_key_store()
@@ -111,7 +115,7 @@ async def update_key(
 
 
 @router.delete("/{key_id}")
-async def revoke_key(key_id: str) -> Dict[str, Any]:
+async def revoke_key(key_id: str, user: User = Depends(require_jwt)) -> Dict[str, Any]:
     """Permanently revoke a key. Cannot be undone — the caller must create
     a new key to restore access."""
     store = get_api_key_store()
@@ -124,7 +128,7 @@ async def revoke_key(key_id: str) -> Dict[str, Any]:
 
 
 @router.get("/tiers")
-async def list_tiers() -> Dict[str, Any]:
+async def list_tiers(user: User = Depends(require_jwt)) -> Dict[str, Any]:
     """Return the available tiers and their rate limits."""
     from ...core.api_keys import TIER_LIMITS
     return to_python({

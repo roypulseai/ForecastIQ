@@ -54,6 +54,7 @@ class XGBoostForecaster(BaseForecaster):
         colsample_bytree: float = 0.9,
         lags: Optional[List[int]] = None,
         roll_windows: Optional[List[int]] = None,
+        non_negative: bool = True,
     ) -> None:
         super().__init__(
             n_estimators=n_estimators, learning_rate=learning_rate,
@@ -68,6 +69,7 @@ class XGBoostForecaster(BaseForecaster):
         self.colsample_bytree = colsample_bytree
         self.lags = lags or [1, 2, 3, 7, 14]
         self.roll_windows = roll_windows or [7, 14, 28]
+        self.non_negative = non_negative
         self._shap_values: Optional[List[Dict[str, Any]]] = None
         self._shap_base_value: Optional[float] = None
         self._shap_explainer: Any = None
@@ -175,6 +177,7 @@ class XGBoostForecaster(BaseForecaster):
         include_external: bool,
         compute_shap: bool,
     ) -> List[Dict[str, Any]]:
+        exog_lookup = _prep_exog_lookup(exog_data) if exog_data is not None else self._exog_lookup
         freq = self._frequency or "D"
         try:
             future_dates = pd.date_range(
@@ -203,7 +206,7 @@ class XGBoostForecaster(BaseForecaster):
             X_step = _step_features(
                 fut_date, list(recent),
                 self.lags, self.roll_windows,
-                self._exog_lookup if include_external else None,
+                exog_lookup if include_external else None,
                 self._feature_cols,
             ).reshape(1, -1)
 
@@ -215,7 +218,8 @@ class XGBoostForecaster(BaseForecaster):
             except Exception as e:
                 logger.warning("XGBoost step predict failed at step %d: %s", step_idx, e)
                 p = float(recent[-1]) if recent else 0.0
-            p = max(0.0, p)
+            if self.non_negative:
+                p = max(0.0, p)
             preds.append(p)
             recent.append(p)
 
@@ -233,10 +237,11 @@ class XGBoostForecaster(BaseForecaster):
 
         results = []
         for i, (d, p) in enumerate(zip(future_dates, preds)):
+            lower_ci = max(0.0, p * 0.85) if self.non_negative else p * 0.85
             entry: Dict[str, Any] = {
                 "date": self._format_date(d),
                 "forecast": self._safe_float(p),
-                "lower_ci": self._safe_float(max(0.0, p * 0.85)),
+                "lower_ci": self._safe_float(lower_ci),
                 "upper_ci": self._safe_float(p * 1.15),
             }
             if shap_per_step is not None and i < len(shap_per_step):

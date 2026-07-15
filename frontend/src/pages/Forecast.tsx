@@ -317,7 +317,7 @@ export function ForecastPage(): ReactNode {
       auto_detect_events: external.auto_detect_events,
       auto_event_country: external.auto_event_country,
       auto_event_regions: external.auto_event_regions,
-      ensemble_models: useEnsemble && request.ensemble_models?.length ? request.ensemble_models : undefined,
+      ensemble_models: useEnsemble && request.ensemble_models?.length ? request.ensemble_models.filter((m) => request.models.includes(m)) : undefined,
       aggregation: useAggregation ? request.aggregation : undefined,
       parameters: Object.keys(request.parameters ?? {}).length > 0 ? request.parameters : undefined,
       train_test_split: request.train_test_split ?? 1.0,

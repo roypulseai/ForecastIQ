@@ -760,7 +760,8 @@ class DataProcessor:
         value_col: str,
         max_points: int = 5000,
         prefer_weekly: bool = False,
-    ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        exog_data: Optional[Dict[str, pd.DataFrame]] = None,
+    ) -> Tuple[pd.DataFrame, Optional[Dict[str, pd.DataFrame]], Dict[str, Any]]:
         """Reduce a long time series to <= max_points while preserving shape.
 
         Strategy:
@@ -770,8 +771,8 @@ class DataProcessor:
             3. Otherwise, take a representative subset: keep the most-recent
                `max_points` rows (recency is what matters for forecasting).
 
-        Returns (downsampled_df, info_dict). info_dict explains what was done
-        so the UI can show a notice to the user.
+        Returns (downsampled_df, exog_data_or_none, info_dict). info_dict
+        explains what was done so the UI can show a notice to the user.
         """
         info: Dict[str, Any] = {
             "original_rows": int(len(df)),
@@ -781,26 +782,59 @@ class DataProcessor:
             "aggregation_level": None,
         }
         if df.empty or len(df) <= max_points:
-            return df, info
+            return df, exog_data, info
 
         df = df.copy()
         df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
         df = df.dropna(subset=[date_col]).sort_values(date_col)
 
         n = len(df)
-        # Compute date span
         span_days = (df[date_col].iloc[-1] - df[date_col].iloc[0]).days
 
-        # If very long daily series (>= 5 years) AND we exceed the limit by 5x
-        # aggregate to weekly — much faster for all downstream models.
         if n > max_points * 5 and span_days >= 365 * 5:
             weekly = (
                 df.set_index(date_col)[[value_col]]
-                .resample("W")
+                .resample("W-SUN")
                 .sum()
                 .reset_index()
             )
             weekly.columns = [date_col, value_col]
+            sales_index = pd.DatetimeIndex(weekly[date_col], name=date_col)
+            downsampled_exog: Optional[Dict[str, pd.DataFrame]] = None
+            if exog_data:
+                downsampled_exog = {}
+                for key, exog_df in exog_data.items():
+                    if exog_df is None or exog_df.empty:
+                        downsampled_exog[key] = exog_df
+                        continue
+                    exog_date_col = date_col if date_col in exog_df.columns else (
+                        "date" if "date" in exog_df.columns else None
+                    )
+                    if exog_date_col is None:
+                        downsampled_exog[key] = exog_df
+                        continue
+                    exog_copy = exog_df.copy()
+                    exog_copy[exog_date_col] = pd.to_datetime(
+                        exog_copy[exog_date_col], errors="coerce"
+                    )
+                    exog_copy = exog_copy.dropna(subset=[exog_date_col]).sort_values(exog_date_col)
+                    numeric_cols = [
+                        c for c in exog_copy.columns
+                        if c != exog_date_col and pd.api.types.is_numeric_dtype(exog_copy[c])
+                    ]
+                    if not numeric_cols:
+                        downsampled_exog[key] = exog_df
+                        continue
+                    resampled = (
+                        exog_copy.set_index(exog_date_col)[numeric_cols]
+                        .resample("W-SUN")
+                        .sum()
+                        .reindex(sales_index, fill_value=0)
+                        .reset_index()
+                    )
+                    if exog_date_col != date_col:
+                        resampled = resampled.rename(columns={exog_date_col: date_col})
+                    downsampled_exog[key] = resampled
             info.update({
                 "downsample_applied": True,
                 "reason": (
@@ -810,9 +844,8 @@ class DataProcessor:
                 "new_rows": int(len(weekly)),
                 "aggregation_level": "weekly",
             })
-            return weekly, info
+            return weekly, downsampled_exog if downsampled_exog is not None else exog_data, info
 
-        # Otherwise, keep the most-recent max_points rows
         recent = df.tail(max_points).reset_index(drop=True)
         info.update({
             "downsample_applied": True,
@@ -823,7 +856,7 @@ class DataProcessor:
             "new_rows": int(len(recent)),
             "aggregation_level": "tail",
         })
-        return recent, info
+        return recent, exog_data, info
 
     @staticmethod
     def optimize_dtypes(df: pd.DataFrame) -> pd.DataFrame:

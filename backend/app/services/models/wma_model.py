@@ -89,22 +89,57 @@ class WMAForecaster(BaseForecaster):
         out: Dict[pd.Timestamp, float] = {}
         if not exog_data:
             return out
-        promo = exog_data.get("promotions")
-        if promo is None or promo.empty:
-            return out
-        if "date" not in promo.columns or "discount" not in promo.columns:
-            return out
-        for _, row in promo.iterrows():
+
+        def _normalize_date(val: Any) -> Optional[pd.Timestamp]:
             try:
-                d = pd.Timestamp(pd.to_datetime(row["date"], errors="coerce"))
+                d = pd.Timestamp(pd.to_datetime(val, errors="coerce"))
                 if pd.isna(d):
-                    continue
-                discount = float(pd.to_numeric(row.get("discount", 0), errors="coerce") or 0.0)
-                # Treat discount percentage as a positive lift: 10% off → 1.10x
-                mult = 1.0 + max(0.0, min(discount, 100.0)) / 100.0
-                out[d] = mult
+                    return None
+                return d.normalize()
             except Exception:
+                return None
+
+        def _first_numeric(df: pd.DataFrame) -> Optional[str]:
+            for col in df.columns:
+                if col == "date":
+                    continue
+                if pd.api.types.is_numeric_dtype(df[col]):
+                    return col
+            return None
+
+        def _get_multiplier(factor_type: str, row: pd.Series, df: pd.DataFrame) -> Optional[float]:
+            preferred = {
+                "promotions": "discount",
+                "events": "event_impact",
+                "holidays": "holiday_impact",
+                "media_plan": "media_spend",
+            }
+            col = preferred.get(factor_type)
+            if col and col in df.columns:
+                val = pd.to_numeric(row.get(col), errors="coerce")
+            else:
+                num_col = _first_numeric(df)
+                if num_col is None:
+                    return None
+                val = pd.to_numeric(row.get(num_col), errors="coerce")
+            if pd.isna(val):
+                return None
+            if factor_type == "promotions":
+                return 1.0 + max(0.0, min(float(val), 100.0)) / 100.0
+            return float(val)
+
+        for factor_type, df in exog_data.items():
+            if df is None or df.empty or "date" not in df.columns:
                 continue
+            for _, row in df.iterrows():
+                d = _normalize_date(row.get("date"))
+                if d is None:
+                    continue
+                mult = _get_multiplier(factor_type, row, df)
+                if mult is None:
+                    continue
+                out[d] = out.get(d, 1.0) * mult
+
         return out
 
     def _generate(

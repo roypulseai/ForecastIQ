@@ -5,7 +5,7 @@ import logging
 import uuid
 from contextvars import ContextVar
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from .api import api_router
 from .api.public import build_public_router
 from .core.config import settings
+from .middleware.auth import require_jwt
 
 _request_id: ContextVar[str] = ContextVar("request_id", default="-")
 
@@ -98,7 +99,10 @@ def create_app() -> FastAPI:
     except Exception as e:
         logger.warning("Could not mount /outputs: %s", e)
 
-    app.include_router(api_router, prefix=settings.API_V1_STR)
+    app.include_router(
+        api_router,
+        prefix=settings.API_V1_STR,
+    )
 
     from app.api.routes.auth import router as auth_router
     app.include_router(auth_router)

@@ -41,12 +41,13 @@ import {
   useUploadSavedModel,
 } from '../hooks/useModels';
 import { useFiles } from '../hooks/useFiles';
-import { getErrorMessage } from '../services/api';
+import { apiClient, getErrorMessage } from '../services/api';
+import { downloadBlob } from '../utils/csv';
 import { formatDate, formatNumber } from '../utils/format';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { useToast } from '../components/common/ToastProvider';
 import { useStore } from '../store/appStore';
-import { MODEL_LABELS, type SavedModelMeta } from '../types';
+import { MODEL_LABELS, type Frequency, type SavedModelMeta } from '../types';
 
 const ALL_MODEL_TYPES = ['automl', 'arima', 'sarimax', 'prophet', 'lightgbm', 'xgboost', 'wma', 'ets', 'theta', 'stl'] as const;
 
@@ -114,7 +115,7 @@ export function ModelsPage(): ReactNode {
         horizon: params.horizon,
         date_column: analysisData?.validation?.date_column ?? 'date',
         target_column: analysisData?.validation?.value_column ?? 'value',
-        frequency: 'D',
+        frequency: (analysisData?.validation?.frequency ?? 'D') as Frequency,
         name: params.name,
         notes: params.notes,
         tags: params.tags.split(',').map((t) => t.trim()).filter(Boolean),
@@ -352,6 +353,10 @@ function ModelCard({
   onEdit: () => void;
   onForecast: () => void;
 }) {
+  const handleDownload = async () => {
+    const blob = await apiClient.downloadModel(model.model_id);
+    downloadBlob(blob, model.name, 'application/octet-stream');
+  };
   const mae = model.metrics.mae;
   const rmse = model.metrics.rmse;
   const mape = model.metrics.mape;
@@ -434,9 +439,7 @@ function ModelCard({
           <Tooltip title="Download pickle">
             <IconButton
               size="small"
-              component="a"
-              href={`/api/v1/models/${model.model_id}/download`}
-              download
+              onClick={handleDownload}
               aria-label="Download model"
             >
               <DownloadIcon fontSize="small" />

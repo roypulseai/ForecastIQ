@@ -23,7 +23,7 @@ export function ResultsTable({
     if (actuals) for (const a of actuals) m.set(a.date, a.value);
     return m;
   }, [actuals]);
-  const knownFields = new Set(['date', 'forecast', 'lower_ci', 'upper_ci', 'baseline', 'uplift', 'category']);
+  const knownFields = new Set(['date', 'forecast', 'lower_ci', 'upper_ci', 'baseline', 'uplift', 'category', 'shap', 'shap_base']);
   const sample = values[0];
   const extraFields = sample
     ? Object.keys(sample).filter((k) => !knownFields.has(k))

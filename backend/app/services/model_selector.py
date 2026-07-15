@@ -345,36 +345,39 @@ class ModelSelector:
                         "message": f"Not enough overlapping data for {exog_name}"}
 
             target = pd.to_numeric(merged[value_col], errors="coerce").values
-            # Pick the first numeric external column
             exog_cols = [c for c in merged.columns
                          if c not in (date_col, value_col) and pd.api.types.is_numeric_dtype(merged[c])]
             if not exog_cols:
                 return {"lag": 0, "correlation": None,
                         "message": f"No numeric columns in {exog_name}"}
 
-            exog = pd.to_numeric(merged[exog_cols[0]], errors="coerce").values
-
-            if len(target) < 10 or len(exog) < 10:
+            if len(target) < 10:
                 return {"lag": 0, "correlation": None, "message": "Too few data points"}
 
             best_corr = -1.0
             best_lag = 0
-            for lag in range(0, min(max_lag + 1, len(target) // 2)):
-                if lag == 0:
-                    corr = np.corrcoef(target, exog)[0, 1]
-                else:
-                    corr = np.corrcoef(target[lag:], exog[:-lag])[0, 1]
-                corr = abs(corr) if not np.isnan(corr) else 0.0
-                if corr > best_corr:
-                    best_corr = corr
-                    best_lag = lag
+            best_col = exog_cols[0]
+            for col in exog_cols:
+                exog = pd.to_numeric(merged[col], errors="coerce").values
+                if len(exog) < 10:
+                    continue
+                for lag in range(0, min(max_lag + 1, len(target) // 2)):
+                    if lag == 0:
+                        corr = np.corrcoef(target, exog)[0, 1]
+                    else:
+                        corr = np.corrcoef(target[lag:], exog[:-lag])[0, 1]
+                    corr = abs(corr) if not np.isnan(corr) else 0.0
+                    if corr > best_corr:
+                        best_corr = corr
+                        best_lag = lag
+                        best_col = col
 
             strength = "strong" if best_corr > 0.5 else ("moderate" if best_corr > 0.3 else "weak")
             return {
                 "lag": int(best_lag),
                 "correlation": round(float(best_corr), 3),
                 "strength": strength,
-                "message": f"Best lag={best_lag}, correlation={best_corr:.3f} ({strength})",
+                "message": f"Best column={best_col}, lag={best_lag}, correlation={best_corr:.3f} ({strength})",
             }
         except Exception as e:
             return {"lag": 0, "correlation": None, "message": str(e)}
@@ -602,7 +605,22 @@ class ModelSelector:
                 def _fit_and_predict():
                     m_ = self.get_model(model_type, params)
                     m_.fit(train, date_col, value_col, exog_data=exog_data or {}, frequency=frequency)
-                    return m_.forecast(len(test))
+                    test_exog: Optional[Dict[str, pd.DataFrame]] = None
+                    if exog_data:
+                        test_exog = {}
+                        test_start = pd.Timestamp(test[date_col].iloc[0])
+                        test_end = pd.Timestamp(test[date_col].iloc[-1])
+                        for key, df in exog_data.items():
+                            if df is None or df.empty or date_col not in df.columns:
+                                test_exog[key] = df
+                                continue
+                            mask = (
+                                pd.to_datetime(df[date_col], errors="coerce") >= test_start
+                            ) & (
+                                pd.to_datetime(df[date_col], errors="coerce") <= test_end
+                            )
+                            test_exog[key] = df[mask].copy()
+                    return m_.forecast(len(test), exog_data=test_exog)
                 with ThreadPoolExecutor(max_workers=1) as _pool:
                     preds = _pool.submit(_fit_and_predict).result(timeout=fold_timeout)
                 pred_values = np.array([self._safe_float(p.get("forecast", 0.0)) for p in preds])

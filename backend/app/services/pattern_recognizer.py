@@ -260,48 +260,34 @@ class PatternRecognizer:
             )
             if len(merged) < 5:
                 continue
-            # Identify target value column (may be suffixed)
             target_val_col = f"{value_col}_target"
             if target_val_col not in merged.columns:
                 target_val_col = value_col if value_col in merged.columns else "value"
-            # Find the numeric column from the exog side
-            exog_val_col = f"{value_col}_exog"
-            if exog_val_col not in merged.columns:
-                # Fall back to any other numeric column
-                numeric_cols = merged.select_dtypes(include=[np.number]).columns.tolist()
-                candidates = [c for c in numeric_cols if c != target_val_col and c != date_col]
-                if not candidates:
-                    continue
-                exog_val_col = candidates[0]
-            else:
-                # If there's a clean "exog_val_col", we're good
-                pass
-            # Ensure we have a valid numeric exog column
-            if exog_val_col not in merged.columns or exog_val_col == target_val_col:
-                numeric_cols = merged.select_dtypes(include=[np.number]).columns.tolist()
-                candidates = [c for c in numeric_cols if c != target_val_col and c != date_col]
-                if not candidates:
-                    continue
-                exog_val_col = candidates[0]
-            corr = merged[target_val_col].corr(merged[exog_val_col])
-            prof.exog_correlations[factor_name] = float(corr) if pd.notna(corr) else 0.0
+            numeric_cols = merged.select_dtypes(include=[np.number]).columns.tolist()
+            exog_cols = [c for c in numeric_cols if c != target_val_col and c != date_col]
+            if not exog_cols:
+                continue
 
-            # Cross-correlation: find lag that maximises abs(correlation)
-            best_lag = 0
-            best_xcorr = 0.0
-            y = merged[target_val_col].values
-            x = merged[exog_val_col].values
-            for lag in range(0, min(30, len(y) // 3)):
-                if lag == 0:
-                    xcorr = float(np.corrcoef(y, x)[0, 1]) if len(y) > 2 else 0.0
-                elif lag < len(y):
-                    xcorr = float(np.corrcoef(y[lag:], x[:-lag])[0, 1]) if len(y) - lag > 2 else 0.0
-                else:
-                    break
-                xcorr = abs(xcorr) if pd.notna(xcorr) else 0.0
-                if xcorr > best_xcorr:
-                    best_xcorr = xcorr
-                    best_lag = lag
-            if best_xcorr > 0.1:
-                prof.exog_lags[factor_name] = best_lag
-                prof.best_exog_lag_corr[factor_name] = best_xcorr
+            for exog_col in exog_cols:
+                key = f"{factor_name}/{exog_col}"
+                corr = merged[target_val_col].corr(merged[exog_col])
+                prof.exog_correlations[key] = float(corr) if pd.notna(corr) else 0.0
+
+                best_lag = 0
+                best_xcorr = 0.0
+                y = merged[target_val_col].values
+                x = merged[exog_col].values
+                for lag in range(0, min(30, len(y) // 3)):
+                    if lag == 0:
+                        xcorr = float(np.corrcoef(y, x)[0, 1]) if len(y) > 2 else 0.0
+                    elif lag < len(y):
+                        xcorr = float(np.corrcoef(y[lag:], x[:-lag])[0, 1]) if len(y) - lag > 2 else 0.0
+                    else:
+                        break
+                    xcorr = abs(xcorr) if pd.notna(xcorr) else 0.0
+                    if xcorr > best_xcorr:
+                        best_xcorr = xcorr
+                        best_lag = lag
+                if best_xcorr > 0.1:
+                    prof.exog_lags[key] = best_lag
+                    prof.best_exog_lag_corr[key] = best_xcorr

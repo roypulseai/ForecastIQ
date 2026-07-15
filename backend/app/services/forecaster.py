@@ -363,9 +363,10 @@ class ForecasterService:
         }
         if len(sales_df) > DOWNSAMPLE_THRESHOLD:
             try:
-                sales_df, ds_info = DataProcessor.downsample_for_forecasting(
+                sales_df, exog_data, ds_info = DataProcessor.downsample_for_forecasting(
                     sales_df, date_col, value_col,
                     max_points=DOWNSAMPLE_THRESHOLD,
+                    exog_data=exog_data,
                 )
                 downsample_info.update(ds_info)
                 if downsample_info.get("downsample_applied"):
@@ -604,6 +605,7 @@ class ForecasterService:
                 pm = per_model.get(m)
                 if not pm or pm.get("error"):
                     continue
+                pm["test_forecast_values"] = pm.get("forecast_values", [])
                 try:
                     full_model = self.selector.get_model(m, params)
                     full_model.fit(sales_df, date_col, value_col, exog_data=exog_data or {}, frequency=effective_frequency)
@@ -731,7 +733,7 @@ class ForecasterService:
                 chosen = [m for m in ensemble_models if m in per_model
                           and not per_model[m].get("error")]
                 if len(chosen) >= 2:
-                    members: List[BaseForecaster] = []
+                    member_pairs: List[Tuple[str, BaseForecaster]] = []
                     # Fit ensemble members in parallel too
                     def _refit(m: str) -> Tuple[str, Optional[BaseForecaster]]:
                         try:
@@ -745,19 +747,21 @@ class ForecasterService:
                         with ThreadPoolExecutor(max_workers=min(len(chosen), MAX_PARALLEL_WORKERS)) as ex:
                             for mname, inst in ex.map(_refit, chosen):
                                 if inst is not None:
-                                    members.append(inst)
+                                    member_pairs.append((mname, inst))
                     else:
                         for c in chosen:
                             _, inst = _refit(c)
                             if inst is not None:
-                                members.append(inst)
-                    if len(members) >= 2:
+                                member_pairs.append((c, inst))
+                    if len(member_pairs) >= 2:
+                        member_names = [name for name, _ in member_pairs]
+                        members = [inst for _, inst in member_pairs]
                         if ensemble_weights and len(ensemble_weights) == len(members):
                             weights = list(ensemble_weights)
                         else:
                             weights = []
-                            for c in chosen[:len(members)]:
-                                cv = cv_results.get(c, {})
+                            for name in member_names:
+                                cv = cv_results.get(name, {})
                                 mae = cv.get("mae")
                                 if mae and mae > 0:
                                     weights.append(1.0 / (mae + 1e-3))
@@ -772,49 +776,63 @@ class ForecasterService:
                         ens_metrics: Dict[str, float] = {}
                         if test_df is not None and len(test_df) > 0:
                             try:
-                                actual_vals = test_df[value_col].values
-                                pred_dates = {fv.get("date", ""): fv.get("forecast", 0.0) for fv in ens_fc}
-                                matched_acts, matched_preds = [], []
-                                for _, row in test_df.iterrows():
-                                    d_str = str(row[date_col])[:10]
-                                    if d_str in pred_dates:
-                                        matched_acts.append(float(row[value_col]))
-                                        matched_preds.append(pred_dates[d_str])
-                                n = len(matched_acts)
-                                if n > 0:
-                                    actuals_arr = np.array(matched_acts)
-                                    preds_arr = np.array(matched_preds)
-                                    errors = np.abs(actuals_arr - preds_arr)
-                                    mae = float(np.mean(errors))
-                                    rmse = float(np.sqrt(np.mean(errors ** 2)))
-                                    mape_vals = np.where(actuals_arr == 0, 1e-9, np.abs(actuals_arr))
-                                    mape = float(np.mean(np.abs(errors) / mape_vals) * 100)
-                                    ens_metrics = {
-                                        "mae": mae,
-                                        "rmse": rmse,
-                                        "mape": mape,
-                                        "forecast_accuracy": _compute_forecast_accuracy(mape),
-                                        "accuracy_grade": _accuracy_grade(_compute_forecast_accuracy(mape)),
-                                    }
+                                test_dates = {pd.Timestamp(row[date_col]).strftime("%Y-%m-%d") for _, row in test_df.iterrows()}
+                                name_to_key = {pm.get("model_name"): key for key, pm in per_model.items() if not pm.get("error")}
+                                test_forecasts: List[List[Dict[str, Any]]] = []
+                                test_weights: List[float] = []
+                                for member, w in zip(members, weights):
+                                    key = name_to_key.get(member.name)
+                                    if key is None:
+                                        continue
+                                    fc = per_model[key].get("test_forecast_values", [])
+                                    filtered = [fv for fv in fc if str(fv.get("date", ""))[:10] in test_dates]
+                                    if filtered:
+                                        test_forecasts.append(filtered)
+                                        test_weights.append(w)
+                                if test_forecasts:
+                                    ens_test_fc = _weighted_forecast_combination(test_forecasts, test_weights)
+                                    pred_dates = {fv.get("date", ""): fv.get("forecast", 0.0) for fv in ens_test_fc}
+                                    matched_acts, matched_preds = [], []
+                                    for _, row in test_df.iterrows():
+                                        d_str = str(row[date_col])[:10]
+                                        if d_str in pred_dates:
+                                            matched_acts.append(float(row[value_col]))
+                                            matched_preds.append(pred_dates[d_str])
+                                    n = len(matched_acts)
+                                    if n > 0:
+                                        actuals_arr = np.array(matched_acts)
+                                        preds_arr = np.array(matched_preds)
+                                        errors = np.abs(actuals_arr - preds_arr)
+                                        mae = float(np.mean(errors))
+                                        rmse = float(np.sqrt(np.mean(errors ** 2)))
+                                        mape_vals = np.where(actuals_arr == 0, 1e-9, np.abs(actuals_arr))
+                                        mape = float(np.mean(np.abs(errors) / mape_vals) * 100)
+                                        ens_metrics = {
+                                            "mae": mae,
+                                            "rmse": rmse,
+                                            "mape": mape,
+                                            "forecast_accuracy": _compute_forecast_accuracy(mape),
+                                            "accuracy_grade": _accuracy_grade(_compute_forecast_accuracy(mape)),
+                                        }
                             except Exception as e:
                                 logger.warning("Failed to compute ensemble metrics: %s", e)
 
                         ensemble_result = {
-                            "models_used": [mm.name for mm in members],
+                            "models_used": member_names,
                             "weights": ens.weights,
                             "forecast_values": ens_fc,
                             "baseline_values": ens_base,
                             "metrics": ens_metrics,
                             "individual_results": [
                                 {
-                                    "model_name": per_model[c].get("model_name", c),
-                                    "metrics": per_model[c].get("metrics", {}),
-                                    "forecast_values": per_model[c].get("forecast_values", []),
-                                    "baseline_values": per_model[c].get("baseline_values", []),
-                                    "feature_importance": per_model[c].get("feature_importance", {}),
-                                    "components": per_model[c].get("components", {}),
+                                    "model_name": per_model[name].get("model_name", name),
+                                    "metrics": per_model[name].get("metrics", {}),
+                                    "forecast_values": per_model[name].get("forecast_values", []),
+                                    "baseline_values": per_model[name].get("baseline_values", []),
+                                    "feature_importance": per_model[name].get("feature_importance", {}),
+                                    "components": per_model[name].get("components", {}),
                                 }
-                                for c in chosen[:len(members)]
+                                for name in member_names
                             ],
                         }
             except Exception as e:
@@ -918,14 +936,18 @@ class ForecasterService:
                                     inst.fit(backtest_df, date_col, value_col, exog_data=exog_data or {}, frequency=effective_frequency)
                                     return inst
                                 bt_member_futures[m_name] = bt_mem_pool.submit(_ens_bt_fit)
-                        bt_members = []
-                        for fut in bt_member_futures.values():
+                        bt_member_pairs = []
+                        for m_name, fut in bt_member_futures.items():
                             try:
-                                bt_members.append(fut.result(timeout=MODEL_TIMEOUT))
+                                bt_member_pairs.append((m_name, fut.result(timeout=MODEL_TIMEOUT)))
                             except Exception:
                                 pass
-                        if len(bt_members) >= 1:
-                            ens = EnsembleForecaster(bt_members)
+                        if len(bt_member_pairs) >= 1:
+                            weights_by_name = dict(zip(ensemble_result["models_used"], ensemble_result["weights"]))
+                            bt_names = [name for name, _ in bt_member_pairs]
+                            bt_weights = [weights_by_name.get(name, 1.0) for name in bt_names]
+                            bt_members = [inst for _, inst in bt_member_pairs]
+                            ens = EnsembleForecaster(bt_members, bt_weights)
                             bt_fc = ens.forecast(len(backtest_actuals), exog_data=exog_data)
                             ensemble_result["backtest_forecast_values"] = bt_fc
                             bt_metrics = _compute_backtest_metrics(bt_fc, backtest_actuals, date_col, value_col)
@@ -1600,6 +1622,36 @@ def _compute_backtest_metrics(
     except Exception as e:
         logger.warning("Failed to compute backtest metrics: %s", e)
         return {}
+
+
+def _weighted_forecast_combination(
+    forecasts: List[List[Dict[str, Any]]],
+    weights: List[float],
+) -> List[Dict[str, Any]]:
+    """Weighted-average of precomputed forecasts aligned by date."""
+    if not forecasts:
+        return []
+    total = sum(max(0.0, w) for w in weights) or 1.0
+    norm_weights = [max(0.0, w) / total for w in weights]
+    date_vals: Dict[str, List[Tuple[float, float, float, float]]] = {}
+    for fc, w in zip(forecasts, norm_weights):
+        for fv in fc:
+            d = str(fv.get("date", ""))[:10]
+            if not d:
+                continue
+            v = float(fv.get("forecast", 0.0))
+            lo = float(fv.get("lower_ci", v * 0.85))
+            hi = float(fv.get("upper_ci", v * 1.15))
+            date_vals.setdefault(d, []).append((v, lo, hi, w))
+    results: List[Dict[str, Any]] = []
+    for d in sorted(date_vals.keys()):
+        entries = date_vals[d]
+        entry_total = sum(e[3] for e in entries) or 1.0
+        val = sum(e[0] * e[3] for e in entries) / entry_total
+        lo = min(e[1] for e in entries)
+        hi = max(e[2] for e in entries)
+        results.append({"date": d, "forecast": val, "lower_ci": lo, "upper_ci": hi})
+    return results
 
 
 def _build_summary(

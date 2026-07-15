@@ -1,8 +1,8 @@
 """JWT authentication dependency for protected routes."""
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from ...core.jwt import decode_access_token
-from ...core.users import get_user_manager, User
+from ..core.jwt import decode_access_token
+from ..core.users import get_user_manager, User
 
 security = HTTPBearer(auto_error=False)
 

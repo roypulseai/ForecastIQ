@@ -122,3 +122,23 @@ def test_model_forecast_ci_widens_with_horizon(sample_sales_df):
         result = model.forecast(14)
         widths = [r["upper_ci"] - r["lower_ci"] for r in result]
         assert widths[-1] >= widths[0]
+
+
+def test_prophet_fit_and_forecast(sample_sales_df):
+    pytest.importorskip("prophet", reason="prophet not installed")
+    from app.services.models.prophet_model import ProphetForecaster
+    model = ProphetForecaster()
+    model.fit(sample_sales_df, "date", "value", frequency="D")
+    result = model.forecast(7)
+    assert len(result) == 7
+    assert all("date" in r and "forecast" in r and "lower_ci" in r and "upper_ci" in r for r in result)
+
+
+def test_automl_fit_and_forecast(sample_sales_df):
+    pytest.importorskip("prophet", reason="prophet not installed")
+    from app.services.models.automl_model import AutoMLForecaster
+    model = AutoMLForecaster()
+    model.fit(sample_sales_df, "date", "value", frequency="D")
+    result = model.forecast(7)
+    assert len(result) == 7
+    assert all("date" in r and "forecast" in r and "lower_ci" in r and "upper_ci" in r for r in result)

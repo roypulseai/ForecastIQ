@@ -142,9 +142,9 @@ class AutoMLForecaster(BaseForecaster):
         exog_data: Optional[Dict[str, pd.DataFrame]] = None,
         **kwargs: Any,
     ) -> List[Dict[str, Any]]:
-        if self._inner_model is not None and self._strategy != "prophet_xgb":
-            return self._inner_model.get_baseline(horizon, exog_data=None)
-        return self.forecast(horizon, exog_data=None)
+        if self._inner_model is None:
+            return []
+        return self._inner_model.get_baseline(horizon, **kwargs)
 
     # ------------------------------------------------------------------
     # Components
@@ -350,9 +350,16 @@ class AutoMLForecaster(BaseForecaster):
             if hasattr(inner, '_fitted_model') and hasattr(inner, '_train_df') and inner._fitted_model is not None:
                 try:
                     train_pred = inner._fitted_model.predict(inner._train_df)
-                    in_sample_vals = train_pred["yhat"].values
+                    pred_dates = pd.to_datetime(
+                        inner._train_df[date_col].values if date_col in inner._train_df.columns else inner._train_df["ds"].values,
+                        errors="coerce",
+                    )
+                    pred_series = pd.Series(train_pred["yhat"].values, index=pred_dates)
+                    target_dates = pd.to_datetime(df[date_col].values, errors="coerce")
+                    aligned = pred_series.reindex(target_dates)
+                    in_sample_vals = aligned.values
                     for i in range(len(actuals)):
-                        pv = float(in_sample_vals[i]) if i < len(in_sample_vals) else 0.0
+                        pv = float(in_sample_vals[i]) if i < len(in_sample_vals) and not np.isnan(in_sample_vals[i]) else 0.0
                         av = float(actuals[i]) if not np.isnan(actuals[i]) else 0.0
                         residuals.append(av - pv)
                 except Exception:

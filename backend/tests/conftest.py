@@ -1,9 +1,30 @@
 import os
+import shutil
 import tempfile
+import uuid
+import atexit
 
 import numpy as np
 import pandas as pd
 import pytest
+from fastapi.testclient import TestClient
+
+_tmp_data_dir = tempfile.mkdtemp()
+atexit.register(lambda: shutil.rmtree(_tmp_data_dir, ignore_errors=True))
+
+from app.core.config import settings
+from app.core import jwt
+from passlib.context import CryptContext
+
+jwt.pwd_context = CryptContext(schemes=["sha256_crypt"], deprecated="auto")
+
+settings.DATA_DIR = _tmp_data_dir
+settings.UPLOAD_DIR = os.path.join(_tmp_data_dir, "uploads")
+settings.OUTPUT_DIR = os.path.join(_tmp_data_dir, "outputs")
+settings.TEMPLATE_DIR = os.path.join(_tmp_data_dir, "templates")
+settings.ensure_dirs()
+
+from app.main import app
 
 
 @pytest.fixture
@@ -42,13 +63,27 @@ def sample_exog_data():
 
 
 @pytest.fixture
-def tmp_data_dir():
-    with tempfile.TemporaryDirectory() as tmpdir:
-        yield tmpdir
+def client():
+    return TestClient(app)
 
 
 @pytest.fixture
-def client():
-    from fastapi.testclient import TestClient
-    from app.main import app
-    return TestClient(app)
+def auth_client():
+    test_client = TestClient(app)
+    username = f"testuser_{uuid.uuid4().hex[:8]}"
+    password = "testpass123"
+    register_resp = test_client.post(
+        "/api/v1/auth/register",
+        json={"username": username, "password": password, "email": "test@example.com"},
+    )
+    if register_resp.status_code not in (200, 201, 409):
+        raise RuntimeError(f"Failed to register test user: {register_resp.text}")
+    login_resp = test_client.post(
+        "/api/v1/auth/login",
+        json={"username": username, "password": password},
+    )
+    if login_resp.status_code not in (200, 201):
+        raise RuntimeError(f"Failed to login test user: {login_resp.text}")
+    token = login_resp.json()["access_token"]
+    test_client.headers["Authorization"] = f"Bearer {token}"
+    return test_client

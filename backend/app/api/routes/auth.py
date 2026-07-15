@@ -40,7 +40,7 @@ def login(req: LoginRequest):
 @router.post("/register")
 def register(req: RegisterRequest):
     mgr = get_user_manager()
-    user = mgr.create_user(req.username, req.password, role=req.role, email=req.email)
+    user = mgr.create_user(req.username, req.password, role="viewer", email=req.email)
     if not user:
         raise HTTPException(status_code=409, detail="Username already exists")
     return {"user_id": user.user_id, "username": user.username, "role": user.role}
