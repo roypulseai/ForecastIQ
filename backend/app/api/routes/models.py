@@ -202,11 +202,11 @@ async def _upload_model_impl(
         blob_path = registry.models_dir / f"{mid}.pkl"
         blob_path.write_bytes(content)
         sha = registry._hash_bytes(content)
-        from datetime import datetime
+        from datetime import datetime, timezone
         from ...services.models.registry import (
             ModelArtifactMeta, ModelFramework, ModelMetrics, TrainingConfig,
         )
-        now = datetime.utcnow().isoformat() + "Z"
+        now = datetime.now(timezone.utc).isoformat() + "Z"
         state = payload.get("state", {})
         training_cfg = TrainingConfig(
             date_column=state.get("_date_col", "date"),

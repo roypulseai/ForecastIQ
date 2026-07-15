@@ -24,7 +24,7 @@ import logging
 import os
 import traceback
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -690,7 +690,7 @@ class ForecasterService:
                     registry = get_model_registry()
                     from .models.registry import ModelFramework
                     framework = ModelRegistry._pick_framework(best_key)
-                    display_name = save_model_name or f"{best_model_instance.name} - {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}"
+                    display_name = save_model_name or f"{best_model_instance.name} - {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}"
                     meta = registry.save(
                         name=display_name,
                         model=best_model_instance,
@@ -1126,7 +1126,7 @@ class ForecasterService:
             "backtest_end_date": backtest_end_date,
             "historical_actuals": historical,
             "decomposition": decomposition if decomposition.get("period") else None,
-            "created_at": datetime.utcnow().isoformat() + "Z",
+            "created_at": datetime.now(timezone.utc).isoformat() + "Z",
         }
         if progress_cb:
             progress_cb(1.0, "Done")
@@ -1267,7 +1267,7 @@ class ForecasterService:
             best_model, best_metrics, best_type = best
             registry = get_model_registry()
             exog_used = sorted((exog_data or {}).keys())
-            display_name = model_name or f"{best_model.name} - {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}"
+            display_name = model_name or f"{best_model.name} - {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}"
             training_cfg = TrainingConfig(
                 date_column=date_col,
                 value_column=value_col,
@@ -1304,7 +1304,7 @@ class ForecasterService:
             },
             "results": results,
             "saved_model": saved_meta,
-            "created_at": datetime.utcnow().isoformat() + "Z",
+            "created_at": datetime.now(timezone.utc).isoformat() + "Z",
         })
 
     # ----------------------------------------------------------------- load + forecast

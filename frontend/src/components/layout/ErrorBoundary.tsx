@@ -88,6 +88,36 @@ export class ErrorBoundary extends Component<Props, State> {
                 </Typography>
               </Paper>
             )}
+            {this.state.componentStack && (
+              <Paper variant="outlined" sx={{ width: '100%', textAlign: 'left' }}>
+                <details>
+                  <summary style={{ cursor: 'pointer', padding: 8 }}>
+                    <Typography variant="body2" component="span" sx={{ fontWeight: 600 }}>
+                      Component stack
+                    </Typography>
+                  </summary>
+                  <Paper
+                    variant="outlined"
+                    sx={{
+                      p: 2,
+                      mx: 1,
+                      mb: 1,
+                      backgroundColor: 'background.subtle',
+                      maxHeight: 200,
+                      overflow: 'auto',
+                    }}
+                  >
+                    <Typography
+                      variant="body2"
+                      component="pre"
+                      sx={{ fontFamily: 'monospace', whiteSpace: 'pre-wrap', m: 0 }}
+                    >
+                      {this.state.componentStack}
+                    </Typography>
+                  </Paper>
+                </details>
+              </Paper>
+            )}
             <Stack direction="row" spacing={2}>
               <Button variant="outlined" startIcon={<RefreshIcon />} onClick={this.handleReload}>
                 Reload page

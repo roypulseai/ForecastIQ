@@ -13,7 +13,7 @@ import shutil
 import threading
 import uuid
 from collections import OrderedDict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -111,7 +111,7 @@ class FileMetadataStore:
                 "stored_filename": raw_name,
                 "file_type": file_type,
                 "size": int(size),
-                "uploaded_at": datetime.utcnow().isoformat() + "Z",
+                "uploaded_at": datetime.now(timezone.utc).isoformat() + "Z",
                 "row_count": int(len(df)),
                 "columns": [str(c) for c in df.columns],
                 "dataset_path": str(dataset_path),
@@ -192,7 +192,7 @@ class FileMetadataStore:
         with self._lock:
             forecast_id = result.get("forecast_id") or self._new_id()
             result["forecast_id"] = forecast_id
-            result["saved_at"] = datetime.utcnow().isoformat() + "Z"
+            result["saved_at"] = datetime.now(timezone.utc).isoformat() + "Z"
             clean = to_python(result)
             # Persist a per-forecast JSON for full retrieval
             path = self.results_dir / f"{forecast_id}.json"

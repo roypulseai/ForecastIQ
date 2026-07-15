@@ -62,7 +62,7 @@ class ARIMAForecaster(BaseForecaster):
         self,
         ts: pd.Series,
         exog_data: Optional[Dict[str, pd.DataFrame]],
-    ) -> Optional[pd.Series]:
+    ) -> Optional[pd.DataFrame]:
         if not exog_data:
             return None
         frames = []
@@ -88,7 +88,10 @@ class ARIMAForecaster(BaseForecaster):
         aligned = agg.reindex(ts.index, method="ffill").fillna(0.0)
         if aligned.empty:
             return None
-        return aligned.sum(axis=1).astype(float)
+        flag_cols = [c for c in aligned.columns if c.endswith("_flag")]
+        if not flag_cols:
+            return None
+        return aligned[flag_cols].astype(float)
 
     def fit(
         self,
@@ -112,6 +115,7 @@ class ARIMAForecaster(BaseForecaster):
 
         exog = self._build_exog(ts, kwargs.get("exog_data"))
         self._has_exog = exog is not None
+        self._exog_columns = list(exog.columns) if exog is not None else []
         self._exog = exog
 
         orders_to_try = [self.order, (1, 1, 1), (0, 1, 0)]
@@ -140,6 +144,8 @@ class ARIMAForecaster(BaseForecaster):
         exog_data: Optional[Dict[str, pd.DataFrame]],
     ) -> Optional[np.ndarray]:
         if exog_data is None:
+            if self._has_exog:
+                return np.zeros((horizon, len(self._exog_columns)))
             return None
         freq = self._frequency or "D"
         future_idx = pd.date_range(
@@ -148,7 +154,6 @@ class ARIMAForecaster(BaseForecaster):
             freq=freq,
         )
         merged = pd.DataFrame({"date": future_idx})
-        any_added = False
         for key in ("promotions", "media_plan", "holidays", "events"):
             df = exog_data.get(key)
             if df is None or df.empty or "date" not in df.columns:
@@ -161,14 +166,18 @@ class ARIMAForecaster(BaseForecaster):
             sub[f"{key}_flag"] = 1
             sub = sub.drop_duplicates(subset=["date"])
             merged = merged.merge(sub, on="date", how="left")
-            any_added = True
-        if not any_added:
-            return None
         flag_cols = [c for c in merged.columns if c.endswith("_flag")]
         if not flag_cols:
+            if self._has_exog:
+                return np.zeros((horizon, len(self._exog_columns)))
             return None
-        merged["_exog"] = merged[flag_cols].sum(axis=1)
-        return merged["_exog"].fillna(0.0).astype(float).values
+        merged = merged.set_index("date").reindex(future_idx, fill_value=0)
+        expected = getattr(self, "_exog_columns", flag_cols)
+        for col in expected:
+            if col not in merged.columns:
+                merged[col] = 0
+        merged = merged[expected].fillna(0.0).astype(float)
+        return merged.values
 
     def forecast(
         self,
@@ -180,7 +189,7 @@ class ARIMAForecaster(BaseForecaster):
             raise ValueError("Model not fitted")
         future_exog = self._future_exog(horizon, exog_data)
         if getattr(self, "_has_exog", False) and future_exog is None:
-            future_exog = np.zeros(horizon)
+            future_exog = np.zeros((horizon, len(self._exog_columns)))
         pred = self._fitted_model.get_forecast(steps=horizon, exog=future_exog)
         mean = pred.predicted_mean
         try:
@@ -247,9 +256,7 @@ class SARIMAXForecaster(BaseForecaster):
         self,
         ts: pd.Series,
         exog_data: Optional[Dict[str, pd.DataFrame]],
-    ) -> Optional[pd.Series]:
-        """Build an in-sample exog series aligned to ts. Returns None if
-        it cannot be aligned. Combines promotions / media / holidays."""
+    ) -> Optional[pd.DataFrame]:
         if not exog_data:
             return None
         frames = []
@@ -271,14 +278,14 @@ class SARIMAXForecaster(BaseForecaster):
         merged = frames[0]
         for f in frames[1:]:
             merged = pd.concat([merged, f], ignore_index=True)
-        # Aggregate duplicate dates
         agg = merged.groupby("date").sum()
-        # Align to ts index
         aligned = agg.reindex(ts.index, fill_value=0).fillna(0.0)
-        # Combine all flag columns into a single regressor
         if aligned.empty:
             return None
-        return aligned.sum(axis=1).astype(float)
+        flag_cols = [c for c in aligned.columns if c.endswith("_flag")]
+        if not flag_cols:
+            return None
+        return aligned[flag_cols].astype(float)
 
     def fit(
         self,
@@ -302,6 +309,7 @@ class SARIMAXForecaster(BaseForecaster):
 
         exog = self._build_exog(ts, kwargs.get("exog_data"))
         self._has_exog = exog is not None
+        self._exog_columns = list(exog.columns) if exog is not None else []
 
         # Try multiple seasonal_orders — short series often fails on
         # seasonal terms. Fall back to a non-seasonal SARIMAX(p,d,q).
@@ -348,9 +356,8 @@ class SARIMAXForecaster(BaseForecaster):
     ) -> Optional[np.ndarray]:
         if exog_data is None:
             if self._has_exog:
-                return np.zeros((horizon, 1))
+                return np.zeros((horizon, len(self._exog_columns)))
             return None
-        # Build a future date index matching forecast horizon
         freq = self._frequency or "D"
         future_idx = pd.date_range(
             start=self._last_date + pd.tseries.frequencies.to_offset(freq),
@@ -358,7 +365,6 @@ class SARIMAXForecaster(BaseForecaster):
             freq=freq,
         )
         merged = pd.DataFrame({"date": future_idx})
-        any_added = False
         for key in ("promotions", "media_plan", "holidays", "events"):
             df = exog_data.get(key)
             if df is None or df.empty or "date" not in df.columns:
@@ -371,14 +377,18 @@ class SARIMAXForecaster(BaseForecaster):
             sub[f"{key}_flag"] = 1
             sub = sub.drop_duplicates(subset=["date"])
             merged = merged.merge(sub, on="date", how="left")
-            any_added = True
-        if not any_added:
-            return None
         flag_cols = [c for c in merged.columns if c.endswith("_flag")]
         if not flag_cols:
+            if self._has_exog:
+                return np.zeros((horizon, len(self._exog_columns)))
             return None
-        merged["_exog"] = merged[flag_cols].sum(axis=1)
-        return merged["_exog"].fillna(0.0).astype(float).values
+        merged = merged.set_index("date").reindex(future_idx, fill_value=0)
+        expected = getattr(self, "_exog_columns", flag_cols)
+        for col in expected:
+            if col not in merged.columns:
+                merged[col] = 0
+        merged = merged[expected].fillna(0.0).astype(float)
+        return merged.values
 
     def forecast(
         self,
@@ -424,7 +434,7 @@ class SARIMAXForecaster(BaseForecaster):
         """Baseline: forecast with future exog forced to zero."""
         if self._fitted_model is None or self._last_date is None:
             raise ValueError("Model not fitted")
-        zero_exog = np.zeros(horizon) if getattr(self, "_has_exog", False) else None
+        zero_exog = np.zeros((horizon, len(self._exog_columns))) if getattr(self, "_has_exog", False) else None
         try:
             pred = self._fitted_model.get_forecast(steps=horizon, exog=zero_exog)
             mean = pred.predicted_mean

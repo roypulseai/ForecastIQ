@@ -253,14 +253,15 @@ class ProphetForecaster(BaseForecaster):
             for _, row in pred.iterrows()
         ]
 
-    def get_components(self) -> Dict[str, Any]:
+    def get_components(self, *, horizon: Optional[int] = None, **kwargs: Any) -> Dict[str, Any]:
         if self._fitted_model is None or self._last_date is None:
             return {}
         try:
-            future = self._fitted_model.make_future_dataframe(periods=30, freq=self._frequency or "D")
+            h = horizon if horizon is not None else len(self._train_df)
+            future = self._fitted_model.make_future_dataframe(periods=h, freq=self._frequency or "D")
             for reg in self._regressors:
                 future[reg] = 0.0
-            pred = self._predict_cached(future).tail(30)
+            pred = self._predict_cached(future).tail(h)
             comps: Dict[str, Any] = {}
             for c in ("trend", "yearly", "weekly"):
                 if c in pred.columns:

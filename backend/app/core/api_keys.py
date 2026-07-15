@@ -33,7 +33,7 @@ import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -72,7 +72,7 @@ class ApiKeyRecord:
     tier: ApiKeyTier = ApiKeyTier.FREE
     owner: str = "default"
     scopes: List[str] = field(default_factory=list)
-    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat() + "Z")
     last_used_at: Optional[str] = None
     expires_at: Optional[str] = None
     revoked: bool = False
@@ -96,7 +96,7 @@ class ApiKeyRecord:
         if self.expires_at:
             try:
                 exp = datetime.fromisoformat(self.expires_at.rstrip("Z"))
-                if datetime.utcnow() > exp:
+                if datetime.now(timezone.utc) > exp:
                     return False
             except Exception as e:
                 logger.warning("Failed to parse expiry date '%s': %s", self.expires_at, e)
@@ -183,7 +183,7 @@ class ApiKeyStore:
             if not entry:
                 return
             entry["request_count"] = int(entry.get("request_count", 0)) + 1
-            entry["last_used_at"] = datetime.utcnow().isoformat() + "Z"
+            entry["last_used_at"] = datetime.now(timezone.utc).isoformat() + "Z"
             self._write_index(index)
 
 

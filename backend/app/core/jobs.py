@@ -27,7 +27,7 @@ import traceback
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -54,7 +54,7 @@ class JobInfo:
     message: str = ""
     result: Any = None
     error: Optional[str] = None
-    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat() + "Z")
     started_at: Optional[str] = None
     finished_at: Optional[str] = None
     request: Optional[Dict[str, Any]] = None
@@ -128,7 +128,7 @@ class JobManager:
 
         def _runner() -> Any:
             job.status = JobStatus.RUNNING
-            job.started_at = datetime.utcnow().isoformat() + "Z"
+            job.started_at = datetime.now(timezone.utc).isoformat() + "Z"
             self._persist()
             def _update_progress(progress: float, message: str):
                 if job_deadline and time.time() > job_deadline:
@@ -159,7 +159,7 @@ class JobManager:
                 job.error = f"{type(e).__name__}: {e}\n{traceback.format_exc()}"
                 raise
             finally:
-                job.finished_at = datetime.utcnow().isoformat() + "Z"
+                job.finished_at = datetime.now(timezone.utc).isoformat() + "Z"
                 self._persist()
 
         fut = self._executor.submit(_runner)

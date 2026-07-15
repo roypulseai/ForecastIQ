@@ -20,12 +20,12 @@ api_router.include_router(api_keys_router, tags=["api-keys"], dependencies=_jwt_
 
 @api_router.get("/health", dependencies=[])
 async def health_check() -> dict:
-    from datetime import datetime
+    from datetime import datetime, timezone
     return {
         "status": "healthy",
         "service": "ForecastIQ API",
         "version": "2.0.0",
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
         "components": {
             "storage": "ready",
             "models": "ready",

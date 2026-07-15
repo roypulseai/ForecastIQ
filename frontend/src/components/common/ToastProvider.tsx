@@ -1,7 +1,8 @@
-import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useRef, type ReactNode } from 'react';
 import { Snackbar, Alert, type AlertColor } from '@mui/material';
 
 interface Toast {
+  id: number;
   message: string;
   severity: AlertColor;
 }
@@ -12,38 +13,52 @@ interface ToastContextValue {
 
 const ToastContext = createContext<ToastContextValue>({ showToast: () => {} });
 
+const MAX_TOASTS = 4;
+const TOAST_DURATION = 4000;
+
 export function useToast(): ToastContextValue {
   return useContext(ToastContext);
 }
 
 export function ToastProvider({ children }: { children: ReactNode }): ReactNode {
-  const [toast, setToast] = useState<Toast | null>(null);
-  const [open, setOpen] = useState(false);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const nextId = useRef(0);
 
-  const showToast = useCallback((message: string, severity: AlertColor = 'success') => {
-    setToast({ message, severity });
-    setOpen(true);
+  const removeToast = useCallback((id: number) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  const handleClose = () => {
-    setOpen(false);
+  const showToast = useCallback((message: string, severity: AlertColor = 'success') => {
+    const id = nextId.current++;
+    setToasts((prev) => {
+      const next = [...prev, { id, message, severity }];
+      return next.length > MAX_TOASTS ? next.slice(next.length - MAX_TOASTS) : next;
+    });
+    setTimeout(() => removeToast(id), TOAST_DURATION);
+  }, [removeToast]);
+
+  const handleClose = (_: unknown, reason?: string) => {
+    if (reason === 'clickaway') return;
+    setToasts((prev) => (prev.length > 0 ? prev.slice(1) : prev));
   };
 
   return (
     <ToastContext.Provider value={{ showToast }}>
       {children}
-      <Snackbar
-        open={open}
-        autoHideDuration={4000}
-        onClose={handleClose}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      >
-        {toast ? (
-          <Alert onClose={handleClose} severity={toast.severity} variant="filled" sx={{ width: '100%' }}>
+      {toasts.map((toast, index) => (
+        <Snackbar
+          key={toast.id}
+          open
+          autoHideDuration={TOAST_DURATION}
+          onClose={handleClose}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+          sx={{ bottom: `${(toasts.length - 1 - index) * 64}px !important` }}
+        >
+          <Alert severity={toast.severity} variant="filled" sx={{ width: '100%' }}>
             {toast.message}
           </Alert>
-        ) : undefined}
-      </Snackbar>
+        </Snackbar>
+      ))}
     </ToastContext.Provider>
   );
 }

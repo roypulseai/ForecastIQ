@@ -42,7 +42,7 @@ import pickle
 import threading
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -207,7 +207,7 @@ class ModelRegistry:
         """
         with self._lock:
             mid = model_id or self._new_id()
-            now = datetime.utcnow().isoformat() + "Z"
+            now = datetime.now(timezone.utc).isoformat() + "Z"
 
             # Serialize the fitted state. We use joblib for sklearn-compatible
             # models (LightGBM, XGBoost, ETS) and pickle for everything else.
@@ -490,7 +490,7 @@ class ModelRegistry:
                 entry["notes"] = notes
             if tags is not None:
                 entry["tags"] = list(tags)
-            entry["updated_at"] = datetime.utcnow().isoformat() + "Z"
+            entry["updated_at"] = datetime.now(timezone.utc).isoformat() + "Z"
             self._write_index(index)
             # Also rewrite the standalone meta file
             meta_path = self.models_dir / f"{model_id}.meta.json"
