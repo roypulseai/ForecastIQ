@@ -233,6 +233,30 @@ class FileMetadataStore:
             index = self._read_json(self._forecasts_index)
         return index.get(forecast_id)
 
+    def update_forecast(self, forecast_id: str, updates: Dict[str, Any]) -> bool:
+        """Merge `updates` into an existing forecast result."""
+        path = self.results_dir / f"{forecast_id}.json"
+        if not path.exists():
+            return False
+        try:
+            existing = self.get_forecast(forecast_id)
+            if existing is None:
+                return False
+            existing.update(updates)
+            existing["metrics_pending"] = False
+            existing["updated_at"] = datetime.now(timezone.utc).isoformat() + "Z"
+            clean = to_python(existing)
+            self._write_json(path, clean)
+            index = self._read_json(self._forecasts_index)
+            if forecast_id in index:
+                index[forecast_id]["best_model"] = clean.get("best_model")
+                index[forecast_id]["summary"] = clean.get("summary", {})
+                self._write_json(self._forecasts_index, index)
+            return True
+        except Exception as e:
+            logger.warning("Failed to update forecast %s: %s", forecast_id, e)
+            return False
+
     def delete_forecast(self, forecast_id: str) -> bool:
         with self._lock:
             index = self._read_json(self._forecasts_index)

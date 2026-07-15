@@ -150,7 +150,8 @@ export function ForecastPage(): ReactNode {
     forecast_values: Array<{ date: string; forecast: number; lower_ci: number; upper_ci: number; baseline?: number | null; uplift?: number | null }>;
   } | null>(null);
 
-  // When the job completes, fetch the full result to get forecast_id
+  // When the job completes, fetch the full result to get forecast_id.
+  // Also navigate early when forecast_id appears mid-flight (progressive results).
   const [completedJobId, setCompletedJobId] = useState<string | null>(null);
   useEffect(() => {
     if (!jobQuery.data) return;
@@ -159,6 +160,12 @@ export function ForecastPage(): ReactNode {
     } else if (jobQuery.data.status === 'failed') {
       setError(jobQuery.data.error || 'Forecast failed');
       setJobId(null);
+    } else if (jobQuery.data.forecast_id && jobId) {
+      // Progressive results: Phase 1 done, forecast saved with metrics_pending.
+      // Navigate to results immediately so user sees charts while metrics compute.
+      setCurrentForecastId(jobQuery.data.forecast_id);
+      setJobId(null);
+      navigate('/results');
     }
   }, [jobQuery.data, jobId]);
 

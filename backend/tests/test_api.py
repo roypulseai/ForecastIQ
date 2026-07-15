@@ -110,3 +110,90 @@ def test_upload_parquet(auth_client):
     assert response.status_code == 200
     data = response.json()
     assert "file_id" in data
+
+
+def test_forecast_partial_cb_emits_metrics_pending():
+    """Verify that partial_cb is called during run() with partial results
+    (forecasts/backtest/CV), and the final result has everything."""
+    np.random.seed(42)
+    dates = pd.date_range(start="2023-01-01", periods=60, freq="D")
+    values = 100 + np.cumsum(np.random.randn(60) * 5)
+    sales_df = pd.DataFrame({"date": dates, "value": values})
+
+    from app.services.forecaster import ForecasterService
+
+    service = ForecasterService()
+    partial_results = []
+
+    def _capture_partial(partial):
+        partial_results.append(partial)
+
+    request_dict = {
+        "date_column": "date",
+        "target_column": "value",
+        "frequency": "D",
+        "horizon": 7,
+        "models": ["wma"],
+        "name": "Partial test",
+    }
+    result = service.run(sales_df, request_dict, partial_cb=_capture_partial)
+
+    # partial_cb should have been called at least once
+    assert len(partial_results) >= 1, "partial_cb was never called"
+    # The partial result should have forecast data (results + request)
+    partial = partial_results[0]
+    assert "results" in partial
+    assert "request" in partial
+    assert "name" in partial
+    # Partial should NOT have test_metrics (those come in Phase 2)
+    assert "test_metrics" not in partial
+    # The final result should have everything
+    assert "results" in result
+    assert "test_metrics" in result
+    assert "model_rankings" in result
+
+
+def test_forecast_partial_cb_none_does_not_crash():
+    """Verify that run() works fine without a partial_cb."""
+    np.random.seed(42)
+    dates = pd.date_range(start="2023-01-01", periods=60, freq="D")
+    values = 100 + np.cumsum(np.random.randn(60) * 5)
+    sales_df = pd.DataFrame({"date": dates, "value": values})
+
+    from app.services.forecaster import ForecasterService
+
+    service = ForecasterService()
+    request_dict = {
+        "date_column": "date",
+        "target_column": "value",
+        "frequency": "D",
+        "horizon": 7,
+        "models": ["wma"],
+        "name": "No partial test",
+    }
+    result = service.run(sales_df, request_dict)
+    assert "results" in result
+
+
+def test_job_forecast_id_on_partial():
+    """Test that the job manager exposes forecast_id after partial callback."""
+    from app.core.jobs import JobManager
+
+    jm = JobManager()
+
+    def _task(progress_cb=None, forecast_id_cb=None):
+        if forecast_id_cb:
+            forecast_id_cb("test-forecast-123")
+        return {"result": "done", "forecast_id": "test-forecast-123"}
+
+    job_id = jm.submit(
+        job_type="forecast_test",
+        func=_task,
+        pass_progress=True,
+    )
+    import time
+    time.sleep(0.5)
+
+    info = jm.status(job_id)
+    assert info is not None
+    assert info.get("forecast_id") == "test-forecast-123"

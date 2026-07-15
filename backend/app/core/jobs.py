@@ -58,6 +58,7 @@ class JobInfo:
     started_at: Optional[str] = None
     finished_at: Optional[str] = None
     request: Optional[Dict[str, Any]] = None
+    forecast_id: Optional[str] = None
 
     def to_public(self) -> Dict[str, Any]:
         """Return a JSON-serializable view (excluding the heavy result)."""
@@ -136,9 +137,12 @@ class JobManager:
                 job.progress = progress
                 job.message = message
                 self._persist()
+            def _update_forecast_id(forecast_id: str):
+                job.forecast_id = forecast_id
+                self._persist()
             try:
                 if pass_progress:
-                    result = func(progress_cb=_update_progress, **kwargs)
+                    result = func(progress_cb=_update_progress, forecast_id_cb=_update_forecast_id, **kwargs)
                 else:
                     result = func(**kwargs)
                 if job_deadline and time.time() > job_deadline:
@@ -263,6 +267,7 @@ class JobManager:
                         started_at=jd.get("started_at"),
                         finished_at=jd.get("finished_at"),
                         request=jd.get("request"),
+                        forecast_id=jd.get("forecast_id"),
                     )
         except Exception as e:
             logger.warning("Failed to load jobs from disk: %s", e)

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link as RouterLink, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Accordion,
@@ -189,6 +189,18 @@ export function ResultsPage(): ReactNode {
     if (resultQuery.isError) setError(getErrorMessage(resultQuery.error));
   }, [resultQuery.isError, resultQuery.error]);
 
+  // When metrics_pending transitions to false, refresh the forecast list
+  // so the sidebar shows the updated best_model/summary.
+  const metricsPendingWasTrue = useRef(false);
+  useEffect(() => {
+    if (!resultQuery.data) return;
+    const pending = !!resultQuery.data.metrics_pending;
+    if (metricsPendingWasTrue.current && !pending) {
+      listQuery.refetch();
+    }
+    metricsPendingWasTrue.current = pending;
+  }, [resultQuery.data]);
+
   useEffect(() => {
     if (resultQuery.data) {
       setSelectedModel(resultQuery.data.ensemble ? '__ensemble__' : firstModelKey(resultQuery.data.results));
@@ -358,6 +370,12 @@ export function ResultsPage(): ReactNode {
       )}
 
       {resultQuery.isLoading && <LinearProgress sx={{ mb: 3 }} />}
+
+      {resultQuery.data?.metrics_pending && (
+        <Alert severity="info" sx={{ mb: 3 }} icon={<CircularProgress size={18} />}>
+          Forecast charts are ready. Computing accuracy metrics, rankings, and ensemble — this takes a few more minutes.
+        </Alert>
+      )}
 
       {!resultQuery.data && currentForecastId && (
         <Card sx={{ p: 4, textAlign: 'center' }}>

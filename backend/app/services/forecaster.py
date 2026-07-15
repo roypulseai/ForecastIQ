@@ -237,6 +237,7 @@ class ForecasterService:
         request: Dict[str, Any],
         exog_data: Optional[Dict[str, pd.DataFrame]] = None,
         progress_cb: Optional[Callable[[float, str], None]] = None,
+        partial_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
         """Run a forecast end-to-end. Returns a JSON-safe dict.
 
@@ -245,6 +246,9 @@ class ForecasterService:
             request: ForecastRequest.model_dump() (Pydantic v2).
             exog_data: Dict of normalized DataFrames keyed by type.
             progress_cb: Optional callback (progress_fraction, message).
+            partial_cb: Optional callback called after fit+forecast (Phase 1)
+                with partial results, before CV/backtest/metrics (Phase 2).
+                Enables progressive rendering in the UI.
 
         Performance optimizations:
             * Very large sales_df is downsampled before model fitting.
@@ -483,12 +487,14 @@ class ForecasterService:
         backtest_df: Optional[pd.DataFrame] = None
         backtest_actuals: Optional[pd.DataFrame] = None
         overlap_n = 0
+        auto_backtest = False
         backtest_start_date: Optional[str] = None
         backtest_end_date: Optional[str] = None
         n_unique_dates = int(sales_df[date_col].nunique()) if date_col in sales_df.columns else len(sales_df)
         days_per = _DAYS_PER_PERIOD.get(effective_frequency, 1)
         if backtest_overlap == 0 and n_unique_dates > 50:
             overlap_n = max(1, int(n_unique_dates * 0.2))
+            auto_backtest = True
             logger.info("Auto-backtest: using last %d unique dates (~20%% of %d)", overlap_n, n_unique_dates)
         elif backtest_overlap > 0:
             overlap_periods = max(1, backtest_overlap // days_per)
@@ -595,6 +601,32 @@ class ForecasterService:
         logger.info("Full pipeline (%d models) took %.1fs", n_models, time.time() - _pipeline_start)
         if progress_cb:
             progress_cb(0.75, "All models trained")
+
+        # ---- Phase 1 complete: emit partial results for progressive rendering ----
+        # At this point, per_model has forecasts, baselines, backtest, and CV
+        # metrics. Test metrics, rankings, ensemble, and factor analysis come next.
+        if partial_cb:
+            try:
+                _hist: List[Dict[str, Any]] = []
+                if date_col in sales_df.columns and value_col in sales_df.columns:
+                    _src = sales_df[[date_col, value_col]].dropna().copy()
+                    _src[date_col] = _src[date_col].astype(str).str[:10]
+                    _src[value_col] = pd.to_numeric(_src[value_col], errors="coerce")
+                    _src = _src.groupby(date_col, as_index=False)[value_col].sum()
+                    _hist = _src.rename(columns={date_col: "date", value_col: "value"}).to_dict("records")
+                partial = {
+                    "name": request.get("name", "Forecast"),
+                    "request": request,
+                    "results": per_model,
+                    "downsample_info": downsample_info,
+                    "historical_actuals": _hist,
+                    "created_at": datetime.now(timezone.utc).isoformat() + "Z",
+                }
+                partial_cb(partial)
+                if progress_cb:
+                    progress_cb(0.76, "Partial results saved")
+            except Exception as e:
+                logger.warning("partial_cb failed (continuing): %s", e)
 
         # ---- 2b) If train/test split: evaluate on test set + refit on all data ----
         # Test metrics are computed only for ML models (which were fit on train

@@ -523,6 +523,7 @@ export interface ForecastDetail {
   backtest_end_date?: string | null;
   data_file_id?: string;
   historical_actuals?: Array<{ date: string; value: number }>;
+  metrics_pending?: boolean;
 }
 
 export interface ForecastListItem {
@@ -560,6 +561,7 @@ export interface JobStatus {
   started_at?: string | null;
   finished_at?: string | null;
   request?: Record<string, unknown> | null;
+  forecast_id?: string | null;
 }
 
 export interface DownsampleInfo {
