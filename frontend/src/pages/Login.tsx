@@ -6,14 +6,10 @@ import {
   Button,
   Card,
   CardContent,
-  Chip,
-  Divider,
   Stack,
   TextField,
   Typography,
 } from '@mui/material';
-import LoginIcon from '@mui/icons-material/Login';
-import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import ShowChartIcon from '@mui/icons-material/ShowChart';
 import { api } from '../services/api';
 
@@ -45,7 +41,6 @@ export function LoginPage(): ReactNode {
       const res = await api.post('/auth/login', { username: user, password: pass });
       localStorage.setItem('token', res.data.access_token);
       navigate('/dashboard', { replace: true });
-      window.location.reload();
     } catch (err: unknown) {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
       setError(detail || 'Login failed. Is the backend running?');
@@ -53,22 +48,6 @@ export function LoginPage(): ReactNode {
       setLoading(false);
     }
   }, [navigate]);
-
-  const handleQuickLogin = () => doLogin('admin', 'admin');
-
-  const handleDemoLogin = async () => {
-    setError(null);
-    setLoading(true);
-    try {
-      const res = await api.post('/auth/demo');
-      localStorage.setItem('token', res.data.access_token);
-      navigate('/dashboard', { replace: true });
-      window.location.reload();
-    } catch {
-      setError('Demo login failed. Is the backend running?');
-      setLoading(false);
-    }
-  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -93,7 +72,7 @@ export function LoginPage(): ReactNode {
         backgroundColor: 'background.default',
       }}
     >
-      <Card sx={{ maxWidth: 400, width: '100%', mx: 2 }}>
+      <Card sx={{ maxWidth: 380, width: '100%', mx: 2 }}>
         <CardContent sx={{ p: 4 }}>
           <Stack spacing={3} alignItems="center">
             <Box
@@ -124,37 +103,6 @@ export function LoginPage(): ReactNode {
 
             {error && <Alert severity="error" sx={{ width: '100%' }}>{error}</Alert>}
 
-            <Button
-              variant="contained"
-              size="large"
-              fullWidth
-              startIcon={<LoginIcon />}
-              disabled={loading || backendDown}
-              onClick={handleQuickLogin}
-              sx={{ py: 1.5 }}
-            >
-              Login as Admin
-            </Button>
-
-            <Button
-              variant="outlined"
-              size="small"
-              fullWidth
-              startIcon={<RocketLaunchIcon />}
-              disabled={loading}
-              onClick={handleDemoLogin}
-              color="secondary"
-              sx={{ textTransform: 'none' }}
-            >
-              Skip login (demo mode)
-            </Button>
-
-            <Box sx={{ width: '100%' }}>
-              <Divider>
-                <Chip label="or sign in with credentials" size="small" variant="outlined" />
-              </Divider>
-            </Box>
-
             <Box component="form" onSubmit={handleSubmit} sx={{ width: '100%' }}>
               <Stack spacing={2}>
                 <TextField
@@ -179,9 +127,10 @@ export function LoginPage(): ReactNode {
                 />
                 <Button
                   type="submit"
-                  variant="outlined"
+                  variant="contained"
                   fullWidth
                   disabled={loading || backendDown}
+                  sx={{ py: 1.2 }}
                 >
                   {loading ? 'Signing in...' : 'Sign in'}
                 </Button>
@@ -189,8 +138,7 @@ export function LoginPage(): ReactNode {
             </Box>
 
             <Typography variant="caption" color="text.secondary" textAlign="center">
-              Default credentials: admin / admin<br />
-              Change this password after first login.
+              Default credentials: admin / admin
             </Typography>
           </Stack>
         </CardContent>

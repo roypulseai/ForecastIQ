@@ -99,14 +99,29 @@ class Settings(BaseSettings):
     DEFAULT_API_KEY_TIER: str = "free"
 
     JWT_SECRET_KEY: str = Field(
-        default_factory=lambda: __import__("secrets").token_hex(32),
-        description="Secret key for JWT tokens. Set in env for production.",
+        default="",
+        description="Secret key for JWT tokens. Set in env for production. "
+                    "If empty on first start, a stable key is persisted to DATA_DIR.",
     )
 
     def ensure_dirs(self) -> None:
         """Create all required directories on startup."""
         for d in (self.DATA_DIR, self.UPLOAD_DIR, self.OUTPUT_DIR, self.TEMPLATE_DIR):
             os.makedirs(d, exist_ok=True)
+
+    def resolve_jwt_secret(self) -> str:
+        """Return the JWT secret, persisting a generated key to disk when
+        none is configured via env. This ensures the key survives restarts
+        so that existing tokens remain valid."""
+        if self.JWT_SECRET_KEY:
+            return self.JWT_SECRET_KEY
+        secret_file = Path(self.DATA_DIR) / ".jwt_secret"
+        if secret_file.exists():
+            return secret_file.read_text(encoding="utf-8").strip()
+        import secrets as _secrets
+        key = _secrets.token_hex(32)
+        secret_file.write_text(key, encoding="utf-8")
+        return key
 
 
 settings = Settings()

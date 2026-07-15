@@ -302,17 +302,27 @@ async def _create_forecast_impl(
             # The partial_cb will be called by run() after fit+forecast
             # completes (Phase 1), before CV/backtest/metrics (Phase 2).
             # It saves partial results so the frontend can show charts early.
+            saved_forecast_id: Optional[str] = None
+
             def _on_partial(partial_result: Dict[str, Any]):
+                nonlocal saved_forecast_id
                 partial_result["data_file_id"] = sales_entry["file_id"]
                 partial_result["metrics_pending"] = True
-                fid = storage.save_forecast(partial_result)
+                saved_forecast_id = storage.save_forecast(partial_result)
                 if forecast_id_cb:
-                    forecast_id_cb(fid)
+                    forecast_id_cb(saved_forecast_id)
 
             result = service.run(sales_df, request_dict, exog_data=exog_data,
                                  progress_cb=progress_cb, partial_cb=_on_partial)
             result["data_file_id"] = sales_entry["file_id"]
-            forecast_id = storage.save_forecast(result)
+            # Update the existing partial entry in-place instead of creating
+            # a second forecast record.  Falls back to save if Phase 1 never
+            # fired (e.g. partial_cb was None).
+            if saved_forecast_id:
+                storage.update_forecast(saved_forecast_id, result)
+                forecast_id = saved_forecast_id
+            else:
+                forecast_id = storage.save_forecast(result)
             return {"result": result, "forecast_id": forecast_id}
 
         job_id = jm.submit(
