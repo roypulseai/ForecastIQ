@@ -16,7 +16,7 @@ RUN pip install --no-cache-dir \
     prophet==1.1.6 \
     cmdstanpy==1.2.4 \
     lightgbm==4.5.0 \
-    xgboost==2.1.1 \
+    xgboost-cpu>=2.0.0 \
     statsmodels==0.14.2 \
     numpy==1.26.4 \
     scipy==1.13.1
