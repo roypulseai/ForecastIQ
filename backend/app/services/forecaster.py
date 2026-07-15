@@ -22,6 +22,7 @@ from __future__ import annotations
 import bisect
 import logging
 import os
+import time
 import traceback
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -56,6 +57,7 @@ MAX_PARALLEL_WORKERS = max(2, min(os.cpu_count() or 4, int(os.environ.get("FOREC
 DOWNSAMPLE_THRESHOLD = 5000  # rows
 WEEKLY_AGG_SPAN_DAYS = 365 * 5
 MODEL_TIMEOUT = int(os.environ.get("FORECASTIQ_MODEL_TIMEOUT", 300))  # seconds per model fit+forecast
+CV_FOLDS = int(os.environ.get("FORECASTIQ_CV_FOLDS", 5))  # cross-validation folds (parallel folds make this fast)
 
 # Calendar days per frequency period (for converting backtest_overlap from days → periods)
 _DAYS_PER_PERIOD = {"D": 1, "W": 7, "F": 14, "14D": 14, "M": 30, "ME": 30, "Q": 91, "QE": 91, "Y": 365, "YE": 365}
@@ -394,6 +396,7 @@ class ForecasterService:
         # Tuned parameters are merged into the user-supplied params.
         n_models = len(models)
         tuning_results: Dict[str, Any] = {}
+        _stage_start = time.time()
         if tune_hyperparameters:
             cv_df = (train_df if has_split else sales_df)
             for idx, m in enumerate(models):
@@ -402,7 +405,7 @@ class ForecasterService:
                         progress_cb(0.05 + 0.10 * (idx / n_models), f"Tuning {m}…")
                     result = tune_model(
                         cv_df, date_col, value_col, m,
-                        n_iter=30, n_folds=max(3, min(5, int(n_unique_dates * 0.1))),
+                        n_iter=10, n_folds=max(2, min(CV_FOLDS, int(n_unique_dates * 0.1))),
                         exog_data=exog_data, frequency=effective_frequency,
                     )
                     if result.get("tuned") and result["best_params"]:
@@ -419,6 +422,7 @@ class ForecasterService:
                     logger.warning("Tuning failed for %s: %s", m, e)
             if progress_cb:
                 progress_cb(0.15, "Tuning complete")
+            logger.info("Tuning stage took %.1fs", time.time() - _stage_start)
 
         # ---- 0.5) Seasonality analysis & auto-param injection ----
         # Decompose the series, detect dominant seasonal periods, and
@@ -452,112 +456,145 @@ class ForecasterService:
         except Exception as e:
             logger.warning("Seasonality analysis failed (continuing): %s", e)
 
-        # ---- 1) Cross-validate each requested model in parallel ----
-        # CV uses the training portion only for ML models (to avoid leakage),
-        # and full data for time-series models.
+        # ---- 1-2) Pipeline: CV → Fit → Backtest per model (all in parallel) ----
+        # Instead of running 3 sequential stages (CV-all → Fit-all → Backtest-all),
+        # each model runs its full pipeline independently.  This way:
+        #  - Fast models (LightGBM, ETS) finish quickly without waiting for slow ones
+        #  - CV folds within each model also run in parallel (see cross_validate)
+        #  - Total time ≈ slowest model's full pipeline, not sum of all stages
+        _pipeline_start = time.time()
         has_split = train_df is not None
+        per_model: Dict[str, Dict[str, Any]] = {}
+        cv_results: Dict[str, Dict[str, float]] = {}
+        completed = 0
+        pipeline_workers = min(len(models), MAX_PARALLEL_WORKERS)
 
         def _cv_input(m: str) -> pd.DataFrame:
             if has_split and m in ml_models:
                 return train_df  # type: ignore[return-value]
             return sales_df
 
-        cv_results: Dict[str, Dict[str, float]] = {}
-        cv_workers = min(len(models), MAX_PARALLEL_WORKERS)
-        if cv_workers > 1:
-            with ThreadPoolExecutor(max_workers=cv_workers) as ex:
-                fut_to_model = {
-                    ex.submit(
-                        self.selector.cross_validate,
-                        _cv_input(m), date_col, value_col, m, params,
-                        min(7, horizon),
-                        5,
-                        effective_frequency,
-                        exog_data,
-                    ): m
-                    for m in models
-                }
-                for fut in as_completed(fut_to_model):
-                    m = fut_to_model[fut]
-                    try:
-                        cv_results[m] = fut.result(timeout=MODEL_TIMEOUT)
-                    except TimeoutError:
-                        logger.warning("CV timed out for %s after %ds", m, MODEL_TIMEOUT)
-                        cv_results[m] = {"mae": None, "rmse": None, "mape": None, "error": "timeout"}
-                    except Exception as e:
-                        logger.warning("CV error for %s: %s", m, e)
-                        cv_results[m] = {"mae": None, "rmse": None, "mape": None, "error": str(e)}
-        else:
-            for m in models:
-                try:
-                    cv_results[m] = self.selector.cross_validate(
-                        _cv_input(m), date_col, value_col, m, params, horizon=min(7, horizon),
-                        frequency=effective_frequency, exog_data=exog_data,
-                    )
-                except Exception as e:
-                    logger.warning("CV error for %s: %s", m, e)
-                    cv_results[m] = {"mae": None, "rmse": None, "mape": None, "error": str(e)}
-
-        if progress_cb:
-            progress_cb(0.20, "Cross-validation complete")
-
-        # ---- 2) Fit + forecast each model in parallel ----
-        per_model: Dict[str, Dict[str, Any]] = {}
-        # When a train/test split is in effect, ML-capable models (xgboost,
-        # lightgbm, automl) use the training portion for fitting.
-        # Time-series models always train on 100% of the data.
-        has_split = train_df is not None
-        fit_workers = min(len(models), MAX_PARALLEL_WORKERS)
-        completed = 0
-
         def _fit_input(m: str) -> pd.DataFrame:
             if has_split and m in ml_models:
                 return train_df  # type: ignore[return-value]
             return sales_df
 
-        if fit_workers > 1:
-            with ThreadPoolExecutor(max_workers=fit_workers) as ex:
+        # Pre-compute backtest data (shared by all models)
+        backtest_df: Optional[pd.DataFrame] = None
+        backtest_actuals: Optional[pd.DataFrame] = None
+        overlap_n = 0
+        backtest_start_date: Optional[str] = None
+        backtest_end_date: Optional[str] = None
+        n_unique_dates = int(sales_df[date_col].nunique()) if date_col in sales_df.columns else len(sales_df)
+        days_per = _DAYS_PER_PERIOD.get(effective_frequency, 1)
+        if backtest_overlap == 0 and n_unique_dates > 50:
+            overlap_n = max(1, int(n_unique_dates * 0.2))
+            logger.info("Auto-backtest: using last %d unique dates (~20%% of %d)", overlap_n, n_unique_dates)
+        elif backtest_overlap > 0:
+            overlap_periods = max(1, backtest_overlap // days_per)
+            overlap_n = min(overlap_periods, n_unique_dates - 5)
+
+        if overlap_n > 0 and n_unique_dates > overlap_n + 5:
+            unique_dates = sorted(sales_df[date_col].unique())
+            last_date = unique_dates[-1]
+            target_split_date = last_date - pd.DateOffset(days=overlap_n * days_per)
+            if target_split_date <= unique_dates[0]:
+                logger.warning("Backtest overlap exceeds data span, skipping")
+                overlap_n = 0
+            else:
+                split_idx = bisect.bisect_left(unique_dates, target_split_date)
+                if split_idx < 5:
+                    split_idx = 5
+                split_date = unique_dates[split_idx]
+                backtest_df = sales_df[sales_df[date_col] < split_date].copy()
+                backtest_actuals = sales_df[sales_df[date_col] >= split_date].copy()
+                backtest_start_date = str(backtest_actuals[date_col].iloc[0])[:10]
+                backtest_end_date = str(backtest_actuals[date_col].iloc[-1])[:10]
+                logger.info("Backtest: train=%d rows, test=%d rows", len(backtest_df), len(backtest_actuals))
+
+        def _run_model_pipeline(m: str) -> Tuple[str, Dict, Any, Optional[Dict]]:
+            """Run CV → Fit → Backtest for a single model."""
+            model_start = time.time()
+            # 1. Cross-validate
+            try:
+                cv_res = self.selector.cross_validate(
+                    _cv_input(m), date_col, value_col, m, params,
+                    min(7, horizon), CV_FOLDS, effective_frequency, exog_data,
+                )
+            except Exception as e:
+                logger.warning("CV failed for %s: %s", m, e)
+                cv_res = {"mae": None, "rmse": None, "mape": None, "error": str(e)}
+
+            # 2. Fit + forecast
+            try:
+                fit_res = _fit_and_forecast_one(
+                    m, params, _fit_input(m), date_col, value_col,
+                    horizon, exog_data, effective_frequency,
+                )
+            except Exception as e:
+                logger.error("Fit failed for %s: %s", m, e)
+                fit_res = (m, None, [], [], {"error": str(e)}, {}, {}, str(e))
+
+            # 3. Backtest (re-fit on truncated data, forecast overlap window)
+            bt_data: Optional[Dict[str, Any]] = None
+            if overlap_n > 0 and backtest_df is not None and backtest_actuals is not None:
+                try:
+                    bt_m = self.selector.get_model(m, params)
+                    bt_m.fit(backtest_df, date_col, value_col, exog_data=exog_data or {}, frequency=effective_frequency)
+                    bt_ex = _filter_exog_to_range(exog_data, backtest_actuals[date_col].iloc[0], backtest_actuals[date_col].iloc[-1], date_col) if exog_data else None
+                    bt_fc = bt_m.forecast(len(backtest_actuals), exog_data=bt_ex)
+                    bt_metrics = _compute_backtest_metrics(bt_fc, backtest_actuals, date_col, value_col)
+                    bt_data = {"backtest_forecast_values": bt_fc, "backtest_metrics": bt_metrics}
+                except Exception as e:
+                    logger.warning("Backtest failed for %s: %s", m, e)
+                    bt_data = {"backtest_forecast_values": [], "backtest_metrics": {}}
+
+            elapsed = time.time() - model_start
+            logger.info("Model %s pipeline completed in %.1fs", m, elapsed)
+            return m, cv_res, fit_res, bt_data
+
+        # Run all model pipelines in parallel
+        if pipeline_workers > 1:
+            with ThreadPoolExecutor(max_workers=pipeline_workers) as ex:
                 fut_to_model = {
-                    ex.submit(
-                        _fit_and_forecast_one,
-                        m, params, _fit_input(m), date_col, value_col,
-                        horizon, exog_data, effective_frequency,
-                    ): m
+                    ex.submit(_run_model_pipeline, m): m
                     for m in models
                 }
                 for fut in as_completed(fut_to_model):
                     m = fut_to_model[fut]
                     try:
-                        result = fut.result(timeout=MODEL_TIMEOUT)
+                        m_key, cv_res, fit_res, bt_data = fut.result(timeout=MODEL_TIMEOUT + 60)
                     except TimeoutError:
-                        logger.warning("Model %s timed out after %ds", m, MODEL_TIMEOUT)
-                        result = (m, None, [], [], {"error": f"timeout after {MODEL_TIMEOUT}s"}, {}, {}, f"timeout after {MODEL_TIMEOUT}s")
+                        logger.warning("Model %s pipeline timed out", m)
+                        cv_res = {"mae": None, "rmse": None, "mape": None, "error": "timeout"}
+                        fit_res = (m, None, [], [], {"error": "timeout"}, {}, {}, "timeout")
+                        bt_data = None
                     except Exception as e:
-                        logger.error("Model %s crashed: %s", m, e)
-                        result = (m, None, [], [], {"error": str(e)}, {}, {}, str(e))
-                    per_model[m] = _assemble_model_result(m, result, cv_results)
+                        logger.error("Model %s pipeline crashed: %s", m, e)
+                        cv_res = {"mae": None, "rmse": None, "mape": None, "error": str(e)}
+                        fit_res = (m, None, [], [], {"error": str(e)}, {}, {}, str(e))
+                        bt_data = None
+                    cv_results[m] = cv_res
+                    per_model[m] = _assemble_model_result(m, fit_res, cv_results)
+                    if bt_data:
+                        per_model[m].update(bt_data)
                     completed += 1
                     if progress_cb:
-                        progress_cb(0.20 + 0.55 * (completed / n_models), f"Trained {completed}/{n_models} models")
+                        progress_cb(0.05 + 0.70 * (completed / n_models), f"Trained {completed}/{n_models} models")
         else:
             for m in models:
-                try:
-                    with ThreadPoolExecutor(max_workers=1) as _seq_pool:
-                        fut = _seq_pool.submit(
-                            _fit_and_forecast_one,
-                            m, params, _fit_input(m), date_col, value_col, horizon, exog_data, effective_frequency,
-                        )
-                        result = fut.result(timeout=MODEL_TIMEOUT)
-                except TimeoutError:
-                    logger.warning("Model %s timed out after %ds (sequential)", m, MODEL_TIMEOUT)
-                    result = (m, None, [], [], {"error": f"timeout after {MODEL_TIMEOUT}s"}, {}, {}, f"timeout after {MODEL_TIMEOUT}s")
-                except Exception as e:
-                    logger.error("Model %s crashed: %s", m, e)
-                    result = (m, None, [], [], {"error": str(e)}, {}, {}, str(e))
-                per_model[m] = _assemble_model_result(m, result, cv_results)
+                m_key, cv_res, fit_res, bt_data = _run_model_pipeline(m)
+                cv_results[m] = cv_res
+                per_model[m] = _assemble_model_result(m, fit_res, cv_results)
+                if bt_data:
+                    per_model[m].update(bt_data)
                 completed += 1
                 if progress_cb:
-                    progress_cb(0.20 + 0.55 * (completed / n_models), f"Trained {completed}/{n_models} models")
+                    progress_cb(0.05 + 0.70 * (completed / n_models), f"Trained {completed}/{n_models} models")
+
+        logger.info("Full pipeline (%d models) took %.1fs", n_models, time.time() - _pipeline_start)
+        if progress_cb:
+            progress_cb(0.75, "All models trained")
 
         # ---- 2b) If train/test split: evaluate on test set + refit on all data ----
         # Test metrics are computed only for ML models (which were fit on train
@@ -852,112 +889,37 @@ class ForecasterService:
             sales_df=sales_df, date_col=date_col, value_col=value_col,
         )
 
-        # ---- 2b.5) Backtest re-forecast ----
-        # When backtest_overlap > 0, re-train each model on data truncated by
-        # `backtest_overlap` and forecast that window.  The resulting forecast
-        # values overlap the last N actuals, giving users a visual comparison
-        # of "what the model would have predicted" vs what actually happened.
-        # When backtest_overlap == 0 and train_test_split == 1.0 (no explicit split),
-        # auto-use latest 20% of data as backtest period for business users.
-        auto_backtest = False
-        overlap_n = 0
-        backtest_start_date: Optional[str] = None
-        backtest_end_date: Optional[str] = None
-
-        # Compute overlap in terms of UNIQUE DATES, not row count
-        n_unique_dates = int(sales_df[date_col].nunique()) if date_col in sales_df.columns else len(sales_df)
-        days_per = _DAYS_PER_PERIOD.get(effective_frequency, 1)
-        if backtest_overlap == 0 and n_unique_dates > 50:
-            auto_backtest = True
-            overlap_n = max(1, int(n_unique_dates * 0.2))
-            logger.info("Auto-backtest: using last %d unique dates (~20%% of %d)", overlap_n, n_unique_dates)
-        elif backtest_overlap > 0:
-            # backtest_overlap is in calendar days — convert to periods based on frequency
-            overlap_periods = max(1, backtest_overlap // days_per)
-            overlap_n = min(overlap_periods, n_unique_dates - 5)
-
-        if overlap_n > 0 and n_unique_dates > overlap_n + 5:
-            # Calendar-based split: overlap_n model-frequency periods =
-            # overlap_n * days_per calendar days.  This correctly handles
-            # cases where model frequency differs from data granularity
-            # (e.g. daily data, weekly forecast).
-            unique_dates = sorted(sales_df[date_col].unique())
-            last_date = unique_dates[-1]
-            target_split_date = last_date - pd.DateOffset(days=overlap_n * days_per)
-            if target_split_date <= unique_dates[0]:
-                logger.warning("Backtest overlap=%d periods (%d calendar days) exceeds data span, skipping", overlap_n, overlap_n * days_per)
-                overlap_n = 0
-                auto_backtest = False
-            else:
-                split_idx = bisect.bisect_left(unique_dates, target_split_date)
-                if split_idx < 5:
-                    split_idx = 5
-                split_date = unique_dates[split_idx]
-                backtest_df = sales_df[sales_df[date_col] < split_date].copy()
-                backtest_actuals = sales_df[sales_df[date_col] >= split_date].copy()
-                backtest_start_date = str(backtest_actuals[date_col].iloc[0])[:10]
-                backtest_end_date = str(backtest_actuals[date_col].iloc[-1])[:10]
-                logger.info("Backtest overlap_n=%d (%d calendar days), train=%d rows, test=%d rows", overlap_n, overlap_n * days_per, len(backtest_df), len(backtest_actuals))
-
-                bt_futures: Dict[str, Future] = {}
-                with ThreadPoolExecutor(max_workers=min(4, len(per_model))) as bt_pool:
-                    for m_name, pm in per_model.items():
-                        if pm.get("error"):
-                            continue
-                        def _bt_fit_and_forecast(name=m_name):
-                            bt_m = self.selector.get_model(name, params)
-                            bt_m.fit(backtest_df, date_col, value_col, exog_data=exog_data or {}, frequency=effective_frequency)
-                            bt_ex = _filter_exog_to_range(exog_data, backtest_actuals[date_col].iloc[0], backtest_actuals[date_col].iloc[-1], date_col) if exog_data else None
-                            return bt_m.forecast(len(backtest_actuals), exog_data=bt_ex)
-                        bt_futures[m_name] = bt_pool.submit(_bt_fit_and_forecast)
-                    for m_name, fut in bt_futures.items():
-                        pm = per_model[m_name]
-                        try:
-                            bt_fc = fut.result(timeout=MODEL_TIMEOUT)
-                            pm["backtest_forecast_values"] = bt_fc
-                            bt_metrics = _compute_backtest_metrics(bt_fc, backtest_actuals, date_col, value_col)
-                            pm["backtest_metrics"] = bt_metrics
-                        except TimeoutError:
-                            logger.warning("Backtest timed out for %s after %ds", m_name, MODEL_TIMEOUT)
-                            pm["backtest_forecast_values"] = []
-                            pm["backtest_metrics"] = {}
-                        except Exception as e:
-                            logger.warning("Backtest re-forecast failed for %s: %s", m_name, e)
-                            pm["backtest_forecast_values"] = []
-                            pm["backtest_metrics"] = {}
-
-                if ensemble_result:
+        # ---- 2b.5) Ensemble backtest ----
+        # Per-model backtest is already done in the pipeline above.
+        # Now do ensemble backtest if ensemble was built.
+        if ensemble_result and overlap_n > 0 and backtest_df is not None and backtest_actuals is not None:
+            try:
+                bt_member_futures: Dict[Future] = {}
+                with ThreadPoolExecutor(max_workers=min(4, len(ensemble_result.get("models_used", [])))) as bt_mem_pool:
+                    for m_name in ensemble_result.get("models_used", []):
+                        def _ens_bt_fit(name=m_name):
+                            inst = self.selector.get_model(name, params)
+                            inst.fit(backtest_df, date_col, value_col, exog_data=exog_data or {}, frequency=effective_frequency)
+                            return inst
+                        bt_member_futures[m_name] = bt_mem_pool.submit(_ens_bt_fit)
+                bt_member_pairs = []
+                for m_name, fut in bt_member_futures.items():
                     try:
-                        bt_member_futures: Dict[str, Future] = {}
-                        with ThreadPoolExecutor(max_workers=min(4, len(ensemble_result.get("models_used", [])))) as bt_mem_pool:
-                            for m_name in ensemble_result.get("models_used", []):
-                                def _ens_bt_fit(name=m_name):
-                                    inst = self.selector.get_model(name, params)
-                                    inst.fit(backtest_df, date_col, value_col, exog_data=exog_data or {}, frequency=effective_frequency)
-                                    return inst
-                                bt_member_futures[m_name] = bt_mem_pool.submit(_ens_bt_fit)
-                        bt_member_pairs = []
-                        for m_name, fut in bt_member_futures.items():
-                            try:
-                                bt_member_pairs.append((m_name, fut.result(timeout=MODEL_TIMEOUT)))
-                            except Exception:
-                                pass
-                        if len(bt_member_pairs) >= 1:
-                            weights_by_name = dict(zip(ensemble_result["models_used"], ensemble_result["weights"]))
-                            bt_names = [name for name, _ in bt_member_pairs]
-                            bt_weights = [weights_by_name.get(name, 1.0) for name in bt_names]
-                            bt_members = [inst for _, inst in bt_member_pairs]
-                            ens = EnsembleForecaster(bt_members, bt_weights)
-                            bt_fc = ens.forecast(len(backtest_actuals), exog_data=exog_data)
-                            ensemble_result["backtest_forecast_values"] = bt_fc
-                            bt_metrics = _compute_backtest_metrics(bt_fc, backtest_actuals, date_col, value_col)
-                            ensemble_result["backtest_metrics"] = bt_metrics
-                    except Exception as e:
-                        logger.warning("Ensemble backtest re-forecast failed: %s", e)
-        elif overlap_n > 0:
-            logger.warning("Backtest skipped: overlap=%d unique dates, but only %d available", overlap_n, n_unique_dates)
-            overlap_n = 0
-            auto_backtest = False
+                        bt_member_pairs.append((m_name, fut.result(timeout=MODEL_TIMEOUT)))
+                    except Exception:
+                        pass
+                if len(bt_member_pairs) >= 1:
+                    weights_by_name = dict(zip(ensemble_result["models_used"], ensemble_result["weights"]))
+                    bt_names = [name for name, _ in bt_member_pairs]
+                    bt_weights = [weights_by_name.get(name, 1.0) for name in bt_names]
+                    bt_members = [inst for _, inst in bt_member_pairs]
+                    ens = EnsembleForecaster(bt_members, bt_weights)
+                    bt_fc = ens.forecast(len(backtest_actuals), exog_data=exog_data)
+                    ensemble_result["backtest_forecast_values"] = bt_fc
+                    bt_metrics = _compute_backtest_metrics(bt_fc, backtest_actuals, date_col, value_col)
+                    ensemble_result["backtest_metrics"] = bt_metrics
+            except Exception as e:
+                logger.warning("Ensemble backtest re-forecast failed: %s", e)
 
         # ---- 6) Per-category forecasts (parallel) ----
         # Run forecasts for each category value in parallel for speed.

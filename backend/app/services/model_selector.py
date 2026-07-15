@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -563,9 +563,9 @@ class ModelSelector:
     ) -> Dict[str, Any]:
         """Expanding-window time-series cross-validation.
 
-        Runs up to `n_folds` folds with a growing training window and a
-        fixed-size test window.  Returns mean + std of MAE / RMSE / MAPE
-        across folds, plus per-fold details.
+        Runs up to `n_folds` folds **in parallel** with a growing training
+        window and a fixed-size test window.  Returns mean + std of MAE /
+        RMSE / MAPE across folds, plus per-fold details.
         """
         fold_timeout = int(os.environ.get("FORECASTIQ_FOLD_TIMEOUT", 120))
         if df.empty or value_col not in df.columns or date_col not in df.columns:
@@ -589,46 +589,35 @@ class ModelSelector:
         if test_size < 1:
             test_size = horizon
 
-        fold_results: List[Dict[str, float]] = []
-        for i in range(n_folds):
-            train_end = min_train + i * test_size
-            test_start = train_end
-            test_end = test_start + test_size
-            if test_end > n:
-                break
-            train = ts.iloc[:train_end]
-            test = ts.iloc[test_start:test_end]
-            if len(train) < min_train or len(test) < 1:
-                continue
+        def _eval_fold(i: int, train: pd.DataFrame, test: pd.DataFrame) -> Optional[Dict[str, float]]:
             try:
-                model = self.get_model(model_type, params)
                 def _fit_and_predict():
                     m_ = self.get_model(model_type, params)
                     m_.fit(train, date_col, value_col, exog_data=exog_data or {}, frequency=frequency)
                     test_exog: Optional[Dict[str, pd.DataFrame]] = None
                     if exog_data:
                         test_exog = {}
-                        test_start = pd.Timestamp(test[date_col].iloc[0])
-                        test_end = pd.Timestamp(test[date_col].iloc[-1])
-                        for key, df in exog_data.items():
-                            if df is None or df.empty or date_col not in df.columns:
-                                test_exog[key] = df
+                        te_start = pd.Timestamp(test[date_col].iloc[0])
+                        te_end = pd.Timestamp(test[date_col].iloc[-1])
+                        for key, edf in exog_data.items():
+                            if edf is None or edf.empty or date_col not in edf.columns:
+                                test_exog[key] = edf
                                 continue
                             mask = (
-                                pd.to_datetime(df[date_col], errors="coerce") >= test_start
+                                pd.to_datetime(edf[date_col], errors="coerce") >= te_start
                             ) & (
-                                pd.to_datetime(df[date_col], errors="coerce") <= test_end
+                                pd.to_datetime(edf[date_col], errors="coerce") <= te_end
                             )
-                            test_exog[key] = df[mask].copy()
+                            test_exog[key] = edf[mask].copy()
                     return m_.forecast(len(test), exog_data=test_exog)
-                with ThreadPoolExecutor(max_workers=1) as _pool:
-                    preds = _pool.submit(_fit_and_predict).result(timeout=fold_timeout)
+
+                preds = _fit_and_predict()
                 pred_values = np.array([self._safe_float(p.get("forecast", 0.0)) for p in preds])
                 actuals = test[value_col].astype(float).values
-                m = min(len(pred_values), len(actuals))
-                if m == 0:
-                    continue
-                pv, av = pred_values[:m], actuals[:m]
+                m_len = min(len(pred_values), len(actuals))
+                if m_len == 0:
+                    return None
+                pv, av = pred_values[:m_len], actuals[:m_len]
                 diff = pv - av
                 mae = float(np.mean(np.abs(diff)))
                 rmse = float(np.sqrt(np.mean(diff ** 2)))
@@ -638,20 +627,56 @@ class ModelSelector:
                 ss_res = float(np.sum(diff ** 2))
                 ss_tot = float(np.sum((av - np.mean(av)) ** 2))
                 r2 = 1 - ss_res / ss_tot if ss_tot > 1e-9 else None
-                fold_results.append({
+                return {
                     "mae": mae, "rmse": rmse, "mape": mape,
                     "r2": r2,
-                    "fold": i, "train_size": len(train), "test_size": len(test)
-                })
+                    "fold": i, "train_size": len(train), "test_size": len(test),
+                }
             except FuturesTimeoutError:
                 logger.warning("CV fold %d timed out for %s after %ds", i, model_type, fold_timeout)
+                return None
             except Exception as e:
                 logger.debug("CV fold %d failed for %s: %s", i, model_type, e)
+                return None
+
+        # Prepare all fold train/test splits upfront
+        folds_to_run: List[Tuple[int, pd.DataFrame, pd.DataFrame]] = []
+        for i in range(n_folds):
+            train_end = min_train + i * test_size
+            test_start_idx = train_end
+            test_end_idx = test_start_idx + test_size
+            if test_end_idx > n:
+                break
+            train = ts.iloc[:train_end]
+            test = ts.iloc[test_start_idx:test_end_idx]
+            if len(train) < min_train or len(test) < 1:
+                continue
+            folds_to_run.append((i, train, test))
+
+        # Run all folds in parallel
+        fold_results: List[Dict[str, float]] = []
+        if len(folds_to_run) <= 2:
+            # Few folds — run sequentially to avoid thread overhead
+            for i, train, test in folds_to_run:
+                result = _eval_fold(i, train, test)
+                if result is not None:
+                    fold_results.append(result)
+        else:
+            with ThreadPoolExecutor(max_workers=min(len(folds_to_run), 4)) as pool:
+                future_to_idx = {
+                    pool.submit(_eval_fold, i, train, test): i
+                    for i, train, test in folds_to_run
+                }
+                for fut in as_completed(future_to_idx):
+                    result = fut.result()
+                    if result is not None:
+                        fold_results.append(result)
 
         if len(fold_results) < 2:
             logger.warning("CV for %s: only %d fold(s) succeeded — insufficient", model_type, len(fold_results))
             return {"mae": None, "rmse": None, "mape": None, "note": "insufficient_folds"}
 
+        fold_results.sort(key=lambda f: f["fold"])
         mae_vals = [f["mae"] for f in fold_results]
         rmse_vals = [f["rmse"] for f in fold_results]
         mape_vals = [f["mape"] for f in fold_results]
