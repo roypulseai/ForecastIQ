@@ -38,10 +38,20 @@ pause
 exit /b 1
 
 :python_setup
+setlocal
+set BACKEND_DIR=%~dp0backend
+set FRONTEND_DIR=%~dp0frontend
+
 echo.
-echo NOTE: This will start backend on port 8000
-echo       You need to manually start frontend in another terminal
+echo Starting backend on http://localhost:8000
+echo Starting frontend on http://localhost:5173
 echo.
+echo Backend requirements must be installed in %BACKEND_DIR%
+echo Frontend dependencies must be installed in %FRONTEND_DIR%
+echo.
+
+start "ForecastIQ Backend" cmd /c "cd /d "%BACKEND_DIR%" && python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+start "ForecastIQ Frontend" cmd /c "cd /d "%FRONTEND_DIR%" && npm run dev"
 
 :end
 pause

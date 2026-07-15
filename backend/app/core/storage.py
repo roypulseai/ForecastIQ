@@ -12,6 +12,7 @@ import os
 import shutil
 import threading
 import uuid
+from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -50,7 +51,7 @@ class FileMetadataStore:
         self._lock = threading.RLock()
         self._files_index = self.data_dir / self.FILES_INDEX
         self._forecasts_index = self.data_dir / self.FORECASTS_INDEX
-        self._df_cache: Dict[str, pd.DataFrame] = {}
+        self._df_cache: OrderedDict[str, pd.DataFrame] = OrderedDict()
         if not self._files_index.exists():
             self._write_json(self._files_index, {})
 
@@ -139,6 +140,7 @@ class FileMetadataStore:
 
     def get_dataframe(self, file_id: str) -> Optional[pd.DataFrame]:
         if file_id in self._df_cache:
+            self._df_cache.move_to_end(file_id)
             return self._df_cache[file_id]
         entry = self.get_file(file_id)
         if not entry:
@@ -152,6 +154,8 @@ class FileMetadataStore:
             else:
                 df = pd.read_csv(path)
             self._df_cache[file_id] = df
+            if len(self._df_cache) > 32:
+                self._df_cache.popitem(last=False)
             return df
         except Exception as e:
             logger.warning("Failed to read dataset for file '%s': %s", file_id, e)

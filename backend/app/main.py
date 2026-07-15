@@ -78,10 +78,15 @@ def create_app() -> FastAPI:
     )
 
     # CORS — explicit origins only (wildcard incompatible with credentials)
+    allow_credentials = True
+    cors_origins = list(settings.BACKEND_CORS_ORIGINS)
+    if "*" in cors_origins and allow_credentials:
+        cors_origins = [o for o in cors_origins if o != "*"]
+        logger.warning("'*' removed from BACKEND_CORS_ORIGINS because allow_credentials=True")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.BACKEND_CORS_ORIGINS,
-        allow_credentials=True,
+        allow_origins=cors_origins,
+        allow_credentials=allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -128,9 +133,12 @@ def create_app() -> FastAPI:
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(_: Request, exc: Exception):
         logger.exception("Unhandled exception")
+        content: dict = {"detail": "Internal server error"}
+        if settings.DEBUG:
+            content["error"] = str(exc)
         return JSONResponse(
             status_code=500,
-            content={"detail": "Internal server error", "error": str(exc)},
+            content=content,
         )
 
     @app.get("/")

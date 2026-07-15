@@ -79,6 +79,8 @@ class Settings(BaseSettings):
         ]
     )
 
+    DEBUG: bool = False
+
     LOG_LEVEL: str = "INFO"
 
     REDIS_URL: str = Field(
