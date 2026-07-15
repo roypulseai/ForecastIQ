@@ -13,10 +13,6 @@ _tmp_data_dir = tempfile.mkdtemp()
 atexit.register(lambda: shutil.rmtree(_tmp_data_dir, ignore_errors=True))
 
 from app.core.config import settings
-from app.core import jwt
-from passlib.context import CryptContext
-
-jwt.pwd_context = CryptContext(schemes=["sha256_crypt"], deprecated="auto")
 
 settings.DATA_DIR = _tmp_data_dir
 settings.UPLOAD_DIR = os.path.join(_tmp_data_dir, "uploads")
